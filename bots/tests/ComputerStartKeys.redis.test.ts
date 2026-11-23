@@ -44,7 +44,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         const store = new RedisStartKeys(() => client as never);
         const s = scope('keeps');
         const at = Date.now();
-        expect(await store.claim(s, { key: 'a-start-key-0001', at }, LIFE, LIFE)).toEqual({ key: 'a-start-key-0001', at });
+        expect(await store.claim(s, { key: 'a-start-key-0001', at }, LIFE, LIFE)).toEqual({ key: 'a-start-key-0001', at, mine: true });
         const life = await client.pTTL(startKeyNameOf(s));
         expect(life).toBeGreaterThan(LIFE - 10_000);
         expect(life).toBeLessThanOrEqual(LIFE);
@@ -57,7 +57,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         const at = Date.now();
         await store.claim(s, { key: 'first-key-00001', at }, 120_000, LIFE);
         const before = await client.get(startKeyNameOf(s));
-        expect(await store.claim(s, { key: 'second-key-0002', at: at + 1 }, LIFE, LIFE)).toEqual({ key: 'first-key-00001', at });
+        expect(await store.claim(s, { key: 'second-key-0002', at: at + 1 }, LIFE, LIFE)).toEqual({ key: 'first-key-00001', at, mine: false });
         expect(await client.get(startKeyNameOf(s))).toBe(before);
         expect(await client.pTTL(startKeyNameOf(s))).toBeLessThanOrEqual(120_000);
     });
@@ -67,14 +67,14 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         const old = scope('old');
         const at = Date.now();
         await client.set(startKeyNameOf(old), JSON.stringify({ key: 'old-key-0000001', at: at - LIFE - 5000 }), { PX: 60_000 });
-        expect(await store.claim(old, { key: 'new-key-0000001', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000001', at });
+        expect(await store.claim(old, { key: 'new-key-0000001', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000001', at, mine: true });
         const foreign = scope('foreign-claim');
         await client.set(startKeyNameOf(foreign), 'not json', { PX: 60_000 });
-        expect(await store.claim(foreign, { key: 'new-key-0000002', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000002', at });
+        expect(await store.claim(foreign, { key: 'new-key-0000002', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000002', at, mine: true });
         // an entry of the right shape with the wrong types is not one either
         const odd = scope('odd');
         await client.set(startKeyNameOf(odd), JSON.stringify({ key: 7, at: 'x' }), { PX: 60_000 });
-        expect(await store.claim(odd, { key: 'new-key-0000003', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000003', at });
+        expect(await store.claim(odd, { key: 'new-key-0000003', at }, LIFE, LIFE)).toEqual({ key: 'new-key-0000003', at, mine: true });
     });
 
     it('lets the key go by itself when its life is over (the life the claim set, never one the test sets)', async () => {
@@ -105,7 +105,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         for (const [name, key] of bad) {
             const s = scope(`bad-${name}`);
             await client.set(startKeyNameOf(s), JSON.stringify({ key, at }), { PX: 60_000 });
-            expect(await store.claim(s, { key: 'caller-key-00001', at }, LIFE, LIFE), name).toEqual({ key: 'caller-key-00001', at });
+            expect(await store.claim(s, { key: 'caller-key-00001', at }, LIFE, LIFE), name).toEqual({ key: 'caller-key-00001', at, mine: true });
             expect(JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null'), name).toEqual({ key: 'caller-key-00001', at });
         }
         // the shape is checked by the script itself: the raw answer of the script is never a bad key
@@ -113,7 +113,8 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         await client.set(startKeyNameOf(raw), JSON.stringify({ key: 'has a space-01', at }), { PX: 60_000 });
         const { CLAIM_START_KEY } = await import('../server/ComputerStartKeys');
         const answer = await client.eval(CLAIM_START_KEY, { keys: [startKeyNameOf(raw)], arguments: [JSON.stringify({ key: 'caller-key-00002', at }), '60000', String(at - LIFE)] });
-        expect(JSON.parse(String(answer)).key).toBe('caller-key-00002');
+        // the script answers the entry and whether this call stored it
+        expect(answer).toEqual([JSON.stringify({ key: 'caller-key-00002', at }), 1]);
     });
 
     it('leaves a held entry whose key is of the shape alone, at both ends of it (8 and 64 characters, with _ and -)', async () => {
@@ -123,7 +124,7 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
             expect(key.length === 8 || key.length === 64, name).toBe(true);
             const s = scope(`good-${name}`);
             await client.set(startKeyNameOf(s), JSON.stringify({ key, at: at - 1000 }), { PX: 60_000 });
-            expect(await store.claim(s, { key: 'caller-key-00001', at }, LIFE, LIFE), name).toEqual({ key, at: at - 1000 });
+            expect(await store.claim(s, { key: 'caller-key-00001', at }, LIFE, LIFE), name).toEqual({ key, at: at - 1000, mine: false });
             expect(JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null'), name).toEqual({ key, at: at - 1000 });
         }
     });
@@ -137,6 +138,10 @@ describe.skipIf(!REAL_REDIS)('the start key of a computer job, on a real Redis (
         expect(new Set(answers.map((one) => one?.key)).size).toBe(1);
         const held = JSON.parse((await client.get(startKeyNameOf(s))) ?? 'null') as { key: string };
         expect(answers[0]?.key).toBe(held.key);
+        // CodeRabbit on 27ab3385: exactly ONE of the racing calls stored the record (it is the one that says `mine`), whatever the stored key is
+        expect(answers.filter((one) => one?.mine === true)).toHaveLength(1);
+        expect(answers.find((one) => one?.mine === true)?.key).toBe(held.key);
+        expect(answers.filter((one) => one?.mine === false)).toHaveLength(39);
     });
 
     it('two servers handling the same ask at the same moment (empty memory on both) send the SAME X-Computer-Start-Attempt: one job, never two', async () => {

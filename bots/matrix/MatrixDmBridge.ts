@@ -3,7 +3,7 @@ import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { randomUUID } from 'node:crypto';
 import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
-import type { MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
+import type { EventHooks, MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
 import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, botMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { STARTER_IDEAS, type DmAttachment, type DmPerson, type DmReply, type DmReplyHooks, type OfferedBrick } from '../server/DmReplyService';
@@ -17,7 +17,7 @@ import {
     type BotNoteState,
     type NoteLanguage,
 } from './BotStatusNotes';
-import { KEY_REDACTED_FIELD, holdsAKey, keyInChatReply } from './KeyInChat';
+import { KEY_REDACTED_FIELD, holdsAKey, holdsAKeyAnywhere, keyInChatReply } from './KeyInChat';
 import { PaidFenceError } from './MatrixEventInbox';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
@@ -521,7 +521,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * One event of Matrix. `hooks.paid` is called as soon as this event has begun something the person pays for (the turn that answers them, which is also where a computer job is
      * started): an event that fails before that may be handled again (the durable inbox), and one that fails after it never is.
      */
-    async onEvent(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
+    async onEvent(event: MatrixEvent, hooks?: EventHooks): Promise<void> {
         if (event.type === 'm.room.member' && typeof event.state_key === 'string') {
             await this.onMembership(event);
             return;
@@ -548,7 +548,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     /** The App a continuation line from the system is about. Only this bridge sets it, never the content of a message. */
     private connectedNotes = new WeakMap<MatrixEvent, { app: string; name: string }>();
 
-    private async onAppConnected(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
+    private async onAppConnected(event: MatrixEvent, hooks?: EventHooks): Promise<void> {
         if (botIdFromMatrixId(this.config.domain, event.sender)) return;
         const connected = connectedAppOf(event.content);
         if (!connected) return;
@@ -568,7 +568,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 };
                 // Said by the bridge, outside the message's own content: a person's message can hold any content at all
                 this.connectedNotes.set(carried, connected);
-                await this.onMessage(carried, undefined, tracked ? { paid: async () => { await tracked.paid(); paid = true; } } : undefined);
+                await this.onMessage(carried, undefined, tracked ? { paid: async () => { await tracked.paid(); paid = true; }, ...(tracked.durable === undefined ? {} : { durable: tracked.durable }) } : undefined);
             } catch (error: any) {
                 // A fence that was not confirmed, or a failure before anything was paid for, goes back to the inbox; a lost answer after that costs nothing, since the card already said what happened
                 if (error instanceof PaidFenceError || (tracked && !paid)) throw error;
@@ -581,14 +581,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * A tap on a card (#1657): only the card's id and the revision it saw come in. It counts only from a person Orbit says
      * may chat with this bot, in a chat the bot is in; what it does is the cards' to say, not the tap's.
      */
-    private async onTap(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
+    private async onTap(event: MatrixEvent, hooks?: EventHooks): Promise<void> {
         if (!this.deps.approvals || botIdFromMatrixId(this.config.domain, event.sender)) return;
         const tap = parseTap(event.content);
         if (!tap) return;
         await this.handledOnce(event.event_id, hooks, (tracked) => this.handleTap(event, tap, tracked));
     }
 
-    private async handleTap(event: MatrixEvent, tap: ParsedTap, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
+    private async handleTap(event: MatrixEvent, tap: ParsedTap, hooks?: EventHooks): Promise<void> {
         const botId = await this.botForRoom(event.room_id);
         if (!botId) return;
         const members = this.roomMembers.get(event.room_id);
@@ -1805,16 +1805,17 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * inbox's second try (here or elsewhere, the entry having been given back) is handled and not mistaken for a repeat; once `paid` was called the event stays remembered and is never
      * handled again. With no `hooks` nothing is given back by anyone, so the event is simply remembered as before.
      */
-    private async handledOnce(eventId: string, hooks: { paid: () => void | Promise<void> } | undefined, handle: (hooks?: { paid: () => void | Promise<void> }) => Promise<void>): Promise<void> {
+    private async handledOnce(eventId: string, hooks: EventHooks | undefined, handle: (hooks?: EventHooks) => Promise<void>): Promise<void> {
         if (!this.firstSighting(eventId)) return;
         let paid = false;
-        const tracked = hooks
+        const tracked: EventHooks | undefined = hooks
             ? {
                   // Paid only once it was written down: a fence that fails throws, and nothing paid for begins
                   paid: async () => {
                       await hooks.paid();
                       paid = true;
                   },
+                  ...(hooks.durable === undefined ? {} : { durable: hooks.durable }),
               }
             : undefined;
         try {
@@ -1825,7 +1826,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
-    private async onMessage(event: MatrixEvent, batch?: { troubleSent: boolean }, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
+    private async onMessage(event: MatrixEvent, batch?: { troubleSent: boolean }, hooks?: EventHooks): Promise<void> {
         // Ignore other bots (ours included), edits and notices.
         if (botIdFromMatrixId(this.config.domain, event.sender)) return;
         const content = event.content ?? {};
@@ -1841,19 +1842,22 @@ export class MatrixDmBridge implements MatrixEventHandler {
      */
     /** `recovered`: a message kept while the store was down, tried again. A newer message may have been answered, or have started to be, while this one waited on Orbit. */
     /** `hooks.paid` is given only for a live message off the Matrix transaction: it says when this event has begun something the person pays for, so the durable inbox never hands it out again. */
-    private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }, recovered = false, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
+    private async handleMessage(event: MatrixEvent, catchUp: boolean, batch?: { troubleSent: boolean }, recovered = false, hooks?: EventHooks): Promise<void> {
         const content = event.content ?? {};
         let botId: string | null;
+        // Only an event a durable entry holds is held here while a store is down: with nothing behind it (no inbox, or the store not connected) a held event would stop every later message of its room
+        // for up to an hour, and nothing would take it up if this process went away. That one is kept in this process and tried again, as before
+        const holds = !!hooks && hooks.durable !== false;
         try {
             // An event the router hands out with hooks is held here while the store is down (see `holdWhileDown`); one with none is kept in this process and tried again (`keepUnplaced`)
-            botId = hooks ? await this.holdWhileDown('look up the bot of the chat', event.room_id, () => this.botForRoom(event.room_id, true)) : await this.botForRoom(event.room_id, true);
+            botId = holds ? await this.holdWhileDown('look up the bot of the chat', event.room_id, () => this.botForRoom(event.room_id, true)) : await this.botForRoom(event.room_id, true);
         } catch (error: any) {
             // The store that says which bot is in this chat is unreachable (a reconnect, say). That is not a chat without a
             // bot, so the message is kept here and tried again, never dropped.
             console.warn(`[MatrixDmBridge] Could not look up the bot for ${event.room_id}, will try again:`, error?.message ?? error);
             // Held for an hour already (see above) and still down: it goes back to the router, which gives the entry back as a try (never kept only in this process's memory: its local retry would
             // run without the hook)
-            if (hooks) throw error;
+            if (holds) throw error;
             this.keepUnplaced(event);
             return;
         }
@@ -1986,7 +1990,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: keyInChatReply(language) }).catch(() => undefined);
         };
         // A message read back from the durable inbox had its key taken out before it was kept (the store never holds one): the mark says there was one, and it is refused as it was live
-        if (content[KEY_REDACTED_FIELD] === true || holdsAKey(String(content.body ?? ''))) {
+        // A live event is looked at whole (a file's NAME, its caption, any text of it), not only its body: the inbox keeps a copy with the keys taken out, but the router hands the handler the event as it came
+        if (content[KEY_REDACTED_FIELD] === true || holdsAKeyAnywhere(content)) {
             await refuseKey();
             return;
         }
@@ -2006,7 +2011,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         if (connectedApp) {
             // A lookup that FAILS is not an answer that the App is not connected: an event with hooks is held while it is down (see `holdWhileDown`); only an answer of "no" stops
             const appId = connectedApp.app;
-            const confirmed = hooks
+            const confirmed = holds
                 ? await this.holdWhileDown('look up the App connection', event.room_id, async () => this.deps.appConnected?.(botId, user.uuid, appId))
                 : await this.deps.appConnected?.(botId, user.uuid, appId).catch(() => false);
             if (confirmed !== true) {
@@ -2346,11 +2351,17 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private async holdWhileDown<T>(what: string, roomId: string, lookup: () => Promise<T>): Promise<T> {
         const began = Date.now();
         let delay = UNPLACED_RETRY_MS;
+        let failure: unknown;
         for (;;) {
             try {
-                return await lookup();
+                const answer = await lookup();
+                // The bridge began to stop while this event was held (the wait ended because of it, or the lookup was in flight): the answer is not taken. Nothing paid for starts during shutdown;
+                // the failure goes back, so the event is given back and another server takes it up
+                if (failure !== undefined && this.stopping) throw failure;
+                return answer;
             } catch (error: any) {
-                if (this.stopping || Date.now() - began >= LOOKUP_HOLD_MS) throw error;
+                failure ??= error;
+                if (this.stopping || Date.now() - began >= LOOKUP_HOLD_MS) throw failure;
                 console.warn(`[MatrixDmBridge] Could not ${what} for ${roomId}, holding the event and trying again in ${Math.round(delay / 1000)} s:`, error?.message ?? error);
                 // eslint-disable-next-line no-await-in-loop
                 await new Promise<void>((resolve) => {
@@ -2362,6 +2373,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     const timer = setTimeout(wake, delay);
                     this.lookupWakers.add(wake);
                 });
+                // The wait ended because the bridge is stopping: no lookup is made, the failure goes back
+                if (this.stopping) throw failure;
                 delay = Math.min(delay * 2, UNPLACED_RETRY_MAX_MS);
             }
         }

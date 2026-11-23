@@ -22,6 +22,34 @@ export function holdsAKey(text: string | undefined | null): boolean {
     return KEY_SHAPES.some((shape) => shape.test(text));
 }
 
+/** How many values of an event are looked at when it is searched for a key without recursion (a Matrix event is at most 64 KB, so it has far fewer values than this; the cap only keeps a hostile one from costing more than a moment). */
+const SCAN_BUDGET = 200_000;
+
+/**
+ * Whether any text anywhere in `value` (a string, a property NAME, at any depth) holds a key. An explicit stack, so a very deep value cannot blow this function's own stack, and a budget, so a
+ * huge one costs a bounded time: past the budget (no real event gets there) the value is refused, as one that could not be looked at.
+ */
+export function holdsAKeyAnywhere(value: unknown): boolean {
+    const stack: unknown[] = [value];
+    let seen = 0;
+    while (stack.length > 0) {
+        const one = stack.pop();
+        seen += 1;
+        if (seen > SCAN_BUDGET) return true;
+        if (typeof one === 'string') {
+            if (holdsAKey(one)) return true;
+        } else if (Array.isArray(one)) {
+            for (const item of one) stack.push(item);
+        } else if (typeof one === 'object' && one !== null) {
+            for (const [name, item] of Object.entries(one)) {
+                if (holdsAKey(name)) return true;
+                stack.push(item);
+            }
+        }
+    }
+    return false;
+}
+
 /** What a key is replaced by in anything kept for later, and the mark on the event that says one was there. */
 const KEY_REMOVED = '[a key was here and is not kept]';
 export const KEY_REDACTED_FIELD = 'universe.key_redacted';
@@ -46,6 +74,9 @@ export function withoutKeys<T>(event: T): T {
         // Nothing below the limit is ever kept unchecked: a subtree that deep is left out (a real event is nowhere near it), so the walk's own stack stays bounded and a key hidden down there never reaches the store
         if (depth > MAX_DEPTH) {
             trimmed = true;
+            // What is left out is still LOOKED at (without recursion): a key down there is not kept, and the content says one was there, so the Brick refuses the message as it would have live.
+            // Clean nested content is only left out, never taken for a key
+            if (holdsAKeyAnywhere(value)) found = true;
             return TOO_DEEP;
         }
         if (Array.isArray(value)) return value.map((one) => walk(one, depth + 1));

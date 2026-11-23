@@ -351,6 +351,74 @@ describe('a message that arrives while the store that knows the chat is down', (
             expect(await outcome).toBe('Redis is reconnecting');
         });
 
+        // CodeRabbit on 27ab3385: the wait ends on stop(), and a lookup that happens to succeed on the way out must not start a paid reply during shutdown
+        it('a bridge that stops while the lookup has just recovered still gives the event back, with no reply and no paid start', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            const isDown = { now: true };
+            storeDown(stores, isDown);
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            const outcome = bridge.onEvent(message('hello?'), { paid }).then(
+                () => 'returned',
+                (error: Error) => error.message
+            );
+            await vi.advanceTimersByTimeAsync(5000);
+            isDown.now = false;
+            void bridge.stop();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(await outcome).toBe('Redis is reconnecting');
+            expect(stores.deps.reply).not.toHaveBeenCalled();
+            expect(paid).not.toHaveBeenCalled();
+        });
+
+        it('a retry already in flight when the bridge stops, and that then succeeds, is not taken: the event goes back', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            stores.rooms.set(ROOM, BOT);
+            let calls = 0;
+            let finish: (bot: string | null) => void = () => undefined;
+            stores.deps.rooms.getDmRoomBot = vi.fn(async () => {
+                calls += 1;
+                if (calls === 1) throw new Error('Redis is reconnecting');
+                return new Promise<string | null>((resolve) => (finish = resolve));
+            });
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            const outcome = bridge.onEvent(message('hello?'), { paid }).then(
+                () => 'returned',
+                (error: Error) => error.message
+            );
+            await vi.advanceTimersByTimeAsync(2500);
+            expect(calls).toBe(2);
+            void bridge.stop();
+            finish(BOT);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(await outcome).toBe('Redis is reconnecting');
+            expect(stores.deps.reply).not.toHaveBeenCalled();
+            expect(paid).not.toHaveBeenCalled();
+        });
+
+        // CodeRabbit on 27ab3385: the router gives EVERY event the hook; only an event the inbox holds may be held (the room waits behind it)
+        it('an event with no durable inbox entry is never held: it goes to the local list at once, so the room is not blocked', async () => {
+            vi.useFakeTimers();
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const stores = makeStores();
+            const isDown = { now: true };
+            storeDown(stores, isDown);
+            const bridge = new MatrixDmBridge(config, makeClient() as never, stores.deps);
+            const paid = vi.fn(async () => undefined);
+            await bridge.onEvent(message('hello?'), { paid, durable: false });
+            expect((bridge as any).unplaced.size).toBe(1);
+            expect(paid).not.toHaveBeenCalled();
+            isDown.now = false;
+            await vi.advanceTimersByTimeAsync(2500);
+            expect(stores.deps.reply).toHaveBeenCalledTimes(1);
+            bridge.stop();
+        });
+
         it('an event with no hooks is kept here and tried again, as it always was', async () => {
             vi.useFakeTimers();
             vi.spyOn(console, 'warn').mockImplementation(() => undefined);

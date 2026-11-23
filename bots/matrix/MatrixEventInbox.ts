@@ -99,6 +99,10 @@ return 1
  */
 const RELEASE = `
 local held = redis.call('GET', KEYS[1])
+-- This acquisition's own earlier give-back already closed the entry (its answer was lost): said again as closed, so the caller can report it. The mark is left in the event's slot when it closes
+if held == 'd' and redis.call('GET', KEYS[3]) == '!closed|' .. ARGV[1] then
+  return 2
+end
 if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' then
   return 0
 end
@@ -106,7 +110,8 @@ local tries = tonumber(string.match(held, '|(%d+)$')) or tonumber(string.match(h
 if tries >= tonumber(ARGV[3]) then
   redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
   redis.call('ZREM', KEYS[2], ARGV[4])
-  redis.call('DEL', KEYS[3])
+  -- the event itself goes; what stays (for as long as the done mark) is only who closed it
+  redis.call('SET', KEYS[3], '!closed|' .. ARGV[1], 'EX', tonumber(ARGV[2]))
   return 2
 end
 redis.call('SET', KEYS[1], 'p|-|' .. tostring(tries), 'EX', tonumber(ARGV[2]))
@@ -191,6 +196,8 @@ export interface InboxEntry {
      * was given back (or is not this server's any more), and `unsure` when the store did not answer (the give-back is tried again; `onClosed` runs if that later finds it was the last try).
      */
     release(onClosed?: () => void): Promise<'again' | 'closed' | 'unsure'>;
+    /** False for the entry that holds nothing (the store is not connected): there is no durable copy and no other try. Absent: durable. */
+    readonly durable?: boolean;
     /** The transaction this event came in was refused, so it is taken back out as if never taken and the resend takes it in afresh (a failed step leaves it to be recovered instead). */
     undo(): Promise<void>;
     /** Something the person pays for is about to begin: written down BEFORE it does, so a server that dies in the middle never has it handled again by another. Throws `PaidFenceError` when it could not be written down (the event is another server's now, or the store did not answer): nothing paid for may begin then. */
@@ -245,7 +252,7 @@ export function createEventInbox(
     const batch = options.batch ?? RECOVER_BATCH;
     const say = options.log ?? ((message: string, detail?: unknown) => console.warn(`[MatrixInbox] ${message}`, detail instanceof Error ? detail.message : detail));
     /** An entry that holds nothing: the store is not connected, so the event is handled and nothing is remembered. */
-    const nothing: InboxEntry = { done: async () => undefined, release: async () => 'closed', undo: async () => undefined, paid: async () => undefined };
+    const nothing: InboxEntry = { durable: false, done: async () => undefined, release: async () => 'closed', undo: async () => undefined, paid: async () => undefined };
 
     const keysOf = (eventId: string) => [`${EVENT_SEEN_PREFIX}${eventId}`, INBOX_KEY, `${INBOX_EVENT_PREFIX}${eventId}`];
     /** Any single call to the store against the same deadline. */
@@ -296,9 +303,16 @@ export function createEventInbox(
         const giveBack = async (onClosed?: () => void): Promise<'again' | 'closed' | 'unsure'> => {
             if (over) return 'unsure';
             over = true;
+            let attempts = 0;
             const attempt = (): Promise<'again' | 'closed' | undefined> =>
                 step(redis, RELEASE, eventId, [token, String(ttlSeconds), String(maxTries), eventId]).then(
-                    (answer) => (answer === 2 || answer === '2' ? ('closed' as const) : ('again' as const)),
+                    (answer) => {
+                        attempts += 1;
+                        if (answer === 2 || answer === '2') return 'closed' as const;
+                        // Not this server's any more (taken by another, or finished): nothing is left to give back, and nothing of it is reported from here
+                        if ((answer === 0 || answer === '0') && attempts > 1) say('A give-back that was tried again found the entry no longer this server\'s:', eventId);
+                        return 'again' as const;
+                    },
                     (error) => {
                         say('Could not give an event back for another try:', error);
                         return undefined;

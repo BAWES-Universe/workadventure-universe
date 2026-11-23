@@ -1280,6 +1280,8 @@ describe('CodeRabbit on d098522a: which question a yes answers, and a question w
             await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
             await c.deliver();
             c.nextMessage(said);
+            // the old question ended with that message, before anything can ask a new one
+            expect(c.state.asks.size, said).toBe(0);
             await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
             expect(orbit.acted(), said).toEqual([]);
         }
@@ -1400,5 +1402,46 @@ describe('CodeRabbit on d098522a: which question a yes answers, and a question w
         queue.add('k2', async () => void sent.push('second'), { state: 'started', title: 'Late' } as never);
         await queue.deliver('$event:one');
         expect(sent).toEqual(['first']);
+    });
+
+    // CodeRabbit on 27ab3385
+    it('titles are read with the reply\'s own tokenizer: an accent in a title is no reason to miss it ("Yes, cancel Cafe and Hotel" names both, so it authorizes neither)', async () => {
+        const orbit = door(viewOf(working({ id: 'job-cafe', title: 'Café receipts' }), [paused('job-hotel', 'Hotel tickets')]), { cancel: viewOf(null) });
+        const ask = async () => {
+            const c = chat(orbit.admin);
+            await c.run(CANCEL_JOB_TOOL, { job: 'receipts' });
+            await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+            await c.deliver();
+            return c;
+        };
+        const both = await ask();
+        both.nextMessage('Yes, cancel Cafe and Hotel');
+        await both.run(CANCEL_JOB_TOOL, { job: 'receipts' });
+        await both.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        expect(orbit.acted()).toEqual([]);
+        // naming only the accented one still selects it
+        const one = await ask();
+        one.nextMessage('Yes, cancel Café');
+        await one.run(CANCEL_JOB_TOOL, { job: 'receipts' });
+        await one.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-cafe' }]);
+        expect(askNamedBy('cancel the cafe one', { kind: 'cancel', titles: ['Café receipts'] })).toBe(1);
+    });
+
+    it('a job whose own TITLE says "pause" is not a different action: "Yes, cancel Pause menu audit" confirms the cancel; "Yes, pause it" still cannot', async () => {
+        for (const [said, cancels] of [
+            ['Yes, cancel Pause menu audit', true],
+            ['yes cancel the pause menu', true],
+            ['Yes, pause it', false],
+            ['yes pause the pause menu audit', false],
+        ] as const) {
+            const orbit = door(viewOf(working({ title: 'Pause menu audit' })), { cancel: viewOf(null) });
+            const c = chat(orbit.admin);
+            await c.run(CANCEL_JOB_TOOL, { job: 'pause' });
+            await c.deliver();
+            c.nextMessage(said);
+            await c.run(CANCEL_JOB_TOOL, { job: 'pause' });
+            expect(orbit.acted(), said).toEqual(cancels ? [{ action: 'cancel', jobId: 'job-visa' }] : []);
+        }
     });
 });

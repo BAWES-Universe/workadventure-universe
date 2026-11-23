@@ -1521,6 +1521,42 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             expect(deleted).not.toContain(HELD);
         });
 
+        // CodeRabbit on 27ab3385: two servers answered `expired` for the same inbound event and worked out the SAME replacement key; the one that claims second holds the first one's record, not its own
+        it('S2 `expired`, another server claimed the SAME new key first and this one\'s send of it FAILS: that record stays in the store (it is the other server\'s reservation, still open)', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            const inner = (orbit as unknown as { call: (...args: unknown[]) => Promise<unknown> }).call;
+            let posts = 0;
+            (orbit as unknown as { call: unknown }).call = async (...args: unknown[]) => {
+                const [method, , body] = args as [string, string, { action?: string } | undefined];
+                if (method === 'post' && !body?.action && ++posts === 2) throw new Error('Orbit did not answer');
+                return inner(...args);
+            };
+            const server = process_(orbit, who);
+            const real = new RedisStartKeys(() => client as never);
+            const fresh = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, `${startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0)}.1`);
+            const deleted: string[] = [];
+            let claims = 0;
+            const store = {
+                expected: () => true,
+                delete: (scope: string, key: string) => (deleted.push(key), real.delete(scope, key)),
+                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
+                    claims += 1;
+                    // the other server got there first with the same key (its send is still open)
+                    if (claims === 2) await real.claim(scope, { ...entry, key: fresh } as never, keep, life);
+                    return real.claim(scope, entry as never, keep, life);
+                },
+            };
+            await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
+            expect(posts).toBe(2);
+            expect(claims).toBe(2);
+            // the failed send did not delete the other server's record
+            expect(deleted).not.toContain(fresh);
+            const kept = JSON.parse((await client.get(startKeyNameOf(`${who.botId}|${who.userId}`))) ?? 'null') as { key: string } | null;
+            expect(kept?.key).toBe(fresh);
+        });
+
         it('S2 `expired`, the shared store expected but it did not confirm the new key: nothing is sent under it (another server may hold a key of this ask), and the next ask checks it again', async () => {
             const who = ids();
             const orbit = new FakeOrbit();

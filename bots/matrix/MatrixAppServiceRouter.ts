@@ -15,12 +15,23 @@ export interface MatrixEvent {
     unsigned?: Record<string, any>;
 }
 
+/** What the router gives the handler with an event. */
+export interface EventHooks {
+    /** Called before something the person pays for begins; throws when that could not be written down (nothing paid for may begin then). */
+    paid: () => void | Promise<void>;
+    /**
+     * False when NOTHING keeps this event if the handler gives up on it: there is no inbox, or the shared store is not connected, so no other try and no other server will ever see it. The handler then
+     * keeps it itself (in its own memory) rather than holding the room's chain for it. Absent or true: a durable entry holds it, which another try or another server takes up.
+     */
+    durable?: boolean;
+}
+
 export interface MatrixEventHandler {
     /**
      * Called once per pushed event, after Synapse already got its 200. Must not throw. `paid` is called by the handler as soon as it has begun something the person pays for (a model
      * turn, a computer start): before that, an event whose handling throws is given back for another try; after it, it is never handled again.
      */
-    onEvent(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void>;
+    onEvent(event: MatrixEvent, hooks?: EventHooks): Promise<void>;
     /**
      * An event nothing will handle any more: it ran out of tries (`tries`), or work had begun when its owner went away and it is never handed out again (`paid`). Told so it is not silent: the
      * handler reports it and, for `tries`, lets the person know. Never throws.
@@ -161,14 +172,21 @@ export function createMatrixAppServiceRouter(
         return true;
     };
 
+    /** The reports of events that will not be handled, while they are being made: shutdown waits for them (within its own limit), so a notice is not lost to an exit. */
+    const reporting = new Set<Promise<void>>();
     /** An event that will not be handled: logged loudly and handed to the handler to report and to tell the person. */
-    const gaveUp = async (event: MatrixEvent, why: 'tries' | 'paid'): Promise<void> => {
-        console.error(`[MatrixAppService] An event will not be handled again (${why === 'tries' ? 'it ran out of tries' : 'work had begun when its server went away'}): ${event?.event_id ?? 'unknown'} in ${event?.room_id ?? 'unknown'}`);
-        try {
-            await handler.onGaveUp?.(event, why);
-        } catch (error) {
-            console.error('[MatrixAppService] Could not report an event that will not be handled:', error instanceof Error ? error.message : error);
-        }
+    const gaveUp = (event: MatrixEvent, why: 'tries' | 'paid'): Promise<void> => {
+        const run = (async () => {
+            console.error(`[MatrixAppService] An event will not be handled again (${why === 'tries' ? 'it ran out of tries' : 'work had begun when its server went away'}): ${event?.event_id ?? 'unknown'} in ${event?.room_id ?? 'unknown'}`);
+            try {
+                await handler.onGaveUp?.(event, why);
+            } catch (error) {
+                console.error('[MatrixAppService] Could not report an event that will not be handled:', error instanceof Error ? error.message : error);
+            }
+        })();
+        reporting.add(run);
+        void run.finally(() => reporting.delete(run));
+        return run;
     };
 
     /** Handles one event (its own room in order), and ends its inbox entry: done, or back for another try when nothing of it was paid for. */
@@ -186,6 +204,7 @@ export function createMatrixAppServiceRouter(
                         await entry?.paid();
                         paid = true;
                     },
+                    durable: entry !== undefined && entry.durable !== false,
                 });
             } catch (error) {
                 console.error('[MatrixAppService] Event handling failed:', error);
@@ -277,11 +296,12 @@ export function createMatrixAppServiceRouter(
         const done = (async () => {
             await Promise.all([...pendingTxns.values(), recovering ?? Promise.resolve(0)].map((one) => one.catch(() => undefined)));
             for (;;) {
-                const chains = [...roomChains.values()];
-                if (chains.length === 0) return true as const;
+                // The chains, and the reports of events given up on (which a chain can start as it ends): both until none is left
+                const work = [...roomChains.values(), ...reporting];
+                if (work.length === 0) return true as const;
                 // eslint-disable-next-line no-await-in-loop
-                await Promise.all(chains);
-                if (roomChains.size === 0) return true as const;
+                await Promise.all(work.map((one) => one.catch(() => undefined)));
+                if (roomChains.size === 0 && reporting.size === 0) return true as const;
             }
         })();
         try {

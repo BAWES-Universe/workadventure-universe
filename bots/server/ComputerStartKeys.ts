@@ -11,8 +11,9 @@ import type { EvidenceRedis } from './ComputerEvidenceStore';
  * The first key of an ask wins across servers: `claim` is ONE step in the store that returns the key already held while it is still good, and otherwise keeps the caller's
  * and returns that. Two servers that handle the same ask at the same moment, and an ask that races a stored one, therefore send the same key (one job, never two).
  *
- * Whose record it is: a call deletes only a key it made itself (the answer of `claim` was its own key and nothing was sent under it yet, or it sent and Orbit refused it). A key it ADOPTED
- * from the store (another server's claim, which may have gone out) is never deleted by it, even when its own send of that key fails: the record stays for the next ask, here or elsewhere, to look up.
+ * Whose record it is: a call deletes only a record it STORED (the answer of `claim` says so: `mine`), for a key nothing was sent under before. A record it did not store is never deleted by it, even when
+ * its own send of that key fails and even when the key is the very one it proposed (two servers working out the same replacement key for the same event: the second finds the first's record):
+ * the first may have its send open, and the next ask, here or elsewhere, finds the record and looks the key up.
  */
 export const START_KEY_PREFIX = 'computer:startkey:';
 
@@ -36,6 +37,11 @@ export interface StoredStartKey {
     key: string;
     at: number;
     payload?: StoredStartPayload;
+    /**
+     * Only in the answer of `claim`: whether THIS call stored the record (true), or the store already held it (false: another call, here or at another server, made it, even when the key is the
+     * same one). A call deletes only a record it stored. Absent: not said (a store that does not tell), taken as not known to be another's.
+     */
+    mine?: boolean;
 }
 
 /** A payload as it is read back: only one of the shape `runComputerTool` sends, with nothing else in it. */
@@ -89,7 +95,7 @@ export interface StartKeyStore {
 
 /**
  * Keeps the entry ARGV[1] with a life of ARGV[2] ms unless the name already holds an entry of this shape (a key of the shape Orbit takes and a number moment) first sent at or after ARGV[3] (the
- * oldest moment still good, ms): then that one is left as it is. Answers the entry that is held after this, as the store holds it. One step: two callers at once cannot both win.
+ * oldest moment still good, ms): then that one is left as it is. Answers the entry that is held after this, as the store holds it, and whether THIS call stored it (1) or it was already there (0). One step: two callers at once cannot both win.
  */
 export const CLAIM_START_KEY = `
 local held = redis.call('GET', KEYS[1])
@@ -97,11 +103,11 @@ if held then
   local ok, entry = pcall(cjson.decode, held)
   -- Only an entry of the shape the caller reads (the key Orbit takes: 8 to 64 of letters, digits, _ and -, and a number moment): anything else is replaced, never returned
   if ok and type(entry) == 'table' and type(entry.key) == 'string' and #entry.key >= 8 and #entry.key <= 64 and string.find(entry.key, '^[A-Za-z0-9_%-]+$') and type(entry.at) == 'number' and entry.at >= tonumber(ARGV[3]) then
-    return held
+    return {held, 0}
   end
 end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', tonumber(ARGV[2]))
-return ARGV[1]
+return {ARGV[1], 1}
 `;
 /** Deletes the key KEYS[1] only while the entry it holds is the key ARGV[1]: an ask that has started again since (another key) stays. */
 export const DELETE_START_KEY = `
@@ -160,15 +166,18 @@ export class RedisStartKeys implements StartKeyStore {
                     arguments: [JSON.stringify({ key: entry.key, at: entry.at, ...(entry.payload ? { payload: entry.payload } : {}) }), String(Math.max(1000, Math.round(keepMs))), String(oldestGood)],
                 })
             );
-            if (typeof held !== 'string') return undefined;
-            const kept = JSON.parse(held) as unknown;
+            // The answer is the entry and whether this call stored it; a bare string (an older script, a fake) says only the entry
+            const [text, stored] = Array.isArray(held) ? held : [held, undefined];
+            if (typeof text !== 'string') return undefined;
+            const mine = stored === undefined ? undefined : Number(stored) === 1;
+            const kept = JSON.parse(text) as unknown;
             if (typeof kept !== 'object' || kept === null) return undefined;
             const { key, at, payload } = kept as { key?: unknown; at?: unknown; payload?: unknown };
             // Only a key of the shape Orbit takes, and a moment that is a number: anything else is not ours
             if (typeof key !== 'string' || !SHAPE.test(key) || typeof at !== 'number' || !Number.isFinite(at)) return undefined;
             // What it said is read back only when it is whole; a record without it (or with a damaged one) holds a key that is only looked up, never sent again
             const said = startPayloadOf(payload);
-            return { key, at, ...(said ? { payload: said } : {}) };
+            return { key, at, ...(said ? { payload: said } : {}), ...(mine === undefined ? {} : { mine }) };
         } catch {
             return undefined;
         }

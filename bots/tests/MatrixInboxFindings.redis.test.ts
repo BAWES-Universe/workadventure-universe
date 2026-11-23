@@ -318,6 +318,65 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             expect(await client.zScore(INBOX_KEY, id)).toBeNull();
         });
 
+        // CodeRabbit on 27ab3385: the first give-back closes the entry (its last try) and the answer is lost; the retry finds `d` and must still report the closure
+        it('a give-back that closed the entry (its last try) with its answer lost is reported as closed when it is tried again, once', async () => {
+            const id = fresh('lost-close');
+            let lost = 0;
+            const flaky = createEventInbox(
+                () =>
+                    ({
+                        eval: async (script: string, o: unknown) => {
+                            if (isRelease(script) && lost === 0) {
+                                // the write COMMITS (the entry is closed) and the answer is lost
+                                lost += 1;
+                                await realEval(script, o);
+                                throw new Error('answer lost');
+                            }
+                            return realEval(script, o);
+                        },
+                    }) as never,
+                { ttlSeconds: 60, beatEveryMs: 40, maxTries: 1, log: () => undefined }
+            );
+            const entry = (await flaky.take(id, message(id))) as InboxEntry;
+            const closed = vi.fn();
+            vi.spyOn(console, 'error').mockImplementation(() => undefined);
+            expect(await entry.release(closed)).toBe('unsure');
+            await vi.waitFor(() => expect(closed).toHaveBeenCalledTimes(1), { timeout: 4000 });
+            expect(lost).toBe(1);
+            expect(await stateOf(id)).toBe('d');
+            expect(await client.zScore(INBOX_KEY, id)).toBeNull();
+            // not reported twice
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            expect(closed).toHaveBeenCalledTimes(1);
+        });
+
+        it('a give-back that finds the entry another server\'s (not its own earlier closure) reports nothing as closed', async () => {
+            const id = fresh('not-mine');
+            let lost = 0;
+            const flaky = createEventInbox(
+                () =>
+                    ({
+                        eval: async (script: string, o: unknown) => {
+                            if (isRelease(script) && lost === 0) {
+                                // the answer is lost before anything was written; another server closes the event meanwhile
+                                lost += 1;
+                                await client.set(`matrix:event:${id}`, 'd', { EX: 60 });
+                                await client.zRem(INBOX_KEY, id);
+                                throw new Error('answer lost');
+                            }
+                            return realEval(script, o);
+                        },
+                    }) as never,
+                { ttlSeconds: 60, beatEveryMs: 40, maxTries: 1, log: () => undefined }
+            );
+            const entry = (await flaky.take(id, message(id))) as InboxEntry;
+            const closed = vi.fn();
+            vi.spyOn(console, 'error').mockImplementation(() => undefined);
+            expect(await entry.release(closed)).toBe('unsure');
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            expect(closed).not.toHaveBeenCalled();
+        });
+
         it('arrival stamps never go back: not within one millisecond, not when the clock steps back', async () => {
             const inbox = inboxOn();
             const stamps: number[] = [];

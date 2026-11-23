@@ -159,14 +159,35 @@ export function isClearYes(message: string | undefined): boolean {
 /** Words that name ANOTHER thing to do with a job than ending it: a yes that says "yes, pause it" is not a yes to a question about cancelling. */
 const OTHER_ACTION = new Set(['pause', 'paused', 'pausing', 'resume', 'resumed', 'resuming', 'redirect', 'redirected']);
 
+/**
+ * Whether a message asks for ANOTHER action than ending (pause, resume, redirect). Words that are part of a job's own title as it was asked about do not count ("Yes, cancel Pause menu audit"
+ * confirms the cancel of that job): a run of the message that is a run of two or more words of a title (or a whole one-word title) is the title's, and is read out first. "Yes, pause it" has no such run.
+ */
+function namesAnotherAction(message: string, asks: Array<Pick<ControlAsk, 'titles'>>): boolean {
+    const tokens = tokensOf(message);
+    const titles = asks.flatMap((ask) => ask.titles.map((title) => tokensOf(title))).filter((words) => words.length > 0);
+    const own = new Array<boolean>(tokens.length).fill(false);
+    for (const title of titles) {
+        for (let at = 0; at < tokens.length; at++) {
+            // the longest run of the message starting here that is a run of this title
+            for (let start = 0; start < title.length; start++) {
+                let length = 0;
+                while (at + length < tokens.length && start + length < title.length && tokens[at + length] === title[start + length]) length++;
+                if (length >= 2 || (length === 1 && title.length === 1)) for (let i = 0; i < length; i++) own[at + i] = true;
+            }
+        }
+    }
+    return tokens.some((word, index) => !own[index] && OTHER_ACTION.has(word));
+}
+
 /** How far a message names the question: the whole-word overlap with the titles of the jobs a cancel is about, and for Stop the words that mean everything. 0 names it not at all. */
 export function askNamedBy(message: string, ask: Pick<ControlAsk, 'kind' | 'titles'>): number {
     const tokens = new Set(tokensOf(message));
     if (ask.kind === 'stop') return ['all', 'everything', 'both', 'everyone', 'jobs'].some((word) => tokens.has(word)) ? 1 : 0;
     let best = 0;
     for (const title of ask.titles) {
-        // Each distinct word of a title counts once, however often the title repeats it ("Paris Paris trip" is not twice as near to "Paris" as "Paris hotel")
-        const words = [...new Set(plain(title).split(' ').filter((word) => word.length >= 3 && !COMMON.has(word)))];
+        // The title is read with the SAME tokenizer as the reply (accents, case, apostrophes), so "Café" in a title and "cafe" in a reply are one word. Each distinct word counts once, however often the title repeats it
+        const words = [...new Set(tokensOf(title).filter((word) => word.length >= 3 && !COMMON.has(word)))];
         const shared = words.filter((word) => tokens.has(word) || tokens.has(word.replace(/s$/, '')) || tokens.has(`${word}s`)).length;
         best = Math.max(best, shared);
     }
@@ -182,9 +203,9 @@ export function startControlTurn(state: ControlState | undefined, message?: stri
     state.turn += 1;
     state.said = typeof message === 'string' ? message : '';
     const answered = new Set<string>();
-    // A yes that names another action ("yes, pause it") is no answer to a question about ending a job
-    if (isClearYes(message) && !tokensOf(message as string).some((word) => OTHER_ACTION.has(word))) {
-        const told = [...state.asks].filter(([, ask]) => ask.told && !ask.answerable);
+    // A yes that names another action ("yes, pause it") is no answer to a question about ending a job (a job whose own title says "pause" is not an action: see `namesAnotherAction`)
+    const told = [...state.asks].filter(([, ask]) => ask.told && !ask.answerable);
+    if (isClearYes(message) && !namesAnotherAction(message as string, told.map(([, ask]) => ask))) {
         // One question was asked: a yes answers it. Several were asked in one reply (cancel this job, cancel that one): a yes answers ONE of them, and only when it names that one alone; a
         // bare yes, or one that names more than one, answers none, and every question ends (they are asked again, so the person says which)
         if (told.length === 1) answered.add(told[0][0]);

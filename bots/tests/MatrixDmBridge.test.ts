@@ -324,6 +324,26 @@ describe('MatrixDmBridge', () => {
         expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ body: keyInChatReply('en') }));
     });
 
+    // CodeRabbit on 27ab3385 (outside the diff): the router hands the bridge the event as it came; only the stored copy has its keys taken out
+    it('a live file whose NAME holds a key is refused as a key; an ordinary attachment is answered as before', async () => {
+        await bridge.onEvent(invite());
+        deps.uploadAttachment = vi.fn(async () => 'https://files.test/x.png');
+        const key = ['sk-', 'proj-abcdefghijklmnopqrstuvwxyz0123'].join('');
+        const named = (name: string, caption: string): MatrixEvent => ({
+            ...message(caption),
+            event_id: `$${name}`,
+            content: { msgtype: 'm.image', body: caption, filename: name, url: 'mxc://matrix.test/pic', info: { mimetype: 'image/png' } },
+        });
+        await bridge.onEvent(named(`${key}.png`, 'look at this'));
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(deps.uploadAttachment).not.toHaveBeenCalled();
+        expect(client.sendMessage).toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ body: keyInChatReply('en') }));
+        client.sendMessage.mockClear();
+        await bridge.onEvent(named('holiday.png', 'look at this'));
+        expect(client.sendMessage).not.toHaveBeenCalledWith(BOT_USER, ROOM, expect.objectContaining({ body: keyInChatReply('en') }));
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+    });
+
     it('tries the bot name again next time when setting it failed', async () => {
         client.setDisplayName.mockRejectedValueOnce(new Error('homeserver busy'));
         expect(await bridge.userExists(BOT_USER)).toBe(true);

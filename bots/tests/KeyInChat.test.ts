@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KEY_REDACTED_FIELD, holdsAKey, keyInChatReply, withoutKeys } from '../matrix/KeyInChat';
+import { KEY_REDACTED_FIELD, holdsAKey, holdsAKeyAnywhere, keyInChatReply, withoutKeys } from '../matrix/KeyInChat';
 
 describe('holdsAKey', () => {
     it.each([
@@ -103,6 +103,23 @@ describe('withoutKeys: nothing that holds a key, in a value or in a name, and no
         const huge = nested(100_000, KEY) as object;
         expect(() => withoutKeys({ content: { body: 'x', huge } })).not.toThrow();
         expect(JSON.stringify(withoutKeys({ content: { body: 'x', huge } }))).not.toContain(KEY);
+    });
+
+    // CodeRabbit on 27ab3385: the cut subtree is looked at (iteratively), so a key down there still sets the refusal mark
+    it('a key below the depth limit sets the refusal mark; clean deep content does not; a key in a deep property NAME or very deep chain is found too', () => {
+        const marked = withoutKeys({ type: 'm.room.message', content: { body: 'hi', extra: nested(20, `here: ${KEY}`) } }) as { content: Record<string, unknown> };
+        expect(marked.content[KEY_REDACTED_FIELD]).toBe(true);
+        expect(marked.content.body).toBe('hi');
+        const named = withoutKeys({ type: 'm.room.message', content: { body: 'hi', extra: nested(20, { [KEY]: 1 }) } }) as { content: Record<string, unknown> };
+        expect(named.content[KEY_REDACTED_FIELD]).toBe(true);
+        const huge = withoutKeys({ type: 'm.room.message', content: { body: 'hi', huge: nested(100_000, KEY) } }) as { content: Record<string, unknown> };
+        expect(huge.content[KEY_REDACTED_FIELD]).toBe(true);
+        const quiet = withoutKeys({ type: 'm.room.message', content: { body: 'hi', extra: nested(20, 'plain') } }) as { content: Record<string, unknown> };
+        expect(quiet.content[KEY_REDACTED_FIELD]).toBeUndefined();
+        expect(holdsAKeyAnywhere(nested(50, KEY))).toBe(true);
+        expect(holdsAKeyAnywhere(nested(50, 'plain'))).toBe(false);
+        // a value too large to be looked at whole is refused (no real event is that large), never passed as clean
+        expect(holdsAKeyAnywhere(new Array(250_000).fill(0))).toBe(true);
     });
 
     it('a list below the limit is cut the same way', () => {

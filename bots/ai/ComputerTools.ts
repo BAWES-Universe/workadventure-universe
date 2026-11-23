@@ -493,12 +493,16 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         }
         // Open when this call began: a key that went out before (here, at another server, or in an earlier turn) and whose outcome was not known. The words it said are the ones that go again.
         const wasOpen = entry.open;
+        /** Whether the record of the key now in use is this call's own (stored by it): only then may a definite failure delete it. */
+        let ownsRecord = true;
         // The FIRST key of the open start wins, across bot servers and restarts: one step in the shared store keeps ours BEFORE the start is sent unless it already holds a key
         // of an open start of this person and Brick, and answers the one it holds (no title in it, no expiry short of the safety life). A restart that forgot the process's
         // memory, a second server, and an ask racing a stored one all go on with THAT key, and look it up first.
         if (context.startKeyStore && entry.open) {
             const store = context.startKeyStore;
             const held = await store.claim(scope, { key: entry.key, at: entry.at, ...(entry.payload ? { payload: entry.payload } : {}) }, OPEN_START_KEEP_MS - (now - entry.at), OPEN_START_KEEP_MS).catch(() => undefined);
+            // A record that was already there, even for the same key, is not this call's to delete
+            if (held && held.mine === false) ownsRecord = false;
             if (held && held.key !== entry.key) {
                 // Another attempt holds the key: this is that start, which may well have gone out, and its outcome is open until the answer says otherwise
                 entry.key = held.key;
@@ -531,7 +535,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // The record goes (only the record of THIS key: a record of another is never deleted) while the entry still stands where the next call finds it, so an overlapping call waits for
         // this one and sees how it ended; the entry leaves its place after
         const dropKey = async () => {
-            await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
+            // Only a record this call stored: the one another server stored for the same key is that server's (its send may be open)
+            if (ownsRecord) await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
             leave();
         };
         let looked: StartAnswer | undefined;
@@ -575,8 +580,10 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                     await context.startKeyStore?.delete(scope, old).catch(() => undefined);
                     const store = context.startKeyStore;
                     const held: StoredStartKey | undefined = await store?.claim(scope, { key: startKey, at: entry.at, payload: said }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
-                    // A key this call made itself, with no start sent under it yet: its record is this call's to delete when the send fails (the key before it may have gone out, this one has not)
+                    // A key this call made itself, with no start sent under it yet: its record is this call's to delete when the send fails (the key before it may have gone out, this one has not) ...
                     priorSend = false;
+                    // ... unless the store already held that record (another server worked out the same key for the same event and claimed it first)
+                    ownsRecord = !(held && held.mine === false);
                     // The shared store is expected and did not confirm the new key: another server may hold a key of this ask that this one cannot see, so nothing is sent (as for the first key).
                     // The new key is checked again on the next ask
                     if (store && !held && (store.expected?.() ?? true)) {
