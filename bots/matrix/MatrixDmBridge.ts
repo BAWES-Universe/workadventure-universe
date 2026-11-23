@@ -86,6 +86,21 @@ export interface CarriedPart {
 }
 /** On a person's message: they tapped "Make it" on that card, and this is the Brick it described (game #1996). */
 export const BRICK_MAKE_KEY = 'universe.brick_make';
+/**
+ * On a Brick's own message after the answer: Orbit would not carry a job on, so the person is offered a new one (GPT's sixth answer, finding 6): `{ title }`. The game shows it as
+ * a card with one button, "Start a new job". Nothing is started by the card itself.
+ */
+export const COMPUTER_NEW_JOB_OFFER_KEY = 'universe.computer_new_job_offer';
+/** On a person's message: they tapped "Start a new job" on that card, and this is the job's title. Their message is the title; the start is an ordinary one, with a key of its own. */
+export const COMPUTER_NEW_JOB_KEY = 'universe.computer_new_job';
+
+/** The title a "Start a new job" card or tap names, when it is whole. */
+export function newJobOfferOf(value: unknown): { title: string } | null {
+    if (!value || typeof value !== 'object') return null;
+    const { title } = value as Record<string, unknown>;
+    if (typeof title !== 'string' || !title.trim()) return null;
+    return { title: title.replace(/\s+/g, ' ').trim().slice(0, 200) };
+}
 
 /**
  * A Brick's offer to connect an App (game #2001), on its own message after the answer: `{ topic, app, name, state,
@@ -2006,6 +2021,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 ...(!catchUp && offeredBrickOf(content[BRICK_MAKE_KEY]) ? { makeOffered: offeredBrickOf(content[BRICK_MAKE_KEY])! } : {}),
                 // An App was connected from a card (game #2001): a line from the system, nothing is learned about the person from it
                 ...(connectedApp ? { note: true, connectedApp } : {}),
+                // "Start a new job" tapped on a card for a job Orbit would not carry on (finding 6): an ordinary new start of that job, never a continuation
+                ...(!catchUp && newJobOfferOf(content[COMPUTER_NEW_JOB_KEY]) ? { newJobAsked: newJobOfferOf(content[COMPUTER_NEW_JOB_KEY])! } : {}),
                 onInterimMessage: async (interim) => {
                     // A lost "let me look" line must not cost the person the real answer, so it never throws.
                     try {
@@ -2117,6 +2134,17 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
+            }
+            // The button to start a job afresh that Orbit would not carry on (finding 6), after the answer like the one above. The words are already under the answer, so the card
+            // carries only its title: the game draws the button from that
+            const newJob = reply.text ? reply.newJob : undefined;
+            if (newJob) {
+                const content = { msgtype: 'm.text', body: newJob.title, [COMPUTER_NEW_JOB_OFFER_KEY]: { title: newJob.title } };
+                const txnId = randomUUID();
+                await out
+                    .sendMessage(botUserId, event.room_id, content, txnId)
+                    .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
+                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send a "start a new job" card from bot ${botId}:`, error?.message ?? error));
             }
             // The offer to connect an App (game #2001), after the answer like the one above. Asked once, right before it is sent.
             const appOffer = reply.text ? reply.bricks?.find((note) => note.kind === 'app') : undefined;

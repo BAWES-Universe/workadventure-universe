@@ -4020,6 +4020,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const memory = this.conversationMemory?.getMemory(botId, playerId);
         if (!memory) return '';
         delete memory.computerRetry;
+        // They tapped "Start a new job" on the card for a job Orbit would not carry on (finding 6): this turn starts it afresh, so carrying one on is not offered in it
+        if (memory.newJobAsked) {
+            delete memory.newJobAsked;
+            return '';
+        }
         try {
             const admin = adminApiService ?? this.adminApiService;
             const userId = memory.userUuid;
@@ -4198,6 +4203,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two
             ...(memory ? { startKeys: (memory.computerStarts ??= new Map()) } : {}),
             ...(this.computerStartKeys ? { startKeyStore: this.computerStartKeys } : {}),
+            // Orbit refused to carry a job on: the reply carries a "Start a new job" button for it, and nothing is started here (finding 6)
+            ...(memory ? { offerNewJob: (title: string) => void (memory.pendingNewJob = { title }) } : {}),
             // Confirmed to Orbit only once the reply that names the job reaches the person
             ...(memory?.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,

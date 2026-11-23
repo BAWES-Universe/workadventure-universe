@@ -165,7 +165,7 @@ describe("a Brick's computer on screen (#2000)", () => {
         await settle();
         // One job: Stop ends it at once, as the approved mock draws it
         expect(inSheet("computerEndAsk")).toBeNull();
-        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop");
+        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop", undefined, expect.any(String));
     });
 
     it("CodeRabbit: Stop on the page is off while its request is on its way, so a second tap sends no second Stop", async () => {
@@ -593,7 +593,7 @@ describe("a Brick's computer on screen (#2000)", () => {
         game.brickComputerAction.mockResolvedValue(computer());
         inSheet("computerEndAskEnd")?.click();
         await settle();
-        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop");
+        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop", undefined, expect.any(String));
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 

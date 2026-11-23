@@ -15,6 +15,7 @@ import {
     readBrickIdeas,
     readBrickMade,
     readBrickOffer,
+    readNewJobOffer,
     readGuestChat,
     type AppOffer,
     type BrickOffer,
@@ -88,6 +89,8 @@ export class MatrixChatMessage implements ChatMessage {
     brickOffer: BrickOffer | undefined;
     /** A Brick's offer to connect an App (#2001): "Connect your calendar?". */
     appOffer: AppOffer | undefined;
+    /** The job Orbit would not carry on (finding 6): the card under the answer offers starting it afresh. */
+    newJobOffer: { title: string } | undefined;
     /** The chat someone had with the Brick for guests, brought along when they signed in (#1997). */
     guestChat: GuestChatLine[];
     /** A card a bot's notice asks one answer with (#1657): the bot server edits the same notice as the card ends. */
@@ -119,6 +122,7 @@ export class MatrixChatMessage implements ChatMessage {
         this.brickMade = cards.brickMade;
         this.brickOffer = cards.brickOffer;
         this.appOffer = cards.appOffer;
+        this.newJobOffer = cards.newJobOffer;
         this.guestChat = cards.guestChat;
         this.steps = writable(readBotSteps(event.getSender(), this.stepsContent()));
         this.transcriptOf = readNoteTranscript(event.getSender(), this.stepsContent());
@@ -225,6 +229,7 @@ export class MatrixChatMessage implements ChatMessage {
             brickMade: readBrickMade(sender, content),
             brickOffer: readBrickOffer(sender, content),
             appOffer: readAppOffer(sender, content),
+            newJobOffer: readNewJobOffer(sender, content),
             guestChat: readGuestChat(sender, content),
         };
     }
@@ -260,6 +265,7 @@ export class MatrixChatMessage implements ChatMessage {
             brickMade: this.brickMade,
             brickOffer: this.brickOffer,
             appOffer: this.appOffer,
+            newJobOffer: this.newJobOffer,
             guestChat: this.guestChat,
         };
     }

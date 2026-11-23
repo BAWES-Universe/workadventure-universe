@@ -10,10 +10,20 @@ import {
     parseUndoDays,
     readBrickMade,
     readBrickOffer,
+    readNewJobOffer,
     shortDay,
 } from "../Brick";
-import { BRICK_OFFER_CARD, OFFER_MAKE, OFFER_NOT_NOW, brickHello, brickOfferCard } from "../BrickHello";
-import { offerCardKey } from "../ClosedBrickCards";
+import {
+    BRICK_NEW_JOB_CARD,
+    BRICK_OFFER_CARD,
+    NEW_JOB_START,
+    OFFER_MAKE,
+    OFFER_NOT_NOW,
+    brickHello,
+    brickNewJobCard,
+    brickOfferCard,
+} from "../BrickHello";
+import { newJobCardKey, offerCardKey } from "../ClosedBrickCards";
 import { firstFreeLook, lookColour } from "../NewBrick";
 
 const BRICK = "@bot_0b7c1d2e-1111-4222-8333-944455556666:chat.test";
@@ -190,5 +200,32 @@ describe("more Bricks (#1996): what Orbit and a Brick say, as the game reads it"
         expect(shown.question?.multiple).toBe(false);
         expect(shown.expiresAt).toBe(Number.MAX_SAFE_INTEGER);
         expect(offerCardKey("$event")).toBe("offer:$event");
+    });
+
+    // GPT's sixth answer, finding 6
+    it("reads the job a Brick could not carry on only when it is whole and from a bot", () => {
+        const content = { msgtype: "m.text", body: "Visa form", "universe.computer_new_job_offer": { title: " Visa  form " } };
+        expect(readNewJobOffer(BRICK, content)).toEqual({ title: "Visa form" });
+        expect(readNewJobOffer("@sara:chat.test", content)).toBeUndefined();
+        expect(readNewJobOffer(null, content)).toBeUndefined();
+        expect(readNewJobOffer(BRICK, { ...content, msgtype: "m.notice" })).toBeUndefined();
+        expect(readNewJobOffer(BRICK, { msgtype: "m.text", body: "All done." })).toBeUndefined();
+        for (const title of [undefined, null, "", "   ", 7]) {
+            expect(readNewJobOffer(BRICK, { ...content, "universe.computer_new_job_offer": { title } })).toBeUndefined();
+        }
+        expect(readNewJobOffer(BRICK, { ...content, "universe.computer_new_job_offer": "Visa form" })).toBeUndefined();
+    });
+
+    it("puts starting that job afresh on a card of its own, with nothing about carrying it on", () => {
+        const LL = i18nObject("en-US");
+        const shown = brickNewJobCard({ title: "Visa form" }, LL);
+        expect(shown.id).toBe(BRICK_NEW_JOB_CARD);
+        expect(shown.title).toBe("“Visa form” as a new job?");
+        expect(shown.question?.choices).toEqual([
+            { id: NEW_JOB_START, label: "Start a new job", line: "Starts it again from the beginning" },
+        ]);
+        expect(shown.question?.multiple).toBe(false);
+        expect(shown.expiresAt).toBe(Number.MAX_SAFE_INTEGER);
+        expect(newJobCardKey("$event")).toBe("new_job:$event");
     });
 });

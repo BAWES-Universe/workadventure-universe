@@ -12,7 +12,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as Sentry from '@sentry/node';
 import type { StartKeyStore, StoredStartPayload } from '../server/ComputerStartKeys';
 import { jobLine, type JobNote } from './JobStatusLine';
-import type { AdminApiService } from '../server/AdminApiService';
+import type { AdminApiService, CannotContinue } from '../server/AdminApiService';
+import { CANNOT_CONTINUE_NOTE, cannotContinue, cannotContinueSaid } from './ComputerTryAgainWords';
 import { computerControlNote, isComputerControlTool } from './ComputerControlTools';
 
 export const COMPUTER_TOOL = 'use_computer';
@@ -234,6 +235,11 @@ export interface ComputerToolContext {
      * looked up again at the next ask).
      */
     confirmations?: ConfirmationQueue;
+    /**
+     * Offers the person a "Start a new job" button under this reply, for the job of that title (GPT's sixth answer, finding 6): called when Orbit refuses to carry a job on and a new
+     * job is a sensible next step. Nothing is started by it; the tap is an ordinary new start, with its own key. Without it the refusal is said and no button goes out.
+     */
+    offerNewJob?: (title: string) => void;
 }
 
 /** The start of an ask: its key, when it was first sent, and whether its outcome is still open (`unknown`, `starting`). */
@@ -641,6 +647,17 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             }
             // The record of its key is NOT deleted here: it stays in the store until the confirmation is sent (below), so a reply that never reaches the person leaves it for the next ask to find
         }
+        // Orbit will not carry that job on and MADE NOTHING (GPT's sixth answer, finding 6): the person reads why in Fable's approved words, and nothing is started in its place.
+        // Where a new job is a sensible next step, the reply carries a separate "Start a new job" button; its tap is an ordinary new start with a key of its own
+        if (!started.ok && started.reason === 'cannot_continue') {
+            const named = entry.payload?.title ?? job;
+            const said = cannotContinue(started.cannotContinue?.why ?? 'not_continuable', named, started.cannotContinue ?? {});
+            if (said.startNewJob && named) context.offerNewJob?.(named);
+            const answer = { started: false, success: false, reason: 'cannot_continue' as const };
+            if (!context.confirmations) return { ...answer, note: cannotContinueSaid(said.line) };
+            context.confirmations.say(said.line);
+            return { ...answer, note: CANNOT_CONTINUE_NOTE };
+        }
         // Orbit names the job (in the answer to the start, to the look-up inside it, or to this game's own look-up of an earlier send). It is NOT confirmed now: the person has not been told
         // yet. The confirmation waits for this reply to be delivered (`ConfirmationQueue`), and the record of the key goes after it. A look-up never confirms by itself either.
         if (started.ok || ['starting', 'done', 'ended'].includes(started.reason)) {
@@ -658,7 +675,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
 
 
 /** An answer to a start, as one shape (`reason` and `app` when it is a no, `job` and `restoredFrom` when it is a yes). */
-type StartAnswer = { ok: boolean; reason: string; queued?: true; app?: string; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; earlier?: { id: string | null; status: string | null; attempt: string }; /** Orbit carried it on in the old job's conversation ("try again", piece 8). */ continued?: true };
+type StartAnswer = { ok: boolean; reason: string; queued?: true; app?: string; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; earlier?: { id: string | null; status: string | null; attempt: string }; /** Orbit carried it on in the old job's conversation ("try again", piece 8). */ continued?: true; /** Orbit will not carry that job on (finding 6): why, and who or what ended it. Nothing was made. */ cannotContinue?: CannotContinue };
 
 /** Whether two starts said the same (title, details, writes, the way Brick weighed, the chat). */
 function samePayload(a: StoredStartPayload | undefined, b: StoredStartPayload): boolean {

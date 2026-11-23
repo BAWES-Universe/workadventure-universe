@@ -158,6 +158,16 @@ export interface BotPlayerMemory {
     dmEventId?: string;
     /** What a direct-message turn did about Bricks (game #1996): one it made, a suggestion to show. Goes out with the reply. Runtime only. */
     pendingBricks?: import('../ai/BrickTools').BrickNote[];
+    /**
+     * Orbit refused to carry a job on in this turn and a new job is a sensible next step (GPT's sixth answer, finding 6): the reply carries a separate "Start a new job" button for
+     * the job of this title. Nothing is started by it. Runtime only.
+     */
+    pendingNewJob?: { title: string };
+    /**
+     * This turn is the person's tap on "Start a new job" (GPT's sixth answer, finding 6): the job is started afresh, so "try again" is NOT offered to the model in it (a
+     * continuation would be refused again). Set for the turn only. Runtime only.
+     */
+    newJobAsked?: { title: string };
     /** The artifacts the person pointed at by replying to their card in the turn being answered (game #1781), from the
      * chat app. Their pasted links come from the history. Started fresh with each turn. Runtime only. */
     pointedArtifacts?: string[];

@@ -10,7 +10,8 @@ vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } })
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import axios from 'axios';
-import { AdminApiService, COMPUTER_CONTINUES_HEADER } from '../server/AdminApiService';
+import { AdminApiService, COMPUTER_CONTINUES_HEADER, cannotContinueOf } from '../server/AdminApiService';
+import { CANNOT_CONTINUE_NOTE, START_NEW_JOB_LABEL, TRY_AGAIN_WORDS, cannotContinue } from '../ai/ComputerTryAgainWords';
 import { AIService } from '../ai/AIService';
 import { ConfirmationQueue, computerToolDefinitions, runComputerTool, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
 import { asksToTryAgain, offersTryAgain, retryJobOf, tryAgainNote, type RetryJob } from '../ai/ComputerTryAgain';
@@ -268,6 +269,21 @@ describe('Brick is told about "try again" only when the person asks for it', () 
         expect(await none.ai.tryAgainNoteFor(BRICK, 1)).toBe('');
     });
 
+    // GPT's sixth answer, finding 6
+    it('a tap on "Start a new job" is offered nothing to carry on, and Orbit is not asked at all', async () => {
+        const computerState = vi.fn().mockResolvedValue(named);
+        const { ai, memory } = service({ computerState }, [{ message: 'Start a new job', at: TOLD + 60_000 }]);
+        ai.noteBrick(BRICK, { isDefault: false });
+        await ai.computerOnFor(BRICK, 1);
+        computerState.mockClear();
+        memory.newJobAsked = { title: 'Visa form' };
+        expect(await ai.tryAgainNoteFor(BRICK, 1)).toBe('');
+        expect(memory.computerRetry).toBeUndefined();
+        expect(computerState).not.toHaveBeenCalled();
+        // Used up by that turn: the flag is gone
+        expect(memory.newJobAsked).toBeUndefined();
+    });
+
     it('words that ask, with nothing named in the short-lived read, read Orbit again once (the job may have ended a moment ago)', async () => {
         const computerState = vi.fn().mockResolvedValueOnce({ on: true, retry: null }).mockResolvedValueOnce(named);
         const { ai } = service({ computerState }, [{ message: 'try again', at: TOLD + 60_000 }]);
@@ -314,5 +330,89 @@ describe('CodeRabbit N7: another chat of the same person starts with none of the
         expect(copy.computerConfirmations).toBeUndefined();
         // the question in the active chat is untouched by anything the copy does
         expect(live.computerControls.asks.size).toBe(1);
+    });
+});
+
+/**
+ * GPT's sixth answer, finding 6: Orbit refuses to carry a job on (`cannot_continue`) and MAKES NOTHING. The game says why in Fable's approved words, word for word, starts nothing
+ * in its place, and offers "Start a new job" as a separate choice where that is a sensible next step. The tap is an ordinary start, with a key of its own.
+ */
+describe('finding 6: a continuation Orbit refuses never becomes a fresh paid job', () => {
+    const orbitService = (): AdminApiService => {
+        process.env.BOT_SERVICE_TOKEN = 'secret';
+        const admin = new AdminApiService('http://orbit.test');
+        vi.spyOn(admin, 'isConfigured').mockReturnValue(true);
+        return admin;
+    };
+    // Orbit sends its own refusals as a successful answer with a reason (GPT round 4, R1), so that is what is answered here
+    const refusing = (why: string, more: Record<string, unknown> = {}) => ({ data: { ok: false, reason: 'cannot_continue', why, ...more } });
+
+    const start = async (why: string, more: Record<string, unknown> = {}) => {
+        request.mockResolvedValue(refusing(why, more));
+        const service = orbitService();
+        const queue = new ConfirmationQueue();
+        const offered: string[] = [];
+        const answer = await runComputerTool(
+            { job: 'Visa form', try_again: true },
+            { admin: service, botId: BRICK, userId: 'uuid-alice', retry: { id: OLD, title: 'Visa form' }, confirmations: queue, offerNewJob: (title) => offered.push(title) }
+        );
+        return { answer, lines: queue.tell(), offered };
+    };
+
+    it('says the approved words for every reason Orbit gives, and starts NOTHING', async () => {
+        const name = quotedTitle('Visa form');
+        for (const [why, more, line, button] of [
+            ['not_continuable', { endedBy: 'person' }, TRY_AGAIN_WORDS.endedByPerson.titled(name), true],
+            ['not_continuable', { endedBy: 'off' }, TRY_AGAIN_WORDS.endedByOff.titled(name), true],
+            ['not_continuable', { status: 'done' }, TRY_AGAIN_WORDS.alreadyFinished.titled(name), true],
+            ['no_conversation', {}, TRY_AGAIN_WORDS.noConversation.titled(name), true],
+            ['live', {}, TRY_AGAIN_WORDS.stillLive.titled(name), false],
+            ['not_found', {}, TRY_AGAIN_WORDS.noSuchJob.plain, false],
+            ['not_theirs', {}, TRY_AGAIN_WORDS.noSuchJob.plain, false],
+            // Orbit named no reason at all: the line names none either (DRAFT wording, flagged for Fable)
+            ['not_continuable', {}, TRY_AGAIN_WORDS.cannotCarryOn.titled(name), true],
+        ] as const) {
+            const { answer, lines, offered } = await start(why, more as Record<string, unknown>);
+            expect(answer).toMatchObject({ started: false, success: false, reason: 'cannot_continue' });
+            expect(lines).toEqual([line]);
+            expect(offered).toEqual(button ? ['Visa form'] : []);
+            // Nothing but the one refused start went to Orbit: no fresh job, no second request
+            expect(request).toHaveBeenCalledTimes(1);
+            request.mockClear();
+        }
+    });
+
+    it('tells the model the line is already under the reply, and not to word it itself', async () => {
+        const { answer } = await start('not_continuable', { endedBy: 'person' });
+        expect(String(answer.note)).toBe(CANNOT_CONTINUE_NOTE);
+        expect(String(answer.note)).toMatch(/do not say it again and do not reword it/);
+        expect(String(answer.note)).toMatch(/NOTHING was started/);
+    });
+
+    it('gives the model the exact words to say where there is no fixed line (not a direct chat)', async () => {
+        request.mockResolvedValue(refusing('not_continuable', { endedBy: 'off' }));
+        const service = orbitService();
+        const answer = await runComputerTool({ job: 'Visa form', try_again: true }, { admin: service, botId: BRICK, userId: 'uuid-alice', retry: { id: OLD, title: 'Visa form' } });
+        expect(String(answer.note)).toContain(TRY_AGAIN_WORDS.endedByOff.titled(quotedTitle('Visa form')));
+        expect(String(answer.note)).toMatch(/in these words, and nothing more about it/);
+    });
+
+    it('reads what Orbit said, and a reason it does not know is read as the one that says least', () => {
+        expect(cannotContinueOf({ why: 'live' })).toEqual({ why: 'live' });
+        expect(cannotContinueOf({ why: 'not_continuable', endedBy: 'person' })).toEqual({ why: 'not_continuable', endedBy: 'person' });
+        expect(cannotContinueOf({ why: 'not_continuable', status: 'done' })).toEqual({ why: 'not_continuable', status: 'done' });
+        expect(cannotContinueOf({})).toEqual({ why: 'not_continuable' });
+        expect(cannotContinueOf({ why: 'something new', endedBy: 'someone' })).toEqual({ why: 'not_continuable' });
+    });
+
+    it('names no title when there is none to name, and the words stand on their own', () => {
+        expect(cannotContinue('not_continuable', undefined, { endedBy: 'person' })).toEqual({ line: TRY_AGAIN_WORDS.endedByPerson.plain, startNewJob: true });
+        expect(cannotContinue('live', '   ')).toEqual({ line: TRY_AGAIN_WORDS.stillLive.plain, startNewJob: false });
+        // The same words for a job that is not there and one that is not theirs: nothing is learned from which it was
+        expect(cannotContinue('not_found', 'Visa form').line).toBe(cannotContinue('not_theirs', 'Visa form').line);
+    });
+
+    it('the button label is the approved one', () => {
+        expect(START_NEW_JOB_LABEL).toBe('Start a new job');
     });
 });

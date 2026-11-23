@@ -139,6 +139,11 @@ export interface DmReplyHooks {
     starter?: string;
     /** The person tapped "Make it" on a Brick's suggestion (#1996): the Brick the card described. Their message is the button's own words. */
     makeOffered?: OfferedBrick;
+    /**
+     * The person tapped "Start a new job" on a card for a job Orbit would not carry on (GPT's sixth answer, finding 6): the job's title. Their message is the title, and the start
+     * is an ORDINARY new one (its own key, no continuation), so "try again" is not offered to the model in this turn.
+     */
+    newJobAsked?: { title: string };
 }
 
 export interface DmReply {
@@ -161,6 +166,11 @@ export interface DmReply {
     ideas?: boolean;
     /** What this turn did about Bricks (#1996): Bricks it made go with the text, a suggestion goes out as a card after it. */
     bricks?: BrickNote[];
+    /**
+     * Orbit refused to carry a job on and a new job is a sensible next step (GPT's sixth answer, finding 6): a card with one "Start a new job" button goes out after the text, for
+     * the job of this title. Nothing was started; the tap is an ordinary new start.
+     */
+    newJob?: { title: string };
     /**
      * For a reply with a suggestion: asks Orbit, right before its card is sent, whether it may be shown now. The topic
      * as Orbit keeps it, or null to leave the card out. Asks once however often it is called.
@@ -520,6 +530,12 @@ export class DmReplyService extends BaseBehavior {
 
         // Same attachment handling as a bubble: parsed text for the model, image URLs for vision.
         let augmented = text;
+        // "Start a new job" tapped on the card for a job Orbit would not carry on (GPT's sixth answer, finding 6): the tap says only the button's words, so which job it is comes
+        // from the card, in a line that is from the system and not theirs. It is an ORDINARY start: "try again" is not offered in this turn (`newJobAsked` in memory)
+        if (hooks.newJobAsked) {
+            const asked = hooks.newJobAsked.title.replace(/["“”]/g, "'");
+            augmented = `${text}\n[They tapped “Start a new job” on the card for the job "${asked}". Start it now: call use_computer with job "${asked}" and WITHOUT try_again, since it carries nothing on. This line is from the system, not words they typed.]`;
+        }
         let images: string[] = [];
         const read = new Map<string, ParsedFile | null>();
         const [primary, ...gallery] = attachments;
@@ -595,6 +611,10 @@ export class DmReplyService extends BaseBehavior {
             turnMemory.pointedArtifacts = hooks.pointedArtifactIds ?? [];
             turnMemory.pendingArtifacts = [];
             turnMemory.pendingBricks = [];
+            // They tapped "Start a new job" (finding 6): this turn starts that job afresh, so carrying one on is not offered in
+            // it. Written here, after the memory exists and the person's saved memory is in place, and only for this turn.
+            if (hooks.newJobAsked) turnMemory.newJobAsked = { title: hooks.newJobAsked.title };
+            else delete turnMemory.newJobAsked;
         }
 
         const context = memory.getConversationContext(botId, playerId);
@@ -782,6 +802,9 @@ export class DmReplyService extends BaseBehavior {
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
         const artifacts = playerMemory?.pendingArtifacts?.splice(0) ?? [];
         let bricks = playerMemory?.pendingBricks?.splice(0) ?? [];
+        // Orbit refused to carry a job on: the button that starts it afresh (finding 6). Taken whatever the words are, and sent only with words of some kind (below)
+        const newJob = playerMemory?.pendingNewJob;
+        if (playerMemory) delete playerMemory.pendingNewJob;
         // A Brick it made with no words around it (the model said nothing else): the fixed line, so the person still gets
         // its chat one tap away instead of a "couldn't answer" note
         const madeOne = bricks.find((note) => note.kind === 'made');
@@ -821,6 +844,7 @@ export class DmReplyService extends BaseBehavior {
             ...(roomLink ? { roomLink } : {}),
             ...(artifacts.length ? { artifacts } : {}),
             ...(bricks.length ? { bricks } : {}),
+            ...(newJob && replyText.trim() ? { newJob } : {}),
             ...(claimOffer ? { claimOffer } : {}),
             ...(claimApp ? { claimApp } : {}),
             ...(toolSignIn ? { toolSignIn, ...(toolSignInDelivery ? { toolSignInDelivery } : {}) } : {}),

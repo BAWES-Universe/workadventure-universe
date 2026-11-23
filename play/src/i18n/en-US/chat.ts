@@ -1163,6 +1163,13 @@ const chat: BaseTranslation = {
             // Connected and this Brick may use it, but the Brick could not be told to carry on: they ask it again
             couldNotResume: "{name} is connected and this Brick may use it. Ask it again to carry on.",
         },
+        // The one button under an answer that says a computer job cannot be carried on (GPT's sixth answer, finding 6): starting it afresh.
+        // The answer's own words already say why it cannot carry on, so the card says only what the button does.
+        newJobCard: {
+            ask: "\u201c{title}\u201d as a new job?",
+            start: "Start a new job",
+            startLine: "Starts it again from the beginning",
+        },
         // The starter that opens the Apps page (#2001)
         connectMyApps: "Connect my apps",
         connectMyAppsLine: "Email, calendar, GitHub and more",

@@ -42,5 +42,7 @@ export const ideasCardKey = (messageId: string): string => `ideas:${messageId}`;
 export const offerCardKey = (messageId: string): string => `offer:${messageId}`;
 /** A Brick's offer to connect an App (#2001): closed with X, "Not now" or once it is connected, it never comes back for that message. */
 export const appCardKey = (messageId: string): string => `app:${messageId}`;
+/** "Start a new job" after an answer that says Orbit would not carry a computer job on (finding 6): closed with X or once it was tapped, it does not come back for that answer. */
+export const newJobCardKey = (messageId: string): string => `new_job:${messageId}`;
 /** "Keep Brick?" after an answer of the Brick for guests that says something needs an account (#1997): closed, it does not come back for that answer. */
 export const keepCardKey = (messageId: string): string => `keep:${messageId}`;

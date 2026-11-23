@@ -632,6 +632,26 @@ export interface EarlierStart {
     attempt: string;
 }
 
+/**
+ * Orbit's refusal to carry a job on ("try again", GPT's sixth answer, finding 6): `why` says which refusal it is, and for a job it cannot carry on it also says who or what ended it
+ * (`endedBy`) or that it had finished (`status`). Nothing was made, and nothing takes its place.
+ */
+export interface CannotContinue {
+    why: 'not_found' | 'not_theirs' | 'live' | 'not_continuable' | 'no_conversation';
+    endedBy?: 'person' | 'off';
+    status?: string;
+}
+
+/** Orbit's `cannot_continue`, read as this server will use it: a `why` it knows (anything else is read as the one that says least, `not_continuable`), and the little more it says. */
+export function cannotContinueOf(data: Record<string, unknown>): CannotContinue {
+    const whys: readonly CannotContinue['why'][] = ['not_found', 'not_theirs', 'live', 'not_continuable', 'no_conversation'];
+    const said = typeof data.why === 'string' ? data.why : '';
+    const why = whys.find((one) => one === said) ?? 'not_continuable';
+    const endedBy = data.endedBy === 'person' || data.endedBy === 'off' ? (data.endedBy as 'person' | 'off') : undefined;
+    const status = typeof data.status === 'string' && data.status ? data.status.slice(0, 40) : undefined;
+    return { why, ...(endedBy ? { endedBy } : {}), ...(status ? { status } : {}) };
+}
+
 /** A key Orbit takes for a start (`^[A-Za-z0-9_-]{8,64}$`): one that is not that is replaced by a new one, so the start is never refused for its key. */
 const START_KEY_SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -2018,7 +2038,7 @@ export class AdminApiService {
         viaBotId: string,
         userId: string,
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string }; startKey?: string; /** "Try again" (piece 8): the ended job to carry on. */ continuesJobId?: string }
-    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; continued?: true } | ({ ok: false; reason: string; queued?: true; app?: string; earlier?: EarlierStart })> {
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; continued?: true } | ({ ok: false; reason: string; queued?: true; app?: string; earlier?: EarlierStart; cannotContinue?: CannotContinue })> {
         // The key of this start. A caller that asks for the same thing again (a reply written again, a tool call retried) sends the key of the first ask, so Orbit answers with
         // the job that ask made and never makes a second; a deliberate second job is a new ask and has a key of its own
         const startKey = typeof ask.startKey === 'string' && START_KEY_SHAPE.test(ask.startKey) ? ask.startKey : randomUUID();
@@ -2060,7 +2080,7 @@ export class AdminApiService {
         userId: string,
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string }; continuesJobId?: string },
         startKey: string
-    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; continued?: true } | { ok: false; reason: string; app?: string; earlier?: EarlierStart } | 'unclear'> {
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; continued?: true } | { ok: false; reason: string; app?: string; earlier?: EarlierStart; cannotContinue?: CannotContinue } | 'unclear'> {
         const response = await this.brickCall<{ ok?: unknown; reason?: unknown; app?: unknown; job?: { id?: unknown; status?: unknown; queuedFor?: unknown; attempt?: unknown }; restoredFrom?: unknown; continued?: unknown }>(
             'post',
             `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
@@ -2100,6 +2120,9 @@ export class AdminApiService {
         }
         // Only Orbit's own refusal, in the shape it gives it (`ok: false` and a reason that is a word), is final here; an answer that is neither a whole success nor that is `'unclear'`
         if (isOrbitRefusal(data)) {
+            // Orbit will not carry that job on (GPT's sixth answer, finding 6): it made NOTHING, and says why (and, for a job it cannot carry on, who or what ended it, or that it
+            // finished). The game says that reason in Fable's approved words and starts nothing in its place
+            if (data.reason === 'cannot_continue') return { ok: false, reason: 'cannot_continue', cannotContinue: cannotContinueOf(data) };
             return { ok: false, reason: data.reason, ...(typeof data.app === 'string' ? { app: data.app } : {}) };
         }
         return 'unclear';
