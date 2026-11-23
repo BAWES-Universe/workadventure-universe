@@ -34,6 +34,10 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
                 ...used.map((id) => `matrix:inbox:${id}`),
                 ...used.map((id) => `matrix:inbox-open:${id}`),
                 ...used.map((id) => `matrix:inbox-answer:${id}`),
+                // ADMIT writes its mark with no expiry, and the resend and waited marks outlive a failed assertion too (CodeRabbit on 68379005, finding 16)
+                ...used.map((id) => `matrix:inbox-admitted:${id}`),
+                ...used.map((id) => `matrix:inbox-resend:${id}`),
+                ...used.map((id) => `matrix:inbox-waited:${id}`),
                 ...used.map((id) => `matrix:room-order:!room-${id}:matrix.test`),
             ]);
         for (const id of used) await client.zRem(INBOX_KEY, id);

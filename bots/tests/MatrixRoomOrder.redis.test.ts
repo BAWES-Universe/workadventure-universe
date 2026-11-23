@@ -28,7 +28,15 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
         await client.connect();
         giveTurnBack = await takeTurnOnInbox(client as never);
     }, 330_000);
+    /**
+     * What a test leaves running is stopped before its keys go and before the client closes (CodeRabbit on 68379005, finding 17): routers settle (a parked event is handed back, its timer
+     * cleared), work a test held open is let go (newest first), and every entry a test took or recovered ends, so no beat calls the store after the suite.
+     */
+    const cleanups: Array<() => unknown> = [];
+    const entries: InboxEntry[] = [];
     afterEach(async () => {
+        for (const cleanup of cleanups.splice(0).reverse()) await Promise.resolve(cleanup()).catch(() => undefined);
+        await Promise.all(entries.splice(0).map((entry) => entry.done().catch(() => undefined)));
         vi.restoreAllMocks();
         const keys = await client.keys('matrix:*');
         const mine = keys.filter((key) => used.some((id) => key.endsWith(id)) || rooms.some((room) => key.endsWith(room)));
@@ -61,9 +69,24 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
         origin_server_ts: (clock += 10),
         content: { msgtype: 'm.text', body },
     });
-    const inboxOn = (extra: Parameters<typeof createEventInbox>[1] = {}) => createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000, ...extra });
+    /** An inbox whose entries are kept for the teardown (it ends them, so none beats after the suite). */
+    const tracked = (inbox: EventInbox): EventInbox => ({
+        owner: inbox.owner,
+        take: async (eventId, event) => {
+            const taken = await inbox.take(eventId, event);
+            if (taken && taken !== 'busy') entries.push(taken);
+            return taken;
+        },
+        recover: async () => {
+            const found = await inbox.recover();
+            for (const one of found) entries.push(one.entry);
+            return found;
+        },
+    });
+    const inboxOn = (extra: Parameters<typeof createEventInbox>[1] = {}) => tracked(createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000, ...extra }));
     const serve = async (inbox: EventInbox, onEvent: MatrixEventHandler['onEvent'], extra: Partial<MatrixEventHandler> = {}) => {
         const router = createMatrixAppServiceRouter(config, { onEvent, userExists: async () => true, ...extra }, { inbox, waitCheckMs: 50 });
+        cleanups.push(() => router.settle(500));
         const app = express();
         app.use(router);
         const server = await new Promise<Server>((resolve) => {
@@ -115,18 +138,30 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             const room = roomOf('jobs-two');
             const other = roomOf('other-two');
             const [pauseId, resumeId, elsewhere] = [fresh('pause2'), fresh('resume2'), fresh('elsewhere2')];
-            // server A takes Pause in and never finishes it (as good as gone: it never beats again)
-            const A = await serve(inboxOn({ owner: 'server-a', staleMs: 60 }), () => new Promise<void>(() => undefined));
+            // server A takes Pause in and never finishes it (as good as gone: it never beats again); its handler is let go in the teardown
+            let releaseA: (() => void) | undefined;
+            const A = await serve(inboxOn({ owner: 'server-a', staleMs: 60 }), () => new Promise<void>((resolve) => (releaseA = resolve)));
+            cleanups.push(() => releaseA?.());
             expect((await A.put('t1', say(room, pauseId, 'Pause the job'))).status).toBe(200);
             const order: string[] = [];
-            const B = await serve(inboxOn({ owner: 'server-b', staleMs: 60 }), async (event) => void order.push(String(event.content.body)));
+            // B beats (Resume, which it holds while it waits, stays fresh): only Pause, which A never beats, goes stale (CodeRabbit on 68379005, finding 18)
+            let ranAs: string | null = null;
+            const B = await serve(inboxOn({ owner: 'server-b', staleMs: 60, beatEveryMs: 20 }), async (event) => {
+                if (event.event_id === resumeId) ranAs = await stateOf(resumeId);
+                order.push(String(event.content.body));
+            });
             expect((await B.put('t2', say(room, resumeId, 'Resume the job'), say(other, elsewhere, 'Hello'))).status).toBe(200);
             await vi.waitFor(() => expect(order).toContain('Hello'));
             await pause(150);
             expect(order).not.toContain('Resume the job');
-            // B takes the stale Pause over: Pause first, then Resume
-            await B.router.recover();
+            const waitingAs = await stateOf(resumeId);
+            expect(waitingAs).toMatch(/^p\|[^-|][^|]*\|0$/);
+            // B takes the stale Pause over, and only Pause: Resume wakes under the acquisition it had all along
+            expect(await B.router.recover()).toBe(1);
             await vi.waitFor(() => expect(order.filter((one) => one !== 'Hello')).toEqual(['Pause the job', 'Resume the job']));
+            expect(await stateOf(resumeId)).toBe('d');
+            // the acquisition Resume waited under is the one that ran it (it was never taken again), and its try was counted when it ran
+            expect(ranAs).toBe(`p|${waitingAs!.split('|')[1]}|1`);
         });
 
         it('an earlier event that ran out of tries is resolved (the person is told), so the later one then runs', async () => {
@@ -341,9 +376,16 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             quiet();
             const room = roomOf('unproved');
             const id = fresh('unproved');
-            // the turn began (paid) and the server went away in the middle of it
-            const first = makeBridge(room, () => new Promise(() => undefined));
-            const A = await serve(dyingInbox(), (event, hooks) => first.bridge.onEvent(event, hooks));
+            // the turn began (paid) and the server went away in the middle of it. The reply is held through the recovery, and let go in the teardown, which then waits for that first
+            // handler to end (its typing refresh stops with it: CodeRabbit on 68379005, finding 19)
+            let failReply!: (error: Error) => void;
+            const first = makeBridge(room, () => new Promise((_, reject) => (failReply = reject)));
+            let firstRun: Promise<void> | undefined;
+            const A = await serve(dyingInbox(), (event, hooks) => (firstRun = first.bridge.onEvent(event, hooks)));
+            cleanups.push(async () => {
+                failReply?.(new Error('the test is over'));
+                await firstRun;
+            });
             expect((await A.put('t1', say(room, id, 'Pause the job'))).status).toBe(200);
             await vi.waitFor(async () => expect(await stateOf(id)).toMatch(/\|\$$/));
             await pause(150);
@@ -435,13 +477,14 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             delete bare.origin_server_ts;
             expect((await put('t1', bare)).status).toBe(200);
             await vi.waitFor(async () => expect(await stateOf(id)).toBe('p|-|1'));
+            // The time kept with the event, read once the give-back is confirmed and before anything can end the entry (CodeRabbit on 68379005, finding 20)
+            const kept = JSON.parse((await client.get(`matrix:inbox:${id}`)) ?? 'null') as { arrived?: unknown } | null;
+            expect(typeof kept?.arrived).toBe('number');
+            const expected = Math.floor((kept!.arrived as number) / 1000);
             await pause(120);
             const B = await serve(inboxOn({ staleMs: 60 }), async (event, hooks) => void seen.push(hooks?.arrived));
             expect(await B.router.recover()).toBe(1);
             await vi.waitFor(() => expect(seen).toHaveLength(2));
-            const kept = JSON.parse((await client.get(`matrix:inbox:${id}`)) ?? 'null') as { arrived: number } | null;
-            const expected = kept ? Math.floor(kept.arrived / 1000) : seen[0];
-            expect(typeof seen[0]).toBe('number');
             expect(seen).toEqual([expected, expected]);
         });
 
@@ -482,6 +525,258 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
         });
     });
 
+    describe('CodeRabbit on 68379005, finding 6: an answer with no words is proved by its parts (through the real bridge)', () => {
+        const botId = '0b7c1d2e-1111-4222-8333-944455556666';
+        const botUser = `@bot_${botId}:matrix.test`;
+        const card = { id: 'art-1', title: 'Trip plan', kind: 'page', version: 2 };
+        const bridgeFor = (room: string, reply: unknown, sendMessage: (content: Record<string, unknown>) => Promise<unknown>) => {
+            const deps: any = {
+                getBotConfig: vi.fn(async () => ({ botId, name: 'Guide', enabled: true, aiProviderRef: 'p' })),
+                checkAccess: vi.fn(async () => ({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } })),
+                reply: vi.fn(async () => reply),
+                rooms: { rememberDmRoom: vi.fn(async () => undefined), getDmRoomBot: vi.fn(async (r: string) => (r === room ? botId : null)), forgetDmRoom: vi.fn(async () => undefined) },
+            };
+            const matrix: any = {
+                ensureRegistered: vi.fn(async () => undefined),
+                setDisplayName: vi.fn(async () => undefined),
+                getDisplayName: vi.fn(async () => 'Guide'),
+                joinRoom: vi.fn(async () => undefined),
+                leaveRoom: vi.fn(async () => undefined),
+                sendText: vi.fn(async () => '$text'),
+                sendMessage: vi.fn(async (_user: string, _room: string, content: Record<string, unknown>) => sendMessage(content)),
+                setTyping: vi.fn(async () => undefined),
+                getJoinedMembers: vi.fn(async () => ['@alice:matrix.test', botUser]),
+                getRecentMessages: vi.fn(async () => []),
+            };
+            return new MatrixDmBridge(config, matrix as never, deps);
+        };
+        const run = async (bridge: MatrixDmBridge, room: string, what: string) => {
+            const proofs: string[] = [];
+            await bridge.onEvent(say(room, fresh(what), 'Make me the plan'), { paid: async () => undefined, durable: true, answered: async (id) => void proofs.push(id) });
+            return proofs;
+        };
+
+        it('an answer that is only an artifact card is proved by the card Matrix took; one whose card did not get through is not', async () => {
+            quiet();
+            const room = roomOf('artifact-only');
+            let n = 0;
+            const ok = bridgeFor(room, { text: '', media: [], artifacts: [card] }, async () => `$card-${++n}`);
+            expect(await run(ok, room, 'artifact-only')).toEqual(['$card-1']);
+            const failing = bridgeFor(room, { text: '', media: [], artifacts: [card, { ...card, id: 'art-2' }] }, async (content) => {
+                if ((content as { body?: string }).body?.startsWith('Trip plan') && ++n === 3) throw new Error('Matrix refused it');
+                return `$card-${n}`;
+            });
+            // one card of two did not get through: no proof (a server that takes the event over tells the person)
+            expect(await run(failing, room, 'artifact-half')).toEqual([]);
+        });
+
+        it('an answer that is only a file is proved by the file\'s message; a file that failed proves nothing', async () => {
+            quiet();
+            const room = roomOf('media-only');
+            const file = { url: 'https://files.example/plan.pdf', mediaType: 'file', name: 'plan.pdf' };
+            const ok = bridgeFor(room, { text: '', media: [file], artifacts: [] }, async () => '$other');
+            (ok as any).sendMedia = async (_user: string, _room: string, _item: unknown, onSent?: (id: string) => void) => {
+                onSent?.('$file-1');
+                return null;
+            };
+            expect(await run(ok, room, 'media-only')).toEqual(['$file-1']);
+            const failing = bridgeFor(room, { text: '', media: [file], artifacts: [] }, async () => '$other');
+            (failing as any).sendMedia = async () => {
+                throw new Error('the upload failed');
+            };
+            expect(await run(failing, room, 'media-failed')).toEqual([]);
+        });
+
+        it('an answer with words is still proved by its words alone (the parts change nothing of that)', async () => {
+            quiet();
+            const room = roomOf('words-and-card');
+            const bridge = bridgeFor(room, { text: 'Here it is.', media: [], artifacts: [card] }, async () => '$card');
+            expect(await run(bridge, room, 'words-and-card')).toEqual(['$text']);
+        });
+    });
+
+    describe('CodeRabbit on 68379005: the gate, recovery and shutdown (findings 4, 5, 7, 8, 9)', () => {
+        const realEval = (script: string, o: unknown) => (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, o);
+        const isTurn = (script: string) => script.includes('local function go()');
+        const isYield = (script: string) => script.includes("A wait that already gave this acquisition's try back");
+        /** An inbox over the real store whose calls can be held: `hold` answers a promise to wait for (or nothing) for a script and its keys. */
+        const heldInbox = (hold: (script: string, keys: string[]) => Promise<unknown> | undefined, extra: Parameters<typeof createEventInbox>[1] = {}) =>
+            tracked(
+                createEventInbox(
+                    () =>
+                        ({
+                            eval: async (script: string, o: { keys: string[] }) => {
+                                await hold(script, o.keys);
+                                return realEval(script, o);
+                            },
+                            zRangeByScore: (...args: unknown[]) => (client as never as { zRangeByScore: (...a: unknown[]) => Promise<string[]> }).zRangeByScore(...args),
+                        }) as never,
+                    { ttlSeconds: 60, beatEveryMs: 60_000, staleMs: 60, log: () => undefined, ...extra }
+                )
+            );
+        const firstFails = (id: () => string) => {
+            let failed = false;
+            return async (event: MatrixEvent) => {
+                if (event.event_id === id() && !failed) {
+                    failed = true;
+                    throw new Error('before paid work');
+                }
+            };
+        };
+
+        it('5: the shutdown deadline holds while the store stalls on handing a waiting event back', async () => {
+            quiet();
+            const room = roomOf('settle-stall');
+            const [first, second] = [fresh('stall-first'), fresh('stall-second')];
+            let unstall!: () => void;
+            const stalled = new Promise<void>((resolve) => (unstall = resolve));
+            cleanups.push(() => unstall());
+            const A = await serve(
+                heldInbox((script) => (isYield(script) ? stalled : undefined)),
+                firstFails(() => first)
+            );
+            expect((await A.put('t1', say(room, first, 'one'), say(room, second, 'two'))).status).toBe(200);
+            await vi.waitFor(async () => expect(await stateOf(first)).toBe('p|-|1'));
+            await vi.waitFor(async () => expect(await stateOf(second)).toMatch(/^p\|[^-|][^|]*\|0$/));
+            const started = Date.now();
+            const late = setTimeout(() => unstall(), 1_500);
+            expect(await A.router.settle(50)).toBe(false);
+            clearTimeout(late);
+            expect(Date.now() - started).toBeLessThan(1_000);
+        });
+
+        it('4: an event that meets the gate after the shutdown began is handed back before the shutdown says it is done', async () => {
+            quiet();
+            const room = roomOf('settle-late');
+            const [first, second] = [fresh('late-first'), fresh('late-second')];
+            let open!: () => void;
+            const gate = new Promise<void>((resolve) => (open = resolve));
+            cleanups.push(() => open());
+            const A = await serve(
+                heldInbox((script, keys) => {
+                    // the second's look at the gate is held until the shutdown has begun; the hand-off itself is slow
+                    if (isTurn(script) && keys[0] === `matrix:event:${second}`) return gate;
+                    if (isYield(script)) return pause(200);
+                    return undefined;
+                }),
+                firstFails(() => first)
+            );
+            expect((await A.put('t1', say(room, first, 'one'), say(room, second, 'two'))).status).toBe(200);
+            await vi.waitFor(async () => expect(await stateOf(first)).toBe('p|-|1'));
+            const settling = A.router.settle(3_000);
+            await pause(50);
+            open();
+            expect(await settling).toBe(true);
+            // handed back already: no owner, and the try it never had is not counted
+            expect(await stateOf(second)).toBe('p|-|0');
+        });
+
+        it('a waiting event whose look at the gate failed (the store did not answer) is handed back at shutdown with its untried try given back too', async () => {
+            quiet();
+            const room = roomOf('settle-unsure');
+            const [first, second] = [fresh('unsure-first'), fresh('unsure-second')];
+            const A = await serve(
+                heldInbox((script, keys) => (isTurn(script) && keys[0] === `matrix:event:${second}` ? Promise.reject(new Error('store hiccup')) : undefined)),
+                firstFails(() => first)
+            );
+            expect((await A.put('t1', say(room, first, 'one'), say(room, second, 'two'))).status).toBe(200);
+            await vi.waitFor(async () => expect(await stateOf(first)).toBe('p|-|1'));
+            await pause(100);
+            // it waits with the try of its take still on it (no answer from the gate gave it back)
+            expect(await stateOf(second)).toMatch(/^p\|[^-|][^|]*\|1$/);
+            expect(await A.router.settle(2_000)).toBe(true);
+            expect(await stateOf(second)).toBe('p|-|0');
+        });
+
+        it('7: an entry a scan took out of the index before it was admitted is back in it once admitted, so a later scan finds it', async () => {
+            quiet();
+            const room = roomOf('admit-index');
+            const id = fresh('admit-index');
+            const owner = inboxOn({ staleMs: 60 });
+            const taken = (await owner.take(id, say(room, id, 'Pause the job'))) as InboxEntry;
+            await pause(120);
+            // the owner went quiet before its transaction was kept: a scan does not hand it out, and takes it out of the index
+            expect(await inboxOn({ staleMs: 60 }).recover()).toHaveLength(0);
+            expect(await client.zScore(INBOX_KEY, id)).toBeNull();
+            // the owner was only slow: it admits (its transaction is answered 200), and the entry is in the index again at once
+            await taken.admit();
+            expect(await client.zScore(INBOX_KEY, id)).not.toBeNull();
+            // it then stops before any beat: the next scan finds it
+            await pause(120);
+            const found = await inboxOn({ staleMs: 60 }).recover();
+            expect(found.map((one) => (one.event as MatrixEvent).event_id)).toEqual([id]);
+        });
+
+        it('8: a later event that waits through several lost owners keeps its tries, and runs once the earlier one is done', async () => {
+            quiet();
+            const room = roomOf('wait-tries');
+            const [first, second] = [fresh('long-first'), fresh('waits-long')];
+            // the first runs long on a live server (it beats)
+            let finishFirst!: () => void;
+            const A = await serve(inboxOn({ staleMs: 60, beatEveryMs: 20 }), (event) =>
+                event.event_id === first ? new Promise<void>((resolve) => (finishFirst = resolve)) : Promise.resolve()
+            );
+            cleanups.push(() => finishFirst?.());
+            expect((await A.put('t1', say(room, first, 'one'))).status).toBe(200);
+            await vi.waitFor(() => expect(finishFirst).toBeDefined());
+            // the second reaches a server that never beats: it waits there, and each scan finds its owner gone and takes it over, and it waits again
+            const told: Array<[string, string]> = [];
+            const handled: string[] = [];
+            const onGaveUp = async (event: MatrixEvent, why: string) => void told.push([event.event_id, why]);
+            const X = await serve(inboxOn({ staleMs: 60, maxTries: 3 }), async (event) => void handled.push(event.event_id), { onGaveUp });
+            expect((await X.put('t2', say(room, second, 'two'))).status).toBe(200);
+            await vi.waitFor(async () => expect(await stateOf(second)).toMatch(/^p\|[^-|][^|]*\|0$/));
+            let last = X;
+            for (let lost = 0; lost < 4; lost++) {
+                await pause(120);
+                const next = await serve(inboxOn({ staleMs: 60, maxTries: 3 }), async (event) => void handled.push(event.event_id), { onGaveUp });
+                expect(await next.router.recover()).toBe(1);
+                // taken over, and waiting again with no try used
+                await vi.waitFor(async () => expect(await stateOf(second)).toMatch(/^p\|[^-|][^|]*\|0$/));
+                last = next;
+            }
+            expect(told).toEqual([]);
+            expect(handled).toEqual([]);
+            finishFirst();
+            await vi.waitFor(() => expect(handled).toEqual([second]));
+            await vi.waitFor(async () => expect(await stateOf(second)).toBe('d'));
+            expect(told).toEqual([]);
+            void last;
+        });
+
+        it('9: a live event that waited past the age limit is closed as stale when its turn comes (never run late); one that reaches the front in time runs', async () => {
+            quiet();
+            const room = roomOf('wait-old');
+            const [first, second, third] = [fresh('old-first'), fresh('waits-old'), fresh('waits-young')];
+            let finishFirst!: () => void;
+            const A = await serve(inboxOn({ staleMs: 60_000, beatEveryMs: 20 }), (event) =>
+                event.event_id === first ? new Promise<void>((resolve) => (finishFirst = resolve)) : Promise.resolve()
+            );
+            cleanups.push(() => finishFirst?.());
+            expect((await A.put('t1', say(room, first, 'one'))).status).toBe(200);
+            await vi.waitFor(() => expect(finishFirst).toBeDefined());
+            const told: Array<[string, string]> = [];
+            const handled: string[] = [];
+            // its owner is alive (it beats) the whole time: no take-over ever looks at its age
+            const X = await serve(inboxOn({ staleMs: 60_000, beatEveryMs: 20, unfinishedMaxMs: 300 }), async (event) => void handled.push(event.event_id), {
+                onGaveUp: async (event, why) => void told.push([event.event_id, why]),
+            });
+            expect((await X.put('t2', say(room, second, 'two'))).status).toBe(200);
+            await vi.waitFor(async () => expect(await stateOf(second)).toMatch(/^p\|[^-|][^|]*\|0$/));
+            await pause(400);
+            finishFirst();
+            await vi.waitFor(() => expect(told).toEqual([[second, 'stale']]));
+            expect(handled).toEqual([]);
+            expect(await stateOf(second)).toBe('u');
+            expect(await client.zScore(`matrix:room-order:${room}`, second)).toBeNull();
+            // the recoverable status keeps the event
+            expect(await client.get(`matrix:inbox:${second}`)).toContain(second);
+            // the room goes on: a later event that reaches the front in time runs
+            expect((await X.put('t3', say(room, third, 'three'))).status).toBe(200);
+            await vi.waitFor(() => expect(handled).toEqual([third]));
+        });
+    });
+
     describe('G1: the gate and shutdown', () => {
         it('a member of the room order left by a server that ended it without taking it out (an older version) holds nothing up', async () => {
             quiet();
@@ -514,8 +809,9 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             expect((await A.put('t1', say(room, first, 'one'), say(room, second, 'two'))).status).toBe(200);
             await vi.waitFor(async () => expect(await stateOf(first)).toBe('p|-|1'));
             await pause(100);
-            // second waits, held by A
-            expect(await stateOf(second)).toMatch(/\|1$/);
+            // second waits, held by A, its try given back while it waits (a try counts only when it runs)
+            expect(await stateOf(second)).toMatch(/^p\|[^-|][^|]*\|0$/);
+            expect(await client.get(`matrix:inbox-waited:${second}`)).not.toBeNull();
             expect(await A.router.settle(2_000)).toBe(true);
             // given back: no owner, and the try it never had is not counted
             expect(await stateOf(second)).toBe('p|-|0');

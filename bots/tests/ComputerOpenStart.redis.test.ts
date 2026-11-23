@@ -1878,13 +1878,15 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 await one.put('t1', event(a, 'first'), event(b, 'second'));
                 // the second waits (held by the first server) behind the first, which failed and went back (GPT's seventh note G1)
                 await vi.waitFor(() => expect(one.handled).toEqual([a]));
-                await quiet();
+                // the give-back is committed before the other server looks (CodeRabbit on 68379005, finding 13): never a fixed wait
+                await vi.waitFor(async () => expect(await client.get(`matrix:event:${a}`)).toMatch(/^p\|-\|\d+$/));
                 expect(one.handled).toEqual([a]);
                 expect(await two.recover()).toBe(1);
                 await vi.waitFor(() => expect(answers).toEqual([a]));
                 // then the second runs where it waited (its first try fails too) and comes back at the other server: answered after the first
                 await vi.waitFor(() => expect(one.handled).toEqual([a, b]));
-                await quiet();
+                // the give-back is committed before the other server looks (CodeRabbit on 68379005, finding 13): never a fixed wait
+                await vi.waitFor(async () => expect(await client.get(`matrix:event:${b}`)).toMatch(/^p\|-\|\d+$/));
                 expect(await two.recover()).toBe(1);
                 await vi.waitFor(() => expect(answers).toHaveLength(2));
                 expect(answers).toEqual([a, b]);
@@ -1900,11 +1902,13 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 const two = await instance(orbit, who, { answers });
                 await one.put('t1', event(early, 'first', 1_000), event(late, 'second', 2_000));
                 await vi.waitFor(() => expect(one.handled).toEqual([early]));
-                await quiet();
+                // the give-back is committed before the other server looks (CodeRabbit on 68379005, finding 13): never a fixed wait
+                await vi.waitFor(async () => expect(await client.get(`matrix:event:${early}`)).toMatch(/^p\|-\|\d+$/));
                 expect(await two.recover()).toBe(1);
                 await vi.waitFor(() => expect(answers).toEqual([early]));
                 await vi.waitFor(() => expect(one.handled).toEqual([early, late]));
-                await quiet();
+                // the give-back is committed before the other server looks (CodeRabbit on 68379005, finding 13): never a fixed wait
+                await vi.waitFor(async () => expect(await client.get(`matrix:event:${late}`)).toMatch(/^p\|-\|\d+$/));
                 expect(await two.recover()).toBe(1);
                 await vi.waitFor(() => expect(answers).toHaveLength(2));
                 expect(answers).toEqual([early, late]);

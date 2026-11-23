@@ -40,6 +40,8 @@ export const INBOX_RESEND_PREFIX = 'matrix:inbox-resend:';
 export const RESEND_WAIT_SECONDS = 10 * 60;
 /** The link from an event to the reply that answered it (see `ANSWERED`). */
 export const INBOX_ANSWER_PREFIX = 'matrix:inbox-answer:';
+/** The acquisition whose wait behind an earlier event of its room gave its try back (CodeRabbit on 68379005, finding 8): a try counts only when the event runs. */
+export const INBOX_WAITED_PREFIX = 'matrix:inbox-waited:';
 /** An unfinished entry taken in longer ago than this is closed by the scan, never run late: the person is told to send it again (that is the fresh consent). */
 export const UNFINISHED_MAX_MS = 24 * 60 * 60 * 1000;
 /** How long an entry closed as UNANSWERED (`u`) is kept, with its event: the recoverable status of a DM nobody answered. */
@@ -88,6 +90,24 @@ const ADM = `local function admitted(held)
   return redis.call('EXISTS', KEYS[4]) == 0
 end
 `;
+/** When an entry was taken in, from what is kept in its event's slot: the stamp kept with the event (microseconds, read as milliseconds), or the time Matrix gave it (an entry kept bare). */
+const AGE = `local function takenAt(payload)
+  if not payload then
+    return nil
+  end
+  local ok, read = pcall(cjson.decode, payload)
+  if ok and type(read) == 'table' then
+    if type(read.arrived) == 'number' then
+      return read.arrived / 1000
+    elseif type(read.event) == 'table' and type(read.event.origin_server_ts) == 'number' then
+      return read.event.origin_server_ts
+    elseif type(read.origin_server_ts) == 'number' then
+      return read.origin_server_ts
+    end
+  end
+  return nil
+end
+`;
 /**
  * Takes the event into the inbox, and gives it its place in its room when it has one (ARGV[7]). Answers:
  * - `0` when it was handled or closed, or is held and ADMITTED (its transaction was kept whole: KEYS[8]): a duplicate is skipped;
@@ -124,6 +144,8 @@ return 1
 /**
  * The transaction this event came in has kept all its events: the entry is ADMITTED (for good, never by a lapse), its expiry is taken off (an unfinished entry never lapses, G2) and the open
  * mark goes. Only while the entry is still this acquisition's: `0` otherwise, and the caller must not answer Matrix as if the event were kept (CodeRabbit on 24dea75c, finding 3).
+ * It is put back in the inbox's index at once (ARGV[2], now): a scan that met it before it was admitted took it out of the index, and an admitted entry must be findable by the next scan
+ * even if this server stops before its next beat (CodeRabbit on 68379005, finding 7).
  */
 const ADMIT = `
 local held = redis.call('GET', KEYS[1])
@@ -134,6 +156,7 @@ redis.call('SET', KEYS[8], '1')
 redis.call('PERSIST', KEYS[1])
 redis.call('PERSIST', KEYS[3])
 redis.call('DEL', KEYS[4])
+redis.call('ZADD', KEYS[2], tonumber(ARGV[2]), ARGV[3])
 return 1
 `;
 /** Still working: the entry's score moves to now, only while it is still this server's. An admitted entry has no expiry (one an older server put on it is taken off). */
@@ -181,6 +204,7 @@ redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])
 redis.call('DEL', KEYS[6])
 redis.call('DEL', KEYS[8])
+redis.call('DEL', KEYS[10])
 return 1
 `;
 /**
@@ -199,6 +223,7 @@ if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .
 end
 local tries = tonumber(string.match(held, '|(%d+)$')) or tonumber(string.match(held, '|(%d+)|%$$')) or 1
 redis.call('DEL', KEYS[4])
+redis.call('DEL', KEYS[10])
 if tries >= tonumber(ARGV[3]) then
   redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
   redis.call('ZREM', KEYS[2], ARGV[4])
@@ -235,6 +260,7 @@ redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])
 redis.call('DEL', KEYS[6])
 redis.call('DEL', KEYS[8])
+redis.call('DEL', KEYS[10])
 if redis.call('ZSCORE', KEYS[5], ARGV[2]) then
   redis.call('SET', KEYS[9], '1', 'EX', tonumber(ARGV[3]))
 end
@@ -255,11 +281,12 @@ return redis.call('GET', KEYS[3])
  * the person is told once, by whoever got this answer.
  */
 const TAKEOVER = `
-${ADM}local held = redis.call('GET', KEYS[1])
+${ADM}${AGE}local held = redis.call('GET', KEYS[1])
 if held == 'd' or held == 'u' then
   -- A closed entry keeps what is in the event's slot: it is the mark of the acquisition whose give-back closed it, which a retry of that give-back (its first answer was lost) still has to find
   redis.call('ZREM', KEYS[2], ARGV[4])
   redis.call('DEL', KEYS[8])
+  redis.call('DEL', KEYS[10])
   return nil
 end
 local function unanswered(gone)
@@ -269,6 +296,7 @@ local function unanswered(gone)
   redis.call('DEL', KEYS[4])
   redis.call('DEL', KEYS[6])
   redis.call('DEL', KEYS[8])
+  redis.call('DEL', KEYS[10])
   if gone then
     redis.call('SET', KEYS[3], gone, 'EX', tonumber(ARGV[8]))
   else
@@ -318,6 +346,7 @@ if paid then
     redis.call('DEL', KEYS[3])
     redis.call('DEL', KEYS[6])
     redis.call('DEL', KEYS[8])
+    redis.call('DEL', KEYS[10])
     return '!answered|' .. (gone or '')
   end
   unanswered(gone)
@@ -334,21 +363,13 @@ if not payload then
   return '!lost|'
 end
 -- When it was taken in: the stamp kept with the event (microseconds), or the time Matrix gave it (an entry kept bare)
-local ok, read = pcall(cjson.decode, payload)
-local at = nil
-if ok and type(read) == 'table' then
-  if type(read.arrived) == 'number' then
-    at = read.arrived / 1000
-  elseif type(read.event) == 'table' and type(read.event.origin_server_ts) == 'number' then
-    at = read.event.origin_server_ts
-  elseif type(read.origin_server_ts) == 'number' then
-    at = read.origin_server_ts
-  end
-end
+local at = takenAt(payload)
 if at and at < tonumber(ARGV[7]) then
   unanswered(payload)
   return '!stale|' .. payload
 end
+-- A new acquisition: a try the one before gave back while it waited is counted again here (it is given back again if this one waits too)
+redis.call('DEL', KEYS[10])
 redis.call('SET', KEYS[1], 'p|' .. ARGV[1] .. '|' .. tostring(tries + 1))
 redis.call('PERSIST', KEYS[3])
 redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[4])
@@ -370,32 +391,68 @@ return 1
  * The gate of a room (GPT's seventh note G1): `1` when no earlier event of this room is unfinished (at any server), so this one may run; `0` when one is (this one waits, still held and
  * beating, and that is not a try); `2` when this entry is no longer this acquisition's. A member of the room's order whose state is gone or ended is taken out as it is met. Reads the state of
  * the earlier events by name (ARGV[3] .. id): the shared store is one Redis, not a cluster.
+ * A try counts only when the event runs (CodeRabbit on 68379005, finding 8): the first wait of an acquisition gives its try back (KEYS[10] names that acquisition), and the go counts it again.
+ * The age limit is met on the way from waiting to running (finding 9): an entry taken in before ARGV[6] is never run late. It is closed as UNANSWERED (ARGV[7] seconds, with its event) and
+ * answers `3`, so the person is told to send it again (that is the fresh consent).
  */
 const TURN = `
-local held = redis.call('GET', KEYS[1])
+${AGE}local held = redis.call('GET', KEYS[1])
 if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' then
   return 2
 end
+local paid = string.sub(held, -2) == '|$'
+local function tries()
+  return tonumber(string.match(held, '|(%d+)$')) or 1
+end
+local function wait()
+  if not paid and redis.call('GET', KEYS[10]) ~= ARGV[1] then
+    redis.call('SET', KEYS[1], 'p|' .. ARGV[1] .. '|' .. tostring(math.max(tries() - 1, 0)), 'KEEPTTL')
+    redis.call('SET', KEYS[10], ARGV[1], 'EX', tonumber(ARGV[7]))
+  end
+  return 0
+end
+local function go()
+  if not paid then
+    local payload = redis.call('GET', KEYS[3])
+    local at = takenAt(payload)
+    if at and at < tonumber(ARGV[6]) then
+      redis.call('SET', KEYS[1], 'u', 'EX', tonumber(ARGV[7]))
+      redis.call('ZREM', KEYS[2], ARGV[2])
+      redis.call('ZREM', KEYS[5], ARGV[2])
+      redis.call('DEL', KEYS[4])
+      redis.call('DEL', KEYS[6])
+      redis.call('DEL', KEYS[8])
+      redis.call('DEL', KEYS[10])
+      redis.call('SET', KEYS[3], payload, 'EX', tonumber(ARGV[7]))
+      return 3
+    end
+    if redis.call('GET', KEYS[10]) == ARGV[1] then
+      redis.call('SET', KEYS[1], 'p|' .. ARGV[1] .. '|' .. tostring(tries() + 1), 'KEEPTTL')
+      redis.call('DEL', KEYS[10])
+    end
+  end
+  return 1
+end
 local mine = redis.call('ZSCORE', KEYS[5], ARGV[2])
 if not mine then
-  return 1
+  return go()
 end
 local earlier = redis.call('ZRANGEBYSCORE', KEYS[5], '-inf', '(' .. mine, 'LIMIT', 0, tonumber(ARGV[4]))
 for _, id in ipairs(earlier) do
   local state = redis.call('GET', ARGV[3] .. id)
   if state and string.sub(state, 1, 2) == 'p|' then
-    return 0
+    return wait()
   end
   -- taken back out with its transaction, which Synapse sends again: it keeps its place a while
   if redis.call('EXISTS', ARGV[5] .. id) == 1 then
-    return 0
+    return wait()
   end
   redis.call('ZREM', KEYS[5], id)
 end
 if #earlier >= tonumber(ARGV[4]) then
-  return 0
+  return wait()
 end
-return 1
+return go()
 `;
 /**
  * A waiting entry given back at shutdown (it never ran): no owner, the oldest score, and its count of tries one less, so the server that takes it over counts it back to where it was.
@@ -407,7 +464,12 @@ if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .
   return 0
 end
 local tries = tonumber(string.match(held, '|(%d+)$')) or 1
-redis.call('SET', KEYS[1], 'p|-|' .. tostring(math.max(tries - 1, 0)))
+-- A wait that already gave this acquisition's try back (finding 8) is not given back twice
+if redis.call('GET', KEYS[10]) ~= ARGV[1] then
+  tries = math.max(tries - 1, 0)
+end
+redis.call('DEL', KEYS[10])
+redis.call('SET', KEYS[1], 'p|-|' .. tostring(tries))
 redis.call('DEL', KEYS[4])
 redis.call('ZADD', KEYS[2], 0, ARGV[2])
 return 1
@@ -446,9 +508,10 @@ export interface InboxEntry {
     paid(): Promise<void>;
     /**
      * The gate of the event's room (GPT's seventh note G1): `go` when no earlier event of the room is unfinished anywhere, `wait` when one is (this entry stays held and beating; waiting is
-     * not a try), `gone` when the entry is no longer this acquisition's (it ended here, and nothing of it is to run). Absent: there is no room order (the store is not connected).
+     * not a try), `gone` when the entry is no longer this acquisition's (it ended here, and nothing of it is to run), `stale` when it was taken in more than a day ago: the gate closed it as
+     * unanswered (it is never run late) and the caller tells the person. Absent: there is no room order (the store is not connected).
      */
-    turn?(): Promise<'go' | 'wait' | 'gone'>;
+    turn?(): Promise<'go' | 'wait' | 'gone' | 'stale'>;
     /** The person's answer to this event is out (Matrix gave it `replyId`): kept beside the entry as the proof a server that takes it over reads (G2). Never throws. */
     answered?(replyId: string): Promise<void>;
     /** A waiting entry given back at shutdown: it never ran, so it does not count as a try, and another server takes it up at its next scan. Never throws. */
@@ -543,6 +606,7 @@ export function createEventInbox(
         INBOX_SEQ_KEY,
         `${INBOX_ADMITTED_PREFIX}${eventId}`,
         `${INBOX_RESEND_PREFIX}${eventId}`,
+        `${INBOX_WAITED_PREFIX}${eventId}`,
     ];
     /** Any single call to the store against the same deadline. */
     const within = async <T>(call: Promise<T>): Promise<T> => {
@@ -680,7 +744,7 @@ export function createEventInbox(
             // router then answers Matrix with a 500, never as kept
             admit: async () => {
                 if (over) throw new Error('The entry had already ended here');
-                const answer = await step(redis, ADMIT, eventId, [token], room);
+                const answer = await step(redis, ADMIT, eventId, [token, String(Date.now()), eventId], room);
                 if (answer !== 1 && answer !== '1') throw new Error('The entry is not this server\'s any more, so its transaction is not kept here');
             },
             // Awaited before the first paid call, and it must SUCCEED: when it does not (another server holds the event now, or the store did not answer) it throws, and nothing paid for
@@ -699,8 +763,20 @@ export function createEventInbox(
             // The gate of the room (G1). A store that does not answer is not a yes: the entry waits and asks again
             turn: async () => {
                 if (over) return 'gone';
-                const answer = await step(redis, TURN, eventId, [token, eventId, EVENT_SEEN_PREFIX, String(ROOM_LOOK), INBOX_RESEND_PREFIX], room);
+                const answer = await step(
+                    redis,
+                    TURN,
+                    eventId,
+                    [token, eventId, EVENT_SEEN_PREFIX, String(ROOM_LOOK), INBOX_RESEND_PREFIX, String(Date.now() - unfinishedMaxMs), String(unansweredSeconds)],
+                    room
+                );
                 if (answer === 1 || answer === '1') return 'go';
+                if (answer === 3 || answer === '3') {
+                    // Taken in more than a day ago: closed as unanswered by the gate, never run late (the caller tells the person)
+                    over = true;
+                    clearInterval(beat);
+                    return 'stale';
+                }
                 if (answer === 2 || answer === '2') {
                     // Not this acquisition's any more: it stops beating, and nothing of it runs here
                     over = true;

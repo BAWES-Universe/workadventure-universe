@@ -563,7 +563,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     sender: event.sender,
                     // Made from the original event's id: the same event handled again (another server, a second try) is the same continuation, never a new one
                     event_id: `$app-${createHash('sha256').update(event.event_id).digest('hex').slice(0, 32)}`,
-                    origin_server_ts: event.origin_server_ts ?? Date.now(),
+                    // The original event's own time when it has one; never this try's clock, which another try would give differently (CodeRabbit on 68379005): without one the
+                    // time the inbox kept with the event is the moment of consent (`hooks.arrived`)
+                    ...(typeof event.origin_server_ts === 'number' ? { origin_server_ts: event.origin_server_ts } : {}),
                     content: { msgtype: 'm.text', body: note },
                 };
                 // Said by the bridge, outside the message's own content: a person's message can hold any content at all
@@ -2256,17 +2258,26 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             // A tool's sign-in expired and this person manages the bot (#1819): the game draws the Reconnect card from it
             await sendSignIn();
+            // A reply with no words (only artifacts or files) is proved by its parts (CodeRabbit on 68379005, finding 6): the ids Matrix gave each one that got through. Only when every
+            // part landed is the answer proved; one that failed, was suppressed, or gave no id leaves it unproved (a server that takes the event over then tells the person)
+            const parts = { due: wordsEvent ? 0 : (reply.artifacts?.length ?? 0) + (reply.media?.length ?? 0), landed: [] as string[], missed: false };
+            const landed = (id: unknown) => {
+                if (typeof id === 'string' && id) parts.landed.push(id);
+                else parts.missed = true;
+            };
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it
                 const { body, field } = artifactDirectMessage(card);
-                await out
-                    .sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body, [ARTIFACT_KEY]: field })
-                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send an artifact card from bot ${botId}:`, error?.message ?? error));
+                await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body, [ARTIFACT_KEY]: field }).then(landed, (error) => {
+                    parts.missed = true;
+                    console.warn(`[MatrixDmBridge] Could not send an artifact card from bot ${botId}:`, error?.message ?? error);
+                });
             }
             for (const item of reply.media ?? []) {
                 // Whether the send was begun: a purge that starts while a file is on its way does not undo a file that got through (it is still recorded)
                 let began = false;
-                const sent = await this.say(botId, () => ((began = true), this.sendMedia(botUserId, event.room_id, item))).then(
+                let fileEvent: string | undefined;
+                const sent = await this.say(botId, () => ((began = true), this.sendMedia(botUserId, event.room_id, item, (id) => (fileEvent = id)))).then(
                     // Nothing was sent when the Brick was already silenced
                     (copy) => (began ? { copy } : null),
                     (error) => {
@@ -2276,6 +2287,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 );
                 // On the person's list of files once it reached them (#1508); keeping it never stops the reply.
                 // The list keeps our own copy (#1572), so a tool link that expires or is signed cannot lose the file.
+                landed(sent ? fileEvent : undefined);
                 if (sent) {
                     try {
                         reply.mediaSent?.(sent.copy ? { ...item, originalUrl: item.originalUrl ?? item.url, url: sent.copy } : item);
@@ -2284,6 +2296,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     }
                 }
             }
+            if (parts.due > 0 && !parts.missed && parts.landed.length === parts.due) await hooks?.answered?.(parts.landed[parts.landed.length - 1]);
             answered = true;
         } catch (error: any) {
             // The fence before paid work was not confirmed: this is not an answer that failed, and no note is sent. The event goes back to the inbox as one nothing was paid for
@@ -2833,7 +2846,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /** Sends the file; returns the link of the copy on our uploader that the bot's list keeps, or null when there is none. */
-    private async sendMedia(botUserId: string, roomId: string, item: PendingMedia): Promise<string | null> {
+    private async sendMedia(botUserId: string, roomId: string, item: PendingMedia, onSent?: (eventId: string) => void): Promise<string | null> {
         const { FileParser } = await import('../services/FileParser');
         await FileParser.validateUrl(item.url);
         const response = await axios.get(item.url, {
@@ -2852,13 +2865,15 @@ export class MatrixDmBridge implements MatrixEventHandler {
             `${item.mediaType}`;
         const mxc = await this.client.uploadMedia(botUserId, data, mimeType, filename);
         const msgtype = { image: 'm.image', audio: 'm.audio', video: 'm.video', file: 'm.file' }[item.mediaType] ?? 'm.file';
-        await this.client.sendMessage(botUserId, roomId, {
+        const sentAs = await this.client.sendMessage(botUserId, roomId, {
             msgtype,
             body: item.caption || filename,
             filename,
             url: mxc,
             info: { mimetype: mimeType, size: data.length },
         });
+        // The id Matrix gave the file's message: the proof that this part of an answer landed (finding 6)
+        if (typeof sentAs === 'string' && sentAs) onSent?.(sentAs);
         return this.keepCopy(item, data, mimeType, filename);
     }
 

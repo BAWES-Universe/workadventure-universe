@@ -26,7 +26,15 @@ describe.runIf(!!URL)('the durable inbox, GPT seventh note G (a real Redis)', ()
         giveTurnBack = await takeTurnOnInbox(client as never);
     }, 330_000);
     const rooms: string[] = [];
+    /**
+     * What a test leaves running is stopped before its keys go and before the client closes (CodeRabbit on 68379005, finding 17): routers settle (a parked event is handed back, its timer
+     * cleared), work a test held open is let go (newest first), and every entry a test took or recovered ends, so no beat calls the store after the suite.
+     */
+    const cleanups: Array<() => unknown> = [];
+    const entries: InboxEntry[] = [];
     afterEach(async () => {
+        for (const cleanup of cleanups.splice(0).reverse()) await Promise.resolve(cleanup()).catch(() => undefined);
+        await Promise.all(entries.splice(0).map((entry) => entry.done().catch(() => undefined)));
         vi.restoreAllMocks();
         const keys = await client.keys('matrix:*');
         const mine = keys.filter((key) => used.some((id) => key.endsWith(id)) || rooms.some((room) => key.endsWith(room)));
@@ -51,9 +59,24 @@ describe.runIf(!!URL)('the durable inbox, GPT seventh note G (a real Redis)', ()
         return room;
     };
     const message = (id: string, room: string, at: number, body = 'Hi'): MatrixEvent => ({ type: 'm.room.message', room_id: room, sender: '@alice:matrix.test', event_id: id, origin_server_ts: at, content: { msgtype: 'm.text', body } });
-    const inboxOn = (extra: Parameters<typeof createEventInbox>[1] = {}) => createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000, ...extra });
+    /** An inbox whose entries are kept for the teardown (it ends them, so none beats after the suite). */
+    const tracked = (inbox: EventInbox): EventInbox => ({
+        owner: inbox.owner,
+        take: async (eventId, event) => {
+            const taken = await inbox.take(eventId, event);
+            if (taken && taken !== 'busy') entries.push(taken);
+            return taken;
+        },
+        recover: async () => {
+            const found = await inbox.recover();
+            for (const one of found) entries.push(one.entry);
+            return found;
+        },
+    });
+    const inboxOn = (extra: Parameters<typeof createEventInbox>[1] = {}) => tracked(createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000, ...extra }));
     const serve = async (inbox: EventInbox, onEvent: (event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }) => Promise<void>, extra: Partial<MatrixEventHandler> = {}) => {
         const router = createMatrixAppServiceRouter(config, { onEvent, userExists: async () => true, ...extra }, { inbox, waitCheckMs: 50 });
+        cleanups.push(() => router.settle(500));
         const app = express();
         app.use(router);
         const server = await new Promise<Server>((resolve) => {
@@ -65,8 +88,8 @@ describe.runIf(!!URL)('the durable inbox, GPT seventh note G (a real Redis)', ()
         return { router, put };
     };
     const stateOf = (id: string) => client.get(`matrix:event:${id}`);
-    /** Held by a live server and never tried more than once: what a later event waiting behind an earlier one looks like (it never goes back to the inbox while it waits). */
-    const WAITING = /^p\|[^-|][^|]*\|1$/;
+    /** Held by a live server with its try given back (a try counts only when it runs: CodeRabbit on 68379005, finding 8): what a later event waiting behind an earlier one looks like. */
+    const WAITING = /^p\|[^-|][^|]*\|0$/;
 
     describe('G1: a room\'s later events wait behind an earlier one that was given back', () => {
         it('the first fails before anything was paid for: the second does NOT run first; both run in their order, Pause then Resume', async () => {
@@ -84,7 +107,7 @@ describe.runIf(!!URL)('the durable inbox, GPT seventh note G (a real Redis)', ()
             });
             expect((await put('t1', message(a, room, 1000, 'Pause'), message(b, room, 2000, 'Resume'))).status).toBe(200);
             await vi.waitFor(async () => expect(await stateOf(a)).toBe('p|-|1'));
-            expect(await stateOf(b)).toMatch(WAITING);
+            await vi.waitFor(async () => expect(await stateOf(b)).toMatch(WAITING));
             // nothing of the second ran while the first was out, however long it waits
             await new Promise((resolve) => setTimeout(resolve, 200));
             expect(handled).toEqual([]);

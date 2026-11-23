@@ -117,6 +117,8 @@ export function createMatrixAppServiceRouter(
      */
     const waiting = new Map<string, Array<{ event: MatrixEvent; entry: InboxEntry }>>();
     const waitTimers = new Map<string, NodeJS.Timeout>();
+    /** Hand-offs of waiting entries at shutdown that the store has not confirmed yet. */
+    const yielding = new Set<Promise<void>>();
 
     const requireHomeserver = (req: Request, res: Response, next: NextFunction) => {
         const header = req.headers.authorization;
@@ -259,16 +261,24 @@ export function createMatrixAppServiceRouter(
         again.unref?.();
         waitTimers.set(room, again);
     };
+    /**
+     * A waiting entry given back (shutdown): tracked until the store took it, so `settle` waits for every hand-off, the ones that reach the gate after it began too (CodeRabbit on 68379005,
+     * finding 4), within its own deadline (finding 5).
+     */
+    const yieldOne = (entry: InboxEntry): Promise<void> => {
+        const run = (entry.yieldBack?.() ?? Promise.resolve()).catch(() => undefined);
+        yielding.add(run);
+        void run.finally(() => yielding.delete(run));
+        return run;
+    };
     /** Waits behind an earlier event of its room: held (its entry beats), off the chain, asked again soon. At shutdown it is given back instead (it never ran: not a try). */
-    const wait = (event: MatrixEvent, entry: InboxEntry): void => {
-        if (closing) {
-            void entry.yieldBack?.();
-            return;
-        }
+    const wait = (event: MatrixEvent, entry: InboxEntry): Promise<void> => {
+        if (closing) return yieldOne(entry);
         const queued = waiting.get(event.room_id) ?? [];
         queued.push({ event, entry });
         waiting.set(event.room_id, queued);
         askAgain(event.room_id);
+        return Promise.resolve();
     };
 
     /** Handles one event (its own room in order), and ends its inbox entry: done, or back for another try when nothing of it was paid for. */
@@ -281,8 +291,15 @@ export function createMatrixAppServiceRouter(
             if (entry?.turn) {
                 const turn = await entry.turn().catch(() => 'wait' as const);
                 if (turn === 'gone') return;
+                // Taken in more than a day ago while it waited (CodeRabbit on 68379005, finding 9): the gate closed it, it never runs late, and the person is told to send it again
+                if (turn === 'stale') {
+                    askAgain(event.room_id, true);
+                    await gaveUp(event, 'stale');
+                    return;
+                }
                 if (turn === 'wait') {
-                    wait(event, entry);
+                    // At shutdown the hand-off is part of this chain, so `settle` waits for it
+                    await wait(event, entry);
                     return;
                 }
             }
@@ -401,25 +418,26 @@ export function createMatrixAppServiceRouter(
 
     const settle = async (timeoutMs: number): Promise<boolean> => {
         closing = true;
+        // The deadline starts first: a store that stalls on a hand-off cannot hold the shutdown past it (finding 5)
+        let timer: NodeJS.Timeout | undefined;
+        const timedOut = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs)));
         // What waits behind an earlier event never ran: given back now (not a try), so the next scan anywhere takes it up in its room's order
-        const givingBack = [...waiting.values()].flat().map((one) => one.entry.yieldBack?.().catch(() => undefined));
+        for (const one of [...waiting.values()].flat()) void yieldOne(one.entry);
         waiting.clear();
         for (const timer of waitTimers.values()) clearTimeout(timer);
         waitTimers.clear();
-        await Promise.all(givingBack);
-        let timer: NodeJS.Timeout | undefined;
-        const timedOut = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs)));
         // Nothing new is admitted now, but what already was can still add work: a transaction being taken in, and a look for left-behind events, hand their events to the room chains when they
         // finish. Both are waited for first, then the chains, so none of that work starts after the wait has ended
         const done = (async () => {
             await Promise.all([...pendingTxns.values(), recovering ?? Promise.resolve(0)].map((one) => one.catch(() => undefined)));
             for (;;) {
                 // The chains, and the reports of events given up on (which a chain can start as it ends): both until none is left
-                const work = [...roomChains.values(), ...reporting];
+                // The chains, the reports, and the hand-offs of waiting events (one that met the gate after this began too): until none is left
+                const work = [...roomChains.values(), ...reporting, ...yielding];
                 if (work.length === 0) return true as const;
                 // eslint-disable-next-line no-await-in-loop
                 await Promise.all(work.map((one) => one.catch(() => undefined)));
-                if (roomChains.size === 0 && reporting.size === 0) return true as const;
+                if (roomChains.size === 0 && reporting.size === 0 && yielding.size === 0) return true as const;
             }
         })();
         try {

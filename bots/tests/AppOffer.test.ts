@@ -291,6 +291,19 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(appConnectedLine('Google Calendar')).toContain('[Apps](#apps)');
     });
 
+    // CodeRabbit on 68379005 (outside the diff): the continuation's moment of consent is the original event's own time, else the time the inbox kept with it, never this try's clock
+    it('gives the continuation the original event\'s time, or the time the inbox kept when it has none, the same on every try', async () => {
+        const { bridge, deps } = makeBridge();
+        deps.reply.mockResolvedValue({ text: 'Done.', media: [] });
+        await bridge.onEvent(invite());
+        const hooks = { paid: async () => undefined, durable: true, arrived: 1_234_567 };
+        await bridge.onEvent(connected(), hooks);
+        expect(deps.reply.mock.calls[0][4].eventTs).toBe(1_234_567);
+        const timed = { ...connected(), origin_server_ts: 1_700_000_000_123 };
+        await bridge.onEvent(timed, hooks);
+        expect(deps.reply.mock.calls[1][4].eventTs).toBe(1_700_000_000_123);
+    });
+
     it('still tells the line of the system from the person\'s words when the Brick was resting and answers it later', async () => {
         const { bridge, client, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
         deps.reply.mockResolvedValue({ text: 'Tomorrow: 10:00 standup.', media: [] });
