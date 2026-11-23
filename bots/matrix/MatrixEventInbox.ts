@@ -278,6 +278,12 @@ if not held then
   end
   -- In the index with no state: the state lapsed. Said, with the event when it is still there
   local gone = redis.call('GET', KEYS[3])
+  -- A closed entry's own mark (left in the event's slot by the give-back that closed it) is not an event that was lost: it only leaves the index
+  if gone and string.sub(gone, 1, 8) == '!closed|' then
+    redis.call('ZREM', KEYS[2], ARGV[4])
+    redis.call('ZREM', KEYS[5], ARGV[4])
+    return nil
+  end
   unanswered(gone)
   return '!lost|' .. (gone or '')
 end

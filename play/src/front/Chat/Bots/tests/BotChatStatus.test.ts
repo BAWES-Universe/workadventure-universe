@@ -55,6 +55,7 @@ describe("availabilityFromNote", () => {
         expect(availabilityFromNote("unready")).toBe("unready");
         expect(availabilityFromNote("gone")).toBe("gone");
         expect(availabilityFromNote("trouble")).toBeUndefined();
+        expect(availabilityFromNote("unsure")).toBeUndefined();
         expect(availabilityFromNote("no_access")).toBeUndefined();
     });
 });

@@ -142,18 +142,31 @@ function tokensOf(text: string): string[] {
 }
 
 /**
- * Whether a message of the person's is a CLEAR YES to the question Brick asked (cancel this job, stop everything): a short message that starts with a yes (or "go ahead", "do it", "cancel
- * it") and has no word of refusing, keeping, waiting or changing its mind anywhere in it. Anything else (a no, "keep it running", a longer sentence, another subject) is not a yes, and
- * the question ends. It is decided here, in code: the model's own reading of the message never ends a job.
+ * Words a plain yes may carry besides its yes, its ending verb and the title of the job asked about: the person agreeing in their own way ("yes please, go ahead and cancel it now"). Nothing
+ * else: a reason, a condition, a time or another thing ("yes, only after the files finish uploading", "yes, cancel the taxi booking") is NOT a plain yes.
  */
-export function isClearYes(message: string | undefined): boolean {
+const YES_FILLER = new Set([
+    'please', 'pls', 'now', 'right', 'away', 'thanks', 'thank', 'thx', 'ty', 'you', 'go', 'ahead', 'do', 'it', 'that', 'this', 'them', 'both', 'all', 'everything', 'everyone', 'job', 'jobs', 'task', 'tasks', 'computer', 'computers', 'one',
+    'the', 'my', 'and', 'of', 'course', 'i', 'want', 'to', 'is', 'its', 'thats',
+]);
+
+/**
+ * Whether a message of the person's is a CLEAR YES to the question Brick asked (cancel this job, stop everything): a short message that starts with a yes (or "go ahead", "do it", "cancel
+ * it"), has no word of refusing, keeping, waiting or changing its mind anywhere in it, and carries NOTHING but the yes, an ending verb, the usual ways of agreeing and the title of the job asked
+ * about (`titles`). A condition ("only after the files finish uploading"), a time, another target ("yes, cancel Taxi booking" when the question was about Visa) or anything else is not a plain yes: it
+ * authorizes nothing now, and the question ends. It is decided here, in code: the model's own reading of the message never ends a job.
+ */
+export function isClearYes(message: string | undefined, titles: string[] = []): boolean {
     if (typeof message !== 'string') return false;
     const tokens = tokensOf(message);
     if (tokens.length === 0 || tokens.length > YES_MAX_WORDS) return false;
     if (tokens.some((word) => NEGATING.has(word))) return false;
     const [first, second] = tokens[0] === 'please' || tokens[0] === 'pls' ? tokens.slice(1) : tokens;
     if (first === undefined) return false;
-    return YES_FIRST.has(first) || (second !== undefined && YES_PAIRS.has(`${first} ${second}`)) || YES_PAIRS.has(first);
+    if (!(YES_FIRST.has(first) || (second !== undefined && YES_PAIRS.has(`${first} ${second}`)) || YES_PAIRS.has(first))) return false;
+    const own = new Set(titles.flatMap((title) => tokensOf(title)));
+    const pairWords = new Set([...YES_PAIRS].flatMap((pair) => pair.split(' ')));
+    return tokens.every((word) => YES_FILLER.has(word) || YES_FIRST.has(word) || pairWords.has(word) || ENDING_VERB.has(word) || own.has(word));
 }
 
 /** Words that name ANOTHER thing to do with a job than ending it: a yes that says "yes, pause it" is not a yes to a question about cancelling. */
@@ -220,7 +233,7 @@ export function startControlTurn(state: ControlState | undefined, message?: stri
     const answered = new Set<string>();
     // A yes that names another action ("yes, pause it") is no answer to a question about ending a job (a job whose own title says "pause" is not an action: see `namesAnotherAction`)
     const told = [...state.asks].filter(([, ask]) => ask.told && !ask.answerable);
-    if (isClearYes(message) && !namesAnotherAction(message as string, told.map(([, ask]) => ask))) {
+    if (isClearYes(message, told.flatMap(([, ask]) => ask.titles)) && !namesAnotherAction(message as string, told.map(([, ask]) => ask))) {
         // One question was asked: a yes answers it. Several were asked in one reply (cancel this job, cancel that one): a yes answers ONE of them, and only when it names that one alone; a
         // bare yes, or one that names more than one, answers none, and every question ends (they are asked again, so the person says which)
         if (told.length === 1) answered.add(told[0][0]);
@@ -647,8 +660,13 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
     context.state.asks.delete(key);
     return once(context, `stop|${ids.join('|')}`, async () => {
         // Stop names no one job: its id is made from the jobs it was asked about, so a stop asked again over the same jobs is one stop (finding 4)
-        const answer = await door({ action: 'stop', commandId: commandIdOf(context.state, context.inbound?.eventId, 'stop', '', [...ids].sort().join('|')) });
+        // The jobs the person was asked about go WITH the command: Orbit ends those (that are still live), never whatever is live by the time the request lands
+        const answer = await door({ action: 'stop', jobIds: [...ids], commandId: commandIdOf(context.state, context.inbound?.eventId, 'stop', '', [...ids].sort().join('|')) });
         if (!answer.ok) return refused(reasonOf(answer), jobs[0], view);
+        // Jobs that were live but not in the set the person confirmed (they began after the question): never stopped, and said so in Brick's own words (a statement, so a plain yes after it confirms nothing)
+        if (answer.ok && answer.left && answer.left.length > 0) {
+            return { result: { done: true, someLeft: true, andThen: 'Some jobs were stopped and some were NOT. A fixed line under your reply already names them: do not say it again and do not reword it. Do not stop or cancel the left jobs unless the person asks in a new message.' }, lines: [CONTROL_WORDS.stoppedSome(answer.stopped ?? jobs.length, answer.left)] };
+        }
         const only = jobs.length === 1 ? jobs[0] : null;
         return { result: { done: true }, lines: [only ? lineOf(hasStarted(only) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, only.title) : CONTROL_WORDS.stoppedAll(jobs.length)] };
     });

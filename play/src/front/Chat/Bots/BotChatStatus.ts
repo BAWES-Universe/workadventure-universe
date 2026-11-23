@@ -38,7 +38,7 @@ export function readBotStatusNote(
 }
 
 /**
- * The availability a note tells about, or undefined for notes about one message (trouble) or one person (no_access,
+ * The availability a note tells about, or undefined for notes about one message (trouble, unsure) or one person (no_access,
  * limited).
  */
 export function availabilityFromNote(state: BotNoteState): BotAvailability | undefined {
