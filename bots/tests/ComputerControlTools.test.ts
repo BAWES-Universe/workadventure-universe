@@ -435,28 +435,55 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             expect(String(result.andThen)).toMatch(/NOT/);
         });
         it('every size of what was stopped, and every size of what was left, as Fable wrote them', () => {
-            expect(CONTROL_WORDS.stoppedSome(1, ['A'])).toBe("I've stopped 1 job on my computer. Its files are kept.\n“A” was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
-            expect(CONTROL_WORDS.stoppedSome(0, ['A'])).toBe("Those jobs had already ended.\n“A” was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
-            expect(CONTROL_WORDS.stoppedSome(3, ['A', 'B', 'C'])).toBe("I've stopped 3 jobs on my computer. Their files are kept.\n“A”, “B” and “C” were added after I asked, so I haven't stopped them. Tell me if you want them stopped too.");
-            expect(CONTROL_WORDS.stoppedSome(3, ['A', 'B'])).toContain('“A” and “B” were added after I asked, so I haven\'t stopped them.');
-            expect(CONTROL_WORDS.stoppedSome(2, [null])).toBe("I've stopped 2 jobs on my computer. Their files are kept.\n1 job was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
-            expect(CONTROL_WORDS.stoppedSome(2, ['A', 'B', 'C', 'D'])).toContain("4 jobs were added after I asked, so I haven't stopped them. Tell me if you want them stopped too.");
-            expect(CONTROL_WORDS.stoppedSome(2, ['A', null])).toContain("2 jobs were added after I asked, so I haven't stopped them.");
+            expect(CONTROL_WORDS.stoppedSome(1, 1, ['A'])).toBe("I've stopped 1 job on my computer. Its files are kept.\n“A” was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(0, 1, ['A'])).toBe("Those jobs had already ended.\n“A” was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(3, 1, ['A', 'B', 'C'])).toBe("I've stopped 3 jobs on my computer. Their files are kept.\n“A”, “B” and “C” were added after I asked, so I haven't stopped them. Tell me if you want them stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(3, 1, ['A', 'B'])).toContain('“A” and “B” were added after I asked, so I haven\'t stopped them.');
+            expect(CONTROL_WORDS.stoppedSome(2, 1, [null])).toBe("I've stopped 2 jobs on my computer. Their files are kept.\n1 job was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(2, 1, ['A', 'B', 'C', 'D'])).toContain("4 jobs were added after I asked, so I haven't stopped them. Tell me if you want them stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(2, 1, ['A', null])).toContain("2 jobs were added after I asked, so I haven't stopped them.");
         });
-        it('a list of titles or a bare count from Orbit is read the same; without a count of what it stopped, the jobs asked about are what it stopped', async () => {
-            expect((await stopOf({ left: ['Taxi booking'] })).lines).toEqual([CONTROL_WORDS.stoppedSome(1, ['Taxi booking'])]);
-            expect((await stopOf({ stopped: ['job-visa'], left: 2 })).lines).toEqual([CONTROL_WORDS.stoppedSome(1, [null, null])]);
+        it('a list of titles or a bare count from Orbit is read the same; a count is said only when Orbit gave one', async () => {
+            expect((await stopOf({ stopped: ['job-visa'], left: 2 })).lines).toEqual([CONTROL_WORDS.stoppedSome(1, 1, [null, null])]);
+            expect((await stopOf({ stopped: 1, left: ['Taxi booking'] })).lines).toEqual([CONTROL_WORDS.stoppedSome(1, 1, ['Taxi booking'])]);
+        });
+        // CodeRabbit on the round 8 head, 10 (Fable's FINAL words for it): with NO count from Orbit no number is said, never the number of jobs the person was asked about
+        it('Orbit left jobs but gave no `stopped`: the first line says no number (final words, by how many jobs the question named); a list, even an empty one, keeps the earlier rules', async () => {
+            expect(CONTROL_WORDS.stoppedSome(null, 2, ['Taxi booking'])).toBe("The jobs I asked you about have all ended now. Their files are kept.\n“Taxi booking” was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(null, 1, ['Taxi booking'])).toBe("The job I asked you about has ended now. Its files are kept.\n“Taxi booking” was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
+            const two = await stopOf({ left: [{ id: 'job-taxi', title: 'Taxi booking' }] }, [working(), inLine('job-hotel', 'Hotel')]);
+            expect(two.lines).toEqual([CONTROL_WORDS.stoppedSome(null, 2, ['Taxi booking'])]);
+            expect(two.lines[0]).not.toMatch(/\d/);
+            const one = await stopOf({ left: ['Taxi booking'] });
+            expect(one.lines).toEqual([CONTROL_WORDS.stoppedSome(null, 1, ['Taxi booking'])]);
+            expect((await stopOf({ stopped: [], left: ['Taxi booking'] })).lines[0]).toMatch(/^Those jobs had already ended\./);
         });
         it('with nothing left, the approved line is unchanged', async () => {
             const { lines } = await stopOf({ stopped: 1, left: [] });
             expect(lines).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Visa form')]);
         });
-        it('a plain yes after that line confirms nothing: the left job is asked about on its own, with its own ids', async () => {
-            const { c, orbit } = await stopOf({ stopped: 1, left: [{ id: 'job-taxi', title: 'Taxi booking' }] });
-            c.nextMessage('Yes');
+        it('a plain yes after that line confirms nothing: the left job is asked about on its own, with its own ids, and a yes to THAT question stops only it', async () => {
+            const view = viewOf(working(), [inLine('job-taxi', 'Taxi booking')]);
+            const orbit = door(view, { stop: { ...viewOf(null), stopped: ['job-visa'], left: [{ id: 'job-taxi', title: 'Taxi booking' }] } });
+            const c = chat(orbit.admin);
+            await c.run(STOP_COMPUTER_TOOL);
+            await c.deliver();
+            c.nextMessage();
             await c.run(STOP_COMPUTER_TOOL);
             await c.deliver();
             expect(orbit.acted().filter((ask) => ask.action === 'stop')).toHaveLength(1);
+            // what Orbit holds now: only the left job
+            Object.assign(view, viewOf(inLine('job-taxi', 'Taxi booking', { status: 'running', queuedFor: null })));
+            c.nextMessage('Yes');
+            await c.run(STOP_COMPUTER_TOOL);
+            // the yes was not for it: no second stop, and a NEW question about Taxi (not Visa)
+            expect(orbit.acted().filter((ask) => ask.action === 'stop')).toHaveLength(1);
+            expect(await c.deliver()).toEqual([CONTROL_WORDS.askStop(quotedTitles(['Taxi booking']))]);
+            c.nextMessage('Yes');
+            await c.run(STOP_COMPUTER_TOOL);
+            const stops = orbit.acted().filter((ask) => ask.action === 'stop');
+            expect(stops).toHaveLength(2);
+            expect(stops[1]).toMatchObject({ confirmedJobIds: ['job-taxi'] });
         });
     });
 
@@ -809,6 +836,30 @@ describe('CodeRabbit N1/N12: only a clear yes, decided in code, ends a job', () 
         for (const said of YES) expect(isClearYes(said, ['Visa form']), said).toBe(true);
         for (const said of NOT_YES) expect(isClearYes(said, ['Visa form']), said).toBe(false);
         expect(isClearYes(undefined)).toBe(false);
+    });
+
+    // CodeRabbit on the round 8 head, 1: words that happen to be in the job's title are not a condition-free yes
+    it('a condition made of the title\'s own words is not a yes: "Yes, after review" to a question about "Upload after review"; a bare yes and "Yes, cancel Upload after review" are', async () => {
+        const title = ['Upload after review'];
+        expect(isClearYes('Yes, after review', title)).toBe(false);
+        expect(isClearYes('Yes, upload after review', title)).toBe(false);
+        expect(isClearYes('Yes, cancel after review', title)).toBe(false);
+        // a condition word counts only inside the title's WHOLE run: a part of the title is not that
+        expect(isClearYes('Yes, cancel Upload after', title)).toBe(false);
+        expect(isClearYes('Yes, cancel Upload after review tomorrow', title)).toBe(false);
+        expect(isClearYes('Yes, cancel it only if it fails', title)).toBe(false);
+        expect(isClearYes('نعم بعد المراجعة')).toBe(false);
+        expect(isClearYes('Yes cancel it')).toBe(true);
+        expect(isClearYes('Yes', title)).toBe(true);
+        expect(isClearYes('Yes, cancel Upload after review', title)).toBe(true);
+        expect(isClearYes('Yes, cancel the job called Upload after review', title)).toBe(true);
+        const orbit = door(viewOf(working({ title: 'Upload after review' })), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'upload' });
+        await c.deliver();
+        c.nextMessage('Yes, after review');
+        await c.run(CANCEL_JOB_TOOL, { job: 'upload' });
+        expect(orbit.acted()).toEqual([]);
     });
 
     for (const [name, tool, args] of [['cancel', CANCEL_JOB_TOOL, { job: 'visa' }], ['stop', STOP_COMPUTER_TOOL, {}]] as const) {

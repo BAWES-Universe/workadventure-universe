@@ -128,8 +128,15 @@ export const CONTROL_WORDS = {
      * they confirmed). Two lines joined by a newline: what was stopped, then what was left. The second is a statement, never a question: a plain yes after it confirms nothing.
      * `left` holds each job's title (null for one with none).
      */
-    stoppedSome: (stopped: number, left: Array<string | null>): string => {
-        const first = stopped >= 2 ? `I've stopped ${stopped} jobs on my computer. Their files are kept.` : stopped === 1 ? "I've stopped 1 job on my computer. Its files are kept." : 'Those jobs had already ended.';
+    stoppedSome: (stopped: number | null, asked: number, left: Array<string | null>): string => {
+        // FINAL (Fable, 23 Nov, `/mnt/project-files/release-0-5-0/brick-stop-no-count/strings.txt`): when Orbit gave NO list of what it stopped (`stopped` is null), no number is said, and no number Orbit did not give
+        // is ever used: "have all ended now" is true whether the Stop ended each job or it was already over. `asked` (the jobs the question named) is only for the grammar
+        const first =
+            stopped === null
+                ? asked >= 2
+                    ? 'The jobs I asked you about have all ended now. Their files are kept.'
+                    : 'The job I asked you about has ended now. Its files are kept.'
+                : stopped >= 2 ? `I've stopped ${stopped} jobs on my computer. Their files are kept.` : stopped === 1 ? "I've stopped 1 job on my computer. Its files are kept." : 'Those jobs had already ended.';
         const titled = left.every((title) => !!title);
         const second =
             left.length === 1 && titled
