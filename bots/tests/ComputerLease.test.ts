@@ -30,11 +30,11 @@ function leasedOrbit(options: { epoch?: number; clock?: () => number; turns?: Ar
         /** When the owner's lease ends, or null when no one holds the job. */
         leaseUntil: null as number | null,
         status: 'running' as 'running' | 'done' | 'failed' | 'stopped',
-        asked: [] as Array<{ action: string; epoch?: number; run?: string; answer: string }>,
+        asked: [] as Array<{ action: string; epoch?: number; run?: string; answer: string; body: Record<string, unknown> }>,
         turnScripts: [...(options.turns ?? [])],
     };
     const log = (action: string, answer: string, body: Record<string, unknown>) =>
-        state.asked.push({ action, answer, ...(typeof body.epoch === 'number' ? { epoch: body.epoch } : {}), ...(typeof body.run === 'string' ? { run: body.run } : {}) });
+        state.asked.push({ action, answer, body, ...(typeof body.epoch === 'number' ? { epoch: body.epoch } : {}), ...(typeof body.run === 'string' ? { run: body.run } : {}) });
     const live = () => state.status === 'running';
     const held = () => state.leaseUntil !== null && state.leaseUntil > clock();
     const turnOf = (signal: AbortSignal): AsyncGenerator<RunnerEvent> => {
@@ -66,7 +66,7 @@ function leasedOrbit(options: { epoch?: number; clock?: () => number; turns?: Ar
                 // A healthy owner is never claimed over: nothing is written, and the answer says when its lease ends
                 if (held()) {
                     log(action, 'held', body);
-                    return { ok: false, reason: 'held', until: new Date(state.leaseUntil as number).toISOString() };
+                    return { ok: false, reason: 'held', until: new Date(state.leaseUntil as number).toISOString(), job: { id: JOB.jobId } };
                 }
                 if (body.seen !== state.ownerEpoch) {
                     log(action, 'superseded', body);
@@ -157,7 +157,9 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         at += 30_000;
         await vi.advanceTimersByTimeAsync(30_000);
         expect(fake.of('beat')).toHaveLength(2);
-        for (const row of fake.of('beat')) expect(row).toMatchObject({ epoch: 3, run: 'run1', answer: 'ok' });
+        // Orbit's contract: the epoch alone says who owns the job, so a beat carries nothing else
+        for (const row of fake.of('beat')) expect(row).toMatchObject({ epoch: 3, answer: 'ok', body: { action: 'beat', epoch: 3 } });
+        for (const row of fake.of('beat')) expect(Object.keys(row.body).sort()).toEqual(['action', 'epoch']);
         // The lease was pushed out by the last beat, so no other worker could claim meanwhile
         expect(fake.state.leaseUntil).toBe(at + LEASE_MS);
 
@@ -166,7 +168,8 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         await vi.advanceTimersByTimeAsync(0);
         await instance.idle();
         expect(fake.of('release')).toHaveLength(1);
-        expect(fake.of('release')[0]).toMatchObject({ epoch: 3, run: 'run1' });
+        expect(fake.of('release')[0]).toMatchObject({ epoch: 3, body: { action: 'release', epoch: 3 } });
+        expect(Object.keys(fake.of('release')[0].body).sort()).toEqual(['action', 'epoch']);
         expect(fake.state.leaseUntil).toBeNull();
         // Nothing was ended: the job is still there for the worker that takes it up next
         expect(fake.state.status).toBe('running');
@@ -238,6 +241,35 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         await vi.advanceTimersByTimeAsync(0);
         expect(instance.active()).toEqual([]);
         expect(fake.of('finish')).toEqual([]);
+    });
+
+    // Orbit's contract: a beat answered `over` (the job is over or went back in line) means there is nothing left to hold
+    it('a beat answered `over` stops beating, and gives nothing back when the worker stops', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+        let at = 1_000_000;
+        const fake = leasedOrbit({ epoch: 2, clock: () => at, holdTurn: true });
+        const original = fake.orbit.action;
+        fake.orbit.action = async (botId, jobId, body) => (String(body.action) === 'beat' ? { ok: false, reason: 'over' } : original(botId, jobId, body));
+        let beats = 0;
+        const counting = fake.orbit.action;
+        fake.orbit.action = async (botId, jobId, body) => {
+            if (String(body.action) === 'beat') beats += 1;
+            return counting(botId, jobId, body);
+        };
+        const { instance } = runnerOn(fake, { now: () => at });
+        await instance.tick();
+        await vi.advanceTimersByTimeAsync(0);
+        at += 30_000;
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(beats).toBe(1);
+        // no more beats, however long it goes on
+        at += 120_000;
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(beats).toBe(1);
+        instance.stop();
+        await vi.advanceTimersByTimeAsync(0);
+        await instance.idle();
+        expect(fake.of('release')).toEqual([]);
     });
 
     it('does not give the lease back for a job it ended itself', async () => {
@@ -331,7 +363,7 @@ describe("the owner's lease: the job is never claimed over a worker that is runn
         expect(fake.of('claim').filter((row) => row.answer === 'held').length).toBeGreaterThan(0);
         expect(fake.state.ownerEpoch).toBe(owner);
         expect(fake.of('beat').length).toBeGreaterThanOrEqual(4);
-        expect(fake.of('beat').every((row) => row.run === 'run-A')).toBe(true);
+        expect(fake.of('beat').every((row) => row.epoch === owner)).toBe(true);
 
         // The first server dies: nothing is released, so the second waits out the lease and then takes the job over ONCE
         first.instance.stop();

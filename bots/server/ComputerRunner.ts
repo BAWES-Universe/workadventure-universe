@@ -541,8 +541,13 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const mine = owned.get(job.jobId);
         if (!mine || mine.over || superseded.has(mine.run)) return;
         try {
-            const answer = await orbit.action(job.botId, job.jobId, { action: 'beat', run: mine.run, epoch: mine.epoch });
-            if (answer.ok === false && runStaleOf(answer)) {
+            // Orbit's contract: ownership is the epoch alone, so the body carries nothing else (an extra `run` may be refused)
+            const answer = await orbit.action(job.botId, job.jobId, { action: 'beat', epoch: mine.epoch });
+            // The job is over, or went back in line: there is nothing left to hold, so the beat stops and nothing is given back
+            if (answer.ok === false && answer.reason === 'over') {
+                mine.over = true;
+                stopBeating(job.jobId);
+            } else if (answer.ok === false && runStaleOf(answer)) {
                 superseded.add(mine.run);
                 stopBeating(job.jobId);
                 // The turn this run has open stops too, as it does for a superseded answer to the notes: nothing is cancelled and nothing is ended
@@ -577,7 +582,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const mine = owned.get(job.jobId);
         owned.delete(job.jobId);
         if (!mine || mine.over || superseded.has(mine.run)) return;
-        await orbit.action(job.botId, job.jobId, { action: 'release', run: mine.run, epoch: mine.epoch }).catch((error) => {
+        await orbit.action(job.botId, job.jobId, { action: 'release', epoch: mine.epoch }).catch((error) => {
             if (statusOf(error) !== 404) say('Could not give a job back as its worker stopped:', error);
         });
     };
