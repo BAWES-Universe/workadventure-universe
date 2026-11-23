@@ -583,15 +583,9 @@ function askFirst(context: ComputerControlContext, key: string, ask: Pick<Contro
         lines,
         { done: false, asked: true, waitingForTheirAnswer: true },
         () => {
-            const current = context.state.asks.get(key);
-            if (current === entry) entry.told = true;
-            // A newer message of the person's began a turn while this reply was being delivered, and that turn ended the question as one never asked. The person did read it in this event
-            // though, so it is asked now (answerable by their NEXT message). It never takes the place of a different question for the same key
-            else if (current === undefined) {
-                entry.told = true;
-                entry.answerable = false;
-                context.state.asks.set(key, entry);
-            }
+            // Only a question that is still the one on file counts as asked. One that a newer message ended while its reply was being delivered is NOT put back: the next message would answer
+            // it after the reply to the in-between message (which may ask something else), and a plain yes could then end a job that was never asked about. It is asked again instead
+            if (context.state.asks.get(key) === entry) entry.told = true;
         }
     );
 }

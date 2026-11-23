@@ -1324,25 +1324,57 @@ describe('CodeRabbit on d098522a: which question a yes answers, and a question w
         expect(askNamedBy('paris', ask(['Paris hotel', 'Paris flight']))).toBe(1);
     });
 
-    // GPT/CodeRabbit: a newer message begins a turn while the reply that carries the question is still being delivered
-    it('a question whose reply is delivered AFTER a newer message began a turn is asked then: the next message\'s yes answers it', async () => {
-        const orbit = door(viewOf(working()), { cancel: viewOf(null) });
+    // CodeRabbit on d098522a asked for the late question to be kept; Opus's read: a plain yes to the NEXT message may be meant for whatever the in-between reply asked, so it is asked again instead
+    it('a question whose reply is delivered AFTER a newer message began a turn is not put back: a later plain yes (meant for what the in-between reply asked) ends nothing', async () => {
+        const orbit = door(viewOf(working()), { cancel: viewOf(null), stop: viewOf(null) });
         const c = chat(orbit.admin);
         await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
         const sending = c.queue;
         // the reply is handed over to be sent (its text carries the question) ...
         expect(sending.tell()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Visa form')]);
-        // ... and the person writes again before Matrix has taken it: a new turn, the old queue dropped (what it already told stays)
+        // ... the person writes again before Matrix has taken it: a new turn, the old queue dropped (what it already told stays)
         c.nextMessage('what is going on?');
         sending.drop();
-        // Matrix then accepts the event: the person read the question in it
+        // the in-between reply asks something else (no control question of ours: "shall I send you a summary?")
+        // Matrix then accepts the first event, late
         await sending.deliver('$event:late');
+        expect(c.state.asks.size).toBe(0);
+        // the person's plain yes is for the summary: nothing is cancelled or stopped, whichever way the model then calls the tools
         c.nextMessage('Yes');
         await c.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:three');
-        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
+        await c.run(STOP_COMPUTER_TOOL, {}, '$msg:three');
+        expect(orbit.acted()).toEqual([]);
     });
 
-    it('the late delivery never replaces a different question that the newer turn asked for the same key, and asks nothing when the reply was never delivered', async () => {
+    it('the question is asked again, and then a yes answers it; a reply that was never delivered asks nothing', async () => {
+        const orbit = door(viewOf(working()), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        const first = c.queue;
+        first.tell();
+        c.nextMessage('what is going on?');
+        first.drop();
+        // the newer turn asks its own question about the same job, and it is delivered
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:three');
+        await c.deliver();
+        c.nextMessage('Yes');
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:four');
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
+        // a reply that is never delivered asks nothing
+        const never = door(viewOf(working()), { cancel: viewOf(null) });
+        const c3 = chat(never.admin);
+        await c3.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        const unsent = c3.queue;
+        unsent.tell();
+        c3.nextMessage('hello');
+        unsent.drop();
+        expect(c3.state.asks.size).toBe(0);
+        c3.nextMessage('Yes');
+        await c3.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:three');
+        expect(never.acted()).toEqual([]);
+    });
+
+    it('a late delivery never touches the newer question for the same key', async () => {
         const orbit = door(viewOf(working()), { cancel: viewOf(null) });
         const c = chat(orbit.admin);
         await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
@@ -1350,26 +1382,12 @@ describe('CodeRabbit on d098522a: which question a yes answers, and a question w
         sending.tell();
         c.nextMessage('what is going on?');
         sending.drop();
-        // the newer turn asks its own question about the same job (same key), in a reply of its own
         const c2 = chat(orbit.admin, c.state);
         await c2.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:three');
-        expect(c.state.asks.size).toBe(1);
         const newer = [...c.state.asks.values()][0];
         await sending.deliver('$event:late');
-        // still the newer question: not told (its own reply was not delivered), and not the old one
         expect([...c.state.asks.values()]).toEqual([newer]);
         expect(newer.told).toBe(false);
-        // a reply that is never delivered asks nothing
-        const never = door(viewOf(working()), { cancel: viewOf(null) });
-        const c3 = chat(never.admin);
-        await c3.run(CANCEL_JOB_TOOL, { job: 'visa' });
-        c3.queue.tell();
-        c3.nextMessage('hello');
-        c3.queue.drop();
-        expect(c3.state.asks.size).toBe(0);
-        c3.nextMessage('Yes');
-        await c3.run(CANCEL_JOB_TOOL, { job: 'visa' }, '$msg:three');
-        expect(never.acted()).toEqual([]);
     });
 
     it('a job added again after the reply took its line keeps what that reply confirms; a new key not in the reply stays out of it', async () => {
