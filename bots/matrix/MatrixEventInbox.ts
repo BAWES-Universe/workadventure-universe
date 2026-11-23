@@ -25,7 +25,7 @@ export const BEAT_EVERY_MS = 30 * 1000;
 export const BEAT_STALE_MS = 2 * 60 * 1000;
 /** How often a server looks for entries whose owner went away. */
 export const RECOVER_EVERY_MS = 30 * 1000;
-/** How many times an event may be given back for another try (a handler that throws before anything was paid for). */
+/** How many times an event may be taken up at all (the first time, and the tries after a handler that threw before anything was paid for or a server that went away). */
 export const MAX_TRIES = 3;
 /** How long the shared store has to answer: the router waits for the first step before it answers Matrix, so it can never wait long. */
 export const INBOX_DEADLINE_MS = 3000;
@@ -37,7 +37,7 @@ const TAKE = `
 if redis.call('EXISTS', KEYS[1]) == 1 then
   return 0
 end
-redis.call('SET', KEYS[1], 'p|' .. ARGV[1] .. '|0', 'EX', tonumber(ARGV[2]))
+redis.call('SET', KEYS[1], 'p|' .. ARGV[1] .. '|1', 'EX', tonumber(ARGV[2]))
 redis.call('SET', KEYS[3], ARGV[4], 'EX', tonumber(ARGV[2]))
 redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[5])
 return 1
@@ -65,22 +65,22 @@ redis.call('DEL', KEYS[3])
 return 1
 `;
 /**
- * Given back for another try (nothing of it was paid for): the entry keeps its place in the inbox with no owner and the oldest score, so the next scan anywhere takes it. After the last
- * try it becomes `d`: an event that throws every time must not go round for ever.
+ * Given back for another try (nothing of it was paid for): the entry keeps its place in the inbox with no owner and the oldest score, so the next scan anywhere takes it. Once it has had
+ * all its tries it becomes `d` instead: an event that throws every time must not go round for ever.
  */
 const RELEASE = `
 local held = redis.call('GET', KEYS[1])
 if not held or string.sub(held, 1, 2 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] then
   return 0
 end
-local tries = tonumber(string.match(held, '|(%d+)$')) or 0
-if tries + 1 >= tonumber(ARGV[3]) then
+local tries = tonumber(string.match(held, '|(%d+)$')) or 1
+if tries >= tonumber(ARGV[3]) then
   redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
   redis.call('ZREM', KEYS[2], ARGV[4])
   redis.call('DEL', KEYS[3])
   return 2
 end
-redis.call('SET', KEYS[1], 'p|-|' .. tostring(tries + 1), 'EX', tonumber(ARGV[2]))
+redis.call('SET', KEYS[1], 'p|-|' .. tostring(tries), 'EX', tonumber(ARGV[2]))
 redis.call('ZADD', KEYS[2], 0, ARGV[4])
 return 1
 `;
@@ -96,7 +96,7 @@ if not held or held == 'd' then
   return nil
 end
 local owner = string.match(held, '^p|(.-)|%d+$')
-local tries = tonumber(string.match(held, '|(%d+)$')) or 0
+local tries = tonumber(string.match(held, '|(%d+)$')) or 1
 local score = tonumber(redis.call('ZSCORE', KEYS[2], ARGV[4]) or 0)
 if owner ~= '-' and score > tonumber(ARGV[5]) then
   return nil

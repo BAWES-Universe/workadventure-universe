@@ -156,6 +156,32 @@ describe('MatrixDmBridge', () => {
         expect(client.sendMessage.mock.calls.map((call: any[]) => call[2]).filter((c: any) => c?.msgtype === 'm.notice')).toEqual([]);
     });
 
+    // GPT's sixth answer, finding 9: the durable inbox hands an event out again only while nothing of it was paid for.
+    it('says the person is paying as the turn is asked for, and not before (finding 9)', async () => {
+        await bridge.onEvent(invite());
+        const order: string[] = [];
+        const paid = vi.fn(() => order.push('paid'));
+        deps.reply.mockImplementation(async () => {
+            order.push('reply');
+            return { text: 'hello back', media: [] } as never;
+        });
+        await bridge.onEvent(message('hello'), { paid });
+        expect(paid).toHaveBeenCalledTimes(1);
+        expect(order).toEqual(['paid', 'reply']);
+    });
+
+    it('does not say the person is paying for a message that is never answered (finding 9)', async () => {
+        await bridge.onEvent(invite());
+        const paid = vi.fn();
+        // A pasted key is answered by the bridge itself, with no turn: nothing is paid for, so a server that died here may hand it out again
+        await bridge.onEvent(message(['here it is: sk_', 'live_51Habcdefghijklmnop12345'].join('')), { paid });
+        expect(deps.reply).not.toHaveBeenCalled();
+        expect(paid).not.toHaveBeenCalled();
+        // A notice from the bridge itself is not the person's message at all
+        await bridge.onEvent({ ...message('ignored'), content: { msgtype: 'm.notice', body: 'ignored' } } as never, { paid });
+        expect(paid).not.toHaveBeenCalled();
+    });
+
     it('tries the bot name again next time when setting it failed', async () => {
         client.setDisplayName.mockRejectedValueOnce(new Error('homeserver busy'));
         expect(await bridge.userExists(BOT_USER)).toBe(true);
@@ -3132,6 +3158,20 @@ describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
             { uuid: 'uuid-alice', name: 'Alice', matrixUserId: ALICE, isGuest: false },
             { ask: 'act_1', revision: 2, tap: { action: 'decide', option: 'approve' } }
         );
+    });
+
+    // GPT's sixth answer, finding 9: a tap that has begun what the person pays for is never handed out again by the durable inbox; one that is ignored may be.
+    it('says the person is paying before a tap is acted on, and not for a tap that is ignored (finding 9)', async () => {
+        const order: string[] = [];
+        const paid = vi.fn(() => order.push('paid'));
+        approvals.handleTap.mockImplementation(async () => {
+            order.push('tap');
+        });
+        await bridge.onEvent(tapEvent(DECIDE), { paid });
+        expect(order).toEqual(['paid', 'tap']);
+        // Not a tap at all: nothing of it was paid for
+        await bridge.onEvent(tapEvent({ v: 1, ask: 'act_1', revision: 2, action: 'run' }), { paid });
+        expect(paid).toHaveBeenCalledTimes(1);
     });
 
     it('ignores a tap from someone Orbit does not let chat with the bot', async () => {

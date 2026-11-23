@@ -44,7 +44,7 @@ import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './Compu
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
 import { ChatPurgeSweeper } from '../services/ChatPurges';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
-import { createEventDedupe } from '../matrix/MatrixEventDedupe';
+import { createEventInbox, RECOVER_EVERY_MS } from '../matrix/MatrixEventInbox';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
 import type { BotAvailability } from '../matrix/BotStatusNotes';
@@ -215,6 +215,7 @@ const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
 const COMPUTER_SWEEP_EVERY_MS = 60 * 1000;
 const COMPUTER_RUNNER_EVERY_MS = 10 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
+let matrixRecoverInterval: NodeJS.Timeout | undefined;
 let computerSweepInterval: NodeJS.Timeout | undefined;
 let computerRunner: ComputerRunner | undefined;
 /** Clears the chat rooms of Bricks Orbit purged for good (register R29). */
@@ -307,9 +308,13 @@ async function setupMatrix(): Promise<void> {
         keep: (botId, chatId, text) => void answersBridge.keepNearbyAnswer(botId, chatId, text),
         opened: (botId, chatId, roomId) => void answersBridge.openedFromNearby(botId, chatId, roomId),
     });
-    // An event Matrix sends again (a transaction retried, two servers, a restart) is handled once: the same event reaching a second router would otherwise be answered twice, and its computer start paid for twice
-    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge, { firstSeen: createEventDedupe(() => botRegistry.evidenceClient()) });
+    // Every event is KEPT in the shared store before Matrix is answered (the durable inbox): an event Matrix sends again is handled once, and one whose server died is taken up here
+    // instead of being lost behind a marker (GPT's sixth answer, finding 9)
+    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge, { inbox: createEventInbox(() => botRegistry.evidenceClient()) });
     preRouters.push(matrixRouter);
+    // Every half minute: the events whose server went away are taken up here, oldest first
+    matrixRecoverInterval = setInterval(() => void matrixRouter?.recover(), RECOVER_EVERY_MS);
+    matrixRecoverInterval.unref?.();
     // The game shows a bot's state in its chat header and the People list. Same cached lookup the replies use.
     const bridge = matrixBridge;
     dmStatus = async (botIds) =>
@@ -633,6 +638,7 @@ function stopGameLoop(): void {
     if (gameLoopInterval) {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
+        if (matrixRecoverInterval) clearInterval(matrixRecoverInterval);
         if (computerSweepInterval) clearInterval(computerSweepInterval);
         computerRunner?.stop();
         screenGateway?.close();

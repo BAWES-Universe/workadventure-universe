@@ -1,7 +1,7 @@
 import express, { type Request, type Response, type NextFunction, type Router } from 'express';
 import { timingSafeEqual } from 'crypto';
 import type { MatrixAppServiceConfig } from './MatrixConfig';
-import type { EventClaim } from './MatrixEventDedupe';
+import type { EventInbox, InboxEntry } from './MatrixEventInbox';
 
 /** A Matrix event as Synapse pushes it to an application service. */
 export interface MatrixEvent {
@@ -16,8 +16,11 @@ export interface MatrixEvent {
 }
 
 export interface MatrixEventHandler {
-    /** Called once per pushed event, after Synapse already got its 200. Must not throw. */
-    onEvent(event: MatrixEvent): Promise<void>;
+    /**
+     * Called once per pushed event, after Synapse already got its 200. Must not throw. `paid` is called by the handler as soon as it has begun something the person pays for (a model
+     * turn, a computer start): before that, an event whose handling throws is given back for another try; after it, it is never handled again.
+     */
+    onEvent(event: MatrixEvent, hooks?: { paid: () => void }): Promise<void>;
     /** Synapse asks whether a Matrix ID in our namespace exists before someone can invite it. */
     userExists(userId: string): Promise<boolean>;
 }
@@ -30,6 +33,8 @@ export interface MatrixAppServiceRouter extends Router {
      * waits for the events already taken in to be handled, at most `timeoutMs`. Resolves true when all of them were.
      */
     settle(timeoutMs: number): Promise<boolean>;
+    /** Takes up the events whose server went away (the durable inbox), and handles them here. Answers how many it took. */
+    recover(): Promise<number>;
 }
 
 function tokenMatches(presented: string | undefined, expected: string): boolean {
@@ -48,11 +53,10 @@ export function createMatrixAppServiceRouter(
     handler: MatrixEventHandler,
     options: {
         /**
-         * Takes the event in the shared store: a claim when this server may handle it (finished once the handler is over, whether it finished or threw), `false` when it is being handled
-         * or was handled before (here, at another server, or before a restart): it is then handled no more. A claim that is never finished runs out by itself, so an event whose handler
-         * died with its server is handled when a copy of it comes later.
+         * The durable inbox: every event is KEPT in it before Matrix is answered, and the entry is marked done once it was handled, so an event whose server died is handled by another
+         * one (`recover`) instead of being lost behind a marker. Without one, events are handled as they arrive and nothing is remembered.
          */
-        firstSeen?: (eventId: string) => Promise<false | EventClaim>;
+        inbox?: EventInbox;
     } = {}
 ): MatrixAppServiceRouter {
     const router = express.Router();
@@ -89,30 +93,72 @@ export function createMatrixAppServiceRouter(
             recentTxnSet.delete(recentTxnIds.shift()!);
         }
         const events: MatrixEvent[] = Array.isArray(req.body?.events) ? req.body.events : [];
+        void takeIn(events, res);
+    };
+
+    /**
+     * Keeps every event of the transaction in the inbox BEFORE Matrix is answered (one step in the shared store each: no model call, no wait for a reply), then answers and handles them.
+     * An event the inbox already holds, or that was handled, is not handled again. A store that is connected but fails leaves Matrix unanswered with a 500, so it sends the transaction
+     * again and nothing is lost; a store that is not connected at all is the fallback of before (handle it, remember nothing).
+     */
+    const takeIn = async (events: MatrixEvent[], res: Response): Promise<void> => {
+        const mine: Array<{ event: MatrixEvent; entry?: InboxEntry }> = [];
+        try {
+            for (const event of events) {
+                if (!options.inbox) {
+                    mine.push({ event });
+                    continue;
+                }
+                // eslint-disable-next-line no-await-in-loop
+                const taken = await options.inbox.take(event.event_id, event);
+                if (taken === false) continue;
+                mine.push({ event, entry: taken });
+            }
+        } catch (error) {
+            console.error('[MatrixAppService] Could not keep a transaction in the shared store; Synapse is asked to send it again:', error instanceof Error ? error.message : error);
+            // What was already kept goes back at once: the transaction that comes again holds those events too
+            await Promise.all(mine.map((one) => one.entry?.release().catch(() => undefined)));
+            if (!res.headersSent) res.status(500).json({ errcode: 'M_UNKNOWN', error: 'Could not take the transaction in' });
+            return;
+        }
         // Answer at once: Synapse holds later transactions until this one returns, and a reply can take a while.
         res.json({});
+        for (const one of mine) work(one.event, one.entry);
+    };
+
+    /** Handles one event (its own room in order), and ends its inbox entry: done, or back for another try when nothing of it was paid for. */
+    const work = (event: MatrixEvent, entry?: InboxEntry): void => {
         // Events in one room run in order; different rooms run side by side, so one slow reply holds up no one else.
-        for (const event of events) {
-            const previous = roomChains.get(event.room_id) ?? Promise.resolve();
-            const next = previous.then(async () => {
-                // An event Matrix delivered again (a transaction sent again, to this server or another, or after a restart) is handled once: its id is kept in the shared store
-                let claim: EventClaim | undefined;
-                if (options.firstSeen && event.event_id) {
-                    const taken = await options.firstSeen(event.event_id).catch(() => undefined);
-                    if (taken === false) return;
-                    claim = taken;
+        const previous = roomChains.get(event.room_id) ?? Promise.resolve();
+        const next = previous.then(async () => {
+            let paid = false;
+            try {
+                await handler.onEvent(event, { paid: () => (paid = true) });
+            } catch (error) {
+                console.error('[MatrixAppService] Event handling failed:', error);
+                // Nothing of it was paid for: it goes back, and another try (here or at another server) answers the person. Once something was paid for it is never handled again
+                if (!paid) {
+                    await entry?.release().catch(() => undefined);
+                    return;
                 }
-                try {
-                    await handler.onEvent(event).catch((error) => console.error('[MatrixAppService] Event handling failed:', error));
-                } finally {
-                    await claim?.finish().catch(() => undefined);
-                }
-            });
-            roomChains.set(event.room_id, next);
-            void next.then(() => {
-                if (roomChains.get(event.room_id) === next) roomChains.delete(event.room_id);
-            });
-        }
+            }
+            await entry?.done().catch(() => undefined);
+        });
+        roomChains.set(event.room_id, next);
+        void next.then(() => {
+            if (roomChains.get(event.room_id) === next) roomChains.delete(event.room_id);
+        });
+    };
+
+    /**
+     * Takes up the events another server left behind (its handler died with it): they are handled here, in the order they arrived for each room. Called on a timer by the bot server, and
+     * by the tests. Never throws.
+     */
+    const recover = async (): Promise<number> => {
+        if (closing || !options.inbox) return 0;
+        const left = await options.inbox.recover();
+        for (const one of left) work(one.event as MatrixEvent, one.entry);
+        return left.length;
     };
 
     const userQuery = async (req: Request, res: Response) => {
@@ -156,5 +202,5 @@ export function createMatrixAppServiceRouter(
             clearTimeout(timer);
         }
     };
-    return Object.assign(router, { settle });
+    return Object.assign(router, { settle, recover });
 }

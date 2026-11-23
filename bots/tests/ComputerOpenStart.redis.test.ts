@@ -13,7 +13,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { AdminApiService } from '../server/AdminApiService';
 import { createMatrixAppServiceRouter, type MatrixEvent } from '../matrix/MatrixAppServiceRouter';
-import { createEventDedupe, type EventClaim } from '../matrix/MatrixEventDedupe';
+import { createEventInbox, INBOX_KEY, type EventInbox, type InboxEntry } from '../matrix/MatrixEventInbox';
 import { ConfirmationQueue, FOUND_EARLIER_SLOT, forgetSettledStarts, jobLine, runComputerTool, startKeyFor, OPEN_START_KEEP_MS, type StartKeyEntry } from '../ai/ComputerTools';
 import { RedisStartKeys, startKeyNameOf } from '../server/ComputerStartKeys';
 
@@ -1544,10 +1544,12 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             expect(orbit.acks).toEqual([]);
         });
 
-        it('the server hands the router the shared-store dedupe at start-up (it cannot be started in a test, so its source is read: losing it would leave an event delivered to two servers answered twice)', () => {
+        it('the server hands the router the durable inbox at start-up, and looks for the events other servers left behind (it cannot be started in a test, so its source is read: losing either would lose a person\'s message)', () => {
             const source = readFileSync(join(__dirname, '..', 'server', 'index.ts'), 'utf8');
-            expect(source).toMatch(/import \{ createEventDedupe \} from '\.\.\/matrix\/MatrixEventDedupe';/);
-            expect(source).toMatch(/createMatrixAppServiceRouter\(matrixConfig, matrixBridge, \{ firstSeen: createEventDedupe\(\(\) => botRegistry\.evidenceClient\(\)\) \}\)/);
+            expect(source).toMatch(/import \{ createEventInbox, RECOVER_EVERY_MS \} from '\.\.\/matrix\/MatrixEventInbox';/);
+            expect(source).toMatch(/createMatrixAppServiceRouter\(matrixConfig, matrixBridge, \{ inbox: createEventInbox\(\(\) => botRegistry\.evidenceClient\(\)\) \}\)/);
+            expect(source).toMatch(/matrixRecoverInterval = setInterval\(\(\) => void matrixRouter\?\.recover\(\), RECOVER_EVERY_MS\)/);
+            expect(source).toMatch(/if \(matrixRecoverInterval\) clearInterval\(matrixRecoverInterval\)/);
         });
 
         it('the reply made again (a retried answer, a new queue) for the same inbound event sends the same key again: one job, one reservation', async () => {
@@ -1564,26 +1566,49 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             expect(orbit.reservations).toBe(1);
         });
 
-        describe('the same Matrix event delivered to two router instances (real routers, a real Redis)', () => {
+        describe('the durable inbox: a Matrix event is kept before Matrix is answered, handled once, and never lost (real routers, a real Redis)', () => {
             const config = { homeserverUrl: 'http://hs', domain: 'matrix.test', asToken: 'as-secret', hsToken: 'hs-secret' };
             const servers: Server[] = [];
+            const ids_: string[] = [];
             afterAll(async () => {
                 await Promise.all(servers.map((one) => new Promise<void>((resolve) => one.close(() => resolve()))));
+                if (client.isOpen && ids_.length > 0) await client.del([...ids_.map((id) => `matrix:event:${id}`), ...ids_.map((id) => `matrix:inbox:${id}`), INBOX_KEY]);
             });
-            /** A router instance: the production router over a handler that is the computer tool for the event, as the bridge makes it. */
-            const instance = async (orbit: FakeOrbit, who: { botId: string; userId: string }, dedupe: boolean) => {
-                /** The events the handler entered, and the events whose handling (the start and its acknowledgement) is complete. */
+            const event = (id: string, body = 'Hi') => {
+                ids_.push(id);
+                return { type: 'm.room.message', room_id: '!dm:matrix.test', sender: '@alice:matrix.test', event_id: id, content: { msgtype: 'm.text', body } };
+            };
+            const fresh = (what = 'ev') => `$${what}-${randomUUID()}`;
+            const quiet = () => new Promise((resolve) => setTimeout(resolve, 150));
+
+            /**
+             * A bot-server instance: the production router over a handler that answers the person (and starts their computer job, as the bridge does). `fail` makes its first handler die
+             * before it answers, as a server that is killed mid-way does; `paidFirst` makes it die AFTER it began something the person pays for.
+             */
+            const instance = async (
+                orbit: FakeOrbit,
+                who: { botId: string; userId: string },
+                over: { inbox?: EventInbox | false; fail?: number; paidFirst?: boolean; answers?: string[] } = {}
+            ) => {
+                const answers: string[] = over.answers ?? [];
                 const handled: string[] = [];
-                const finished: string[] = [];
+                let fails = over.fail ?? 0;
                 const handler = {
-                    onEvent: async (event: MatrixEvent) => {
-                        handled.push(event.event_id);
-                        await process_(orbit, who).ask('Fill in my visa form', { inbound: { roomId: event.room_id, eventId: event.event_id } });
-                        finished.push(event.event_id);
+                    onEvent: async (one: MatrixEvent, hooks?: { paid: () => void }) => {
+                        handled.push(one.event_id);
+                        if (over.paidFirst) hooks?.paid();
+                        if (fails > 0) {
+                            fails -= 1;
+                            throw new Error('the server died while it was answering');
+                        }
+                        hooks?.paid();
+                        await process_(orbit, who).ask('Fill in my visa form', { inbound: { roomId: one.room_id, eventId: one.event_id } });
+                        answers.push(one.event_id);
                     },
                     userExists: async () => true,
                 };
-                const router = createMatrixAppServiceRouter(config, handler, dedupe ? { firstSeen: createEventDedupe(() => client as never) } : {});
+                const inbox = over.inbox === false ? undefined : (over.inbox ?? createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000 }));
+                const router = createMatrixAppServiceRouter(config, handler, inbox ? { inbox } : {});
                 const app = express();
                 app.use(router);
                 const server = await new Promise<Server>((resolve) => {
@@ -1591,185 +1616,172 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 });
                 servers.push(server);
                 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-                const put = (txn: string, event: Record<string, unknown>) =>
-                    fetch(`${base}/_matrix/app/v1/transactions/${txn}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer hs-secret' }, body: JSON.stringify({ events: [event] }) });
-                // `settle` ends the instance's intake and waits for the events it took in: used after the last request of a test, never before another one
-                return { handled, finished, put, settle: () => router.settle(5000) };
+                const put = (txn: string, ...events: Array<Record<string, unknown>>) =>
+                    fetch(`${base}/_matrix/app/v1/transactions/${txn}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer hs-secret' }, body: JSON.stringify({ events }) });
+                return { handled, answers, put, inbox, recover: () => router.recover(), settle: () => router.settle(5000) };
             };
-            const event = (id: string) => ({ type: 'm.room.message', room_id: '!dm:matrix.test', sender: '@alice:matrix.test', event_id: id, content: { msgtype: 'm.text', body: 'Fill in my visa form' } });
-            const quiet = () => new Promise((resolve) => setTimeout(resolve, 150));
+            const stateOf = (id: string) => client.get(`matrix:event:${id}`);
+            const inInbox = async (id: string) => (await client.zScore(INBOX_KEY, id)) !== null;
 
-            it('with the shared dedupe: the second instance does not handle the event at all; ONE job, ONE reservation', async () => {
+            it('GPT finding 9: the first server dies before it answers "Hi" and the redelivery is suppressed: the message is still answered, exactly once, by the server that takes the entry up', async () => {
                 const who = ids();
                 const orbit = new FakeOrbit();
-                const id = `$dup-${randomUUID()}`;
-                const one = await instance(orbit, who, true);
-                const two = await instance(orbit, who, true);
+                const id = fresh('lost');
+                const answers: string[] = [];
+                const one = await instance(orbit, who, { fail: 1, answers });
+                const two = await instance(orbit, who, { answers });
+                // the transaction is taken (200), and the first server's handler dies before the person has an answer
                 expect((await one.put('t1', event(id))).status).toBe(200);
-                // the first handler is COMPLETE (its start made, its record written) before anything else is checked or deleted
-                await vi.waitFor(() => expect(one.finished).toEqual([id]));
-                // Synapse sends the same transaction again, to the other server
+                await vi.waitFor(() => expect(one.handled).toEqual([id]));
+                await quiet();
+                expect(answers).toEqual([]);
+                // Synapse sends it again, to the other server: it is still being held, so it is not handled twice
                 expect((await two.put('t1', event(id))).status).toBe(200);
-                // the second router has taken in and decided its events when it settles: nothing was handled
-                expect(await two.settle()).toBe(true);
-                expect(two.handled).toEqual([]);
+                await quiet();
+                // nothing of it was paid for, so the entry went back: the other server takes it up and answers, once
+                expect(await two.recover()).toBe(1);
+                await vi.waitFor(() => expect(answers).toEqual([id]));
                 expect(orbit.jobs.size).toBe(1);
                 expect(orbit.reservations).toBe(1);
-                expect(await one.settle()).toBe(true);
-                await client.del(`matrix:event:${id}`);
+                await vi.waitFor(async () => expect(await stateOf(id)).toBe('d'));
+                expect(await inInbox(id)).toBe(false);
+                // and a copy that comes after that is not handled at all
+                expect((await two.put('t2', event(id))).status).toBe(200);
+                await quiet();
+                // the only handling at the second server is the one it took up; the copy is not handled
+                expect(two.handled).toEqual([id]);
+                expect(answers).toEqual([id]);
+                expect(orbit.jobs.size).toBe(1);
+                expect(await two.settle()).toBe(true);
             });
 
-            it('with the dedupe EMPTY (a restart, Redis flushed): the second instance handles the event, and the key made from it still answers the one job: ONE job, ONE reservation', async () => {
+            it('the events of one room keep their order when they are taken up again: the older one is answered first', async () => {
                 const who = ids();
                 const orbit = new FakeOrbit();
-                const id = `$dup-${randomUUID()}`;
-                const one = await instance(orbit, who, false);
-                const two = await instance(orbit, who, false);
+                const [a, b] = [fresh('order-a'), fresh('order-b')];
+                const answers: string[] = [];
+                const one = await instance(orbit, who, { fail: 2, answers });
+                const two = await instance(orbit, who, { answers });
+                await one.put('t1', event(a, 'first'), event(b, 'second'));
+                await vi.waitFor(() => expect(one.handled).toEqual([a, b]));
+                await quiet();
+                expect(await two.recover()).toBe(2);
+                await vi.waitFor(() => expect(answers).toHaveLength(2));
+                expect(answers).toEqual([a, b]);
+            });
+
+            it('a handler that died AFTER something was paid for is never handled again (a second paid turn would be run)', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const id = fresh('paid');
+                const one = await instance(orbit, who, { fail: 1, paidFirst: true });
+                const two = await instance(orbit, who);
                 await one.put('t1', event(id));
-                // complete before the record is deleted: a slow first handler would write it after the delete
-                await vi.waitFor(() => expect(one.finished).toEqual([id]));
-                await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+                await vi.waitFor(() => expect(one.handled).toEqual([id]));
+                await quiet();
+                // the entry is done, not given back: no copy and no scan handles it again
+                expect(await stateOf(id)).toBe('d');
+                expect(await two.recover()).toBe(0);
                 await two.put('t2', event(id));
-                await vi.waitFor(() => expect(two.finished).toEqual([id]));
-                expect(await one.settle()).toBe(true);
-                expect(await two.settle()).toBe(true);
+                await quiet();
+                expect(two.handled).toEqual([]);
+                expect(orbit.jobs.size).toBe(0);
+            });
+
+            it('an event is kept BEFORE Matrix is answered: with the store failing, the transaction is refused (500) so Synapse sends it again, and nothing is handled', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const failing = createEventInbox(() => ({ eval: async () => Promise.reject(new Error('down')) }), { ttlSeconds: 60 });
+                vi.spyOn(console, 'error').mockImplementation(() => undefined);
+                const one = await instance(orbit, who, { inbox: failing });
+                const answer = await one.put('t1', event(fresh('down')));
+                expect(answer.status).toBe(500);
+                await quiet();
+                expect(one.handled).toEqual([]);
+            });
+
+            it('with the store NOT connected at all every event is handled and nothing is remembered (the start key made from the event still keeps one job)', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const id = fresh('nostore');
+                const one = await instance(orbit, who, { inbox: createEventInbox(() => null) });
+                await one.put('t1', event(id));
+                await vi.waitFor(() => expect(one.answers).toEqual([id]));
+                await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
+                // the same event again, to another server with no store either: handled again, and the key made from the event still answers the one job
+                const two = await instance(orbit, who, { inbox: createEventInbox(() => null) });
+                await two.put('t2', event(id));
+                await vi.waitFor(() => expect(two.answers).toEqual([id]));
                 expect(orbit.jobs.size).toBe(1);
                 expect(orbit.reservations).toBe(1);
+            });
+
+            it('an event being handled by a server that is alive (it beats) is not taken from it', async () => {
+                const id = fresh('alive');
+                const inbox = createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 20, staleMs: 120 });
+                const other = createEventInbox(() => client as never, { ttlSeconds: 60, staleMs: 120 });
+                const entry = (await inbox.take(id, event(id))) as InboxEntry;
+                expect(entry).not.toBe(false);
+                // well past the stale time, while the owner beats: nobody else may have it
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                expect(await other.recover()).toEqual([]);
+                expect(await inbox.take(id, event(id))).toBe(false);
+                await entry.done();
+                expect(await stateOf(id)).toBe('d');
+            });
+
+            it('an event whose server went away (its beat stopped) is taken up by another, with the event itself', async () => {
+                const id = fresh('gone');
+                const dead = createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000, staleMs: 80 });
+                const alive = createEventInbox(() => client as never, { ttlSeconds: 60, staleMs: 80 });
+                await dead.take(id, event(id, 'Hi there'));
+                await new Promise((resolve) => setTimeout(resolve, 200));
+                const left = await alive.recover();
+                expect(left).toHaveLength(1);
+                expect((left[0].event as { content: { body: string } }).content.body).toBe('Hi there');
+                // it is the new server's now: the old one can neither finish it nor give it back
+                const stolen = await dead.take(id, event(id));
+                expect(stolen).toBe(false);
+                await left[0].entry.done();
+                expect(await stateOf(id)).toBe('d');
+            });
+
+            it('an event that throws every time is tried a few times and then left alone, never for ever', async () => {
+                const id = fresh('throws');
+                const inbox = createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000, staleMs: 10, maxTries: 3 });
+                let taken = 0;
+                for (let i = 0; i < 5; i++) {
+                    // eslint-disable-next-line no-await-in-loop
+                    const entry = i === 0 ? await inbox.take(id, event(id)) : (await inbox.recover())[0]?.entry;
+                    if (!entry) break;
+                    taken += 1;
+                    // eslint-disable-next-line no-await-in-loop
+                    await (entry as InboxEntry).release();
+                }
+                expect(taken).toBe(3);
+                expect(await stateOf(id)).toBe('d');
+                expect(await inInbox(id)).toBe(false);
+            });
+
+            it('a store that is connected but never answers does not hold the room: the first step gives up on its deadline', async () => {
+                const stalled = createEventInbox(() => ({ eval: () => new Promise<never>(() => undefined) }), { deadlineMs: 40 });
+                const began = Date.now();
+                await expect(stalled.take('$stalled', event('$stalled'))).rejects.toThrow(/did not answer in time/);
+                expect(Date.now() - began).toBeLessThan(1500);
             });
 
             it('a DELIBERATE later message (a new event) is handled and is a distinct job and reservation', async () => {
                 const who = ids();
                 const orbit = new FakeOrbit();
-                const one = await instance(orbit, who, true);
-                const a = `$a-${randomUUID()}`;
-                const b = `$b-${randomUUID()}`;
+                const one = await instance(orbit, who);
+                const [a, b] = [fresh('a'), fresh('b')];
                 await one.put('t1', event(a));
-                await vi.waitFor(() => expect(one.finished).toEqual([a]));
+                await vi.waitFor(() => expect(one.answers).toEqual([a]));
                 await one.put('t2', event(b));
-                await vi.waitFor(() => expect(one.finished).toEqual([a, b]));
+                await vi.waitFor(() => expect(one.answers).toEqual([a, b]));
                 expect(await one.settle()).toBe(true);
                 expect(orbit.jobs.size).toBe(2);
                 expect(orbit.reservations).toBe(2);
-                await client.del([`matrix:event:${a}`, `matrix:event:${b}`]);
-            });
-
-            it('the dedupe never costs a message: with the shared store down or failing every event is handled', async () => {
-                const first = await createEventDedupe(() => null)('$x');
-                expect(first).not.toBe(false);
-                const failing = createEventDedupe(() => ({ eval: async () => Promise.reject(new Error('down')) }));
-                const claim = await failing('$x');
-                expect(claim).not.toBe(false);
-                await (claim as EventClaim).finish();
-                expect(await createEventDedupe(() => client as never, 60)('')).not.toBe(false);
-            });
-
-            it('N6: a store that is connected but never answers is the same as one that fails: the event is handled after the deadline, and nothing holds the room', async () => {
-                const stalled = createEventDedupe(() => ({ eval: () => new Promise<never>(() => undefined) }), 60, { deadlineMs: 40 });
-                const began = Date.now();
-                const claim = await stalled('$stalled');
-                expect(claim).not.toBe(false);
-                expect(Date.now() - began).toBeLessThan(1500);
-                await (claim as EventClaim).finish();
-                // the real router over it: the event is handled and the next event of the room is not held behind it
-                const handled: string[] = [];
-                const app = express();
-                app.use(createMatrixAppServiceRouter(config, { onEvent: async (one) => void handled.push(one.event_id), userExists: async () => true }, { firstSeen: stalled }));
-                const server = await new Promise<Server>((resolve) => {
-                    const s = app.listen(0, () => resolve(s));
-                });
-                servers.push(server);
-                const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-                await fetch(`${base}/_matrix/app/v1/transactions/t9`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer hs-secret' }, body: JSON.stringify({ events: [event('$s1'), event('$s2')] }) });
-                await vi.waitFor(() => expect(handled).toEqual(['$s1', '$s2']), { timeout: 2000 });
-            });
-
-            describe('N11: an event is suppressed only while its handler is working or after it was handled', () => {
-                const stateOf = (id: string) => client.get(`matrix:event:${id}`);
-                const fresh = () => `$claim-${randomUUID()}`;
-
-                it('one copy while the first is being handled (p), and one after it was handled (d): neither is handled', async () => {
-                    const dedupe = createEventDedupe(() => client as never, 60);
-                    const id = fresh();
-                    const claim = (await dedupe(id)) as EventClaim;
-                    expect(claim).not.toBe(false);
-                    expect(await stateOf(id)).toMatch(/^p:/);
-                    expect(await dedupe(id)).toBe(false);
-                    await claim.finish();
-                    expect(await stateOf(id)).toBe('d');
-                    expect(await dedupe(id)).toBe(false);
-                    expect(await client.ttl(`matrix:event:${id}`)).toBeGreaterThan(0);
-                    await client.del(`matrix:event:${id}`);
-                });
-
-                it('a copy that comes after the claim ran out (the server that took it died) is handled', async () => {
-                    const dedupe = createEventDedupe(() => client as never, 60, { handlingSeconds: 0.15, renewEveryMs: 60000 });
-                    const id = fresh();
-                    expect(await dedupe(id)).not.toBe(false);
-                    expect(await dedupe(id)).toBe(false);
-                    await new Promise((resolve) => setTimeout(resolve, 250));
-                    const later = await dedupe(id);
-                    expect(later).not.toBe(false);
-                    await (later as EventClaim).finish();
-                    expect(await stateOf(id)).toBe('d');
-                    await client.del(`matrix:event:${id}`);
-                });
-
-                it('a handler that outlived its claim cannot clear or mark another server\'s newer claim', async () => {
-                    const dedupe = createEventDedupe(() => client as never, 60, { handlingSeconds: 0.15, renewEveryMs: 60000 });
-                    const id = fresh();
-                    const slow = (await dedupe(id)) as EventClaim;
-                    await new Promise((resolve) => setTimeout(resolve, 250));
-                    const newer = (await dedupe(id)) as EventClaim;
-                    expect(newer).not.toBe(false);
-                    const mine = await stateOf(id);
-                    expect(mine).toMatch(/^p:/);
-                    // the old handler finishes late: the newer claim stays as it was, and a third copy is still held off
-                    await slow.finish();
-                    expect(await stateOf(id)).toBe(mine);
-                    expect(await dedupe(id)).toBe(false);
-                    await newer.finish();
-                    expect(await stateOf(id)).toBe('d');
-                    await client.del(`matrix:event:${id}`);
-                });
-
-                it('a handler that throws marks the event handled (never released: a second paid turn would run)', async () => {
-                    const id = fresh();
-                    const handler = { onEvent: async () => Promise.reject(new Error('the model call failed')), userExists: async () => true };
-                    const app = express();
-                    app.use(createMatrixAppServiceRouter(config, handler, { firstSeen: createEventDedupe(() => client as never, 60) }));
-                    const server = await new Promise<Server>((resolve) => {
-                        const s = app.listen(0, () => resolve(s));
-                    });
-                    servers.push(server);
-                    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-                    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-                    await fetch(`${base}/_matrix/app/v1/transactions/t1`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer hs-secret' }, body: JSON.stringify({ events: [event(id)] }) });
-                    await vi.waitFor(async () => expect(await stateOf(id)).toBe('d'), { timeout: 2000 });
-                    await client.del(`matrix:event:${id}`);
-                });
-
-                it('a handler that works for longer than a claim lives keeps its claim (renewed), so a copy during it is not handled', async () => {
-                    const dedupe = createEventDedupe(() => client as never, 60, { handlingSeconds: 0.3, renewEveryMs: 80 });
-                    const id = fresh();
-                    const claim = (await dedupe(id)) as EventClaim;
-                    await new Promise((resolve) => setTimeout(resolve, 700));
-                    expect(await stateOf(id)).toMatch(/^p:/);
-                    expect(await dedupe(id)).toBe(false);
-                    await claim.finish();
-                    expect(await stateOf(id)).toBe('d');
-                    await client.del(`matrix:event:${id}`);
-                });
-
-                it('a claim that was never finished (a dead server) is not renewed for ever: renewing stops after its limit', async () => {
-                    const dedupe = createEventDedupe(() => client as never, 60, { handlingSeconds: 0.2, renewEveryMs: 40, renewForMs: 150 });
-                    const id = fresh();
-                    await dedupe(id);
-                    await new Promise((resolve) => setTimeout(resolve, 600));
-                    const later = await dedupe(id);
-                    expect(later).not.toBe(false);
-                    await (later as EventClaim).finish();
-                    await client.del(`matrix:event:${id}`);
-                });
             });
         });
     });
