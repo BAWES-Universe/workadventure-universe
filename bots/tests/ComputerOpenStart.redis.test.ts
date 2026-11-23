@@ -100,7 +100,8 @@ class FakeOrbit {
             const title = sent.title;
             this.posts.push({ key, title, ...(sent.brief ? { brief: sent.brief } : {}), ...(sent.writes === undefined ? {} : { writes: sent.writes }), ...(sent.plan ? { plan: sent.plan } : {}), ...(sent.origin ? { origin: sent.origin } : {}), confirms });
             const make = () => {
-                if (this.dead.has(key)) return { data: { ok: false, reason: 'retired' } };
+                // a late copy of a key the game retired (Orbit round 8): refused as `retired_by_game`, never made
+                if (this.dead.has(key)) return { data: { ok: false, reason: 'retired_by_game' } };
                 if (!this.jobs.has(key)) {
                     // the guard sits at the moment of creation: the oldest job of this person on this Brick that was never confirmed stands in the way of a start with another key
                     const unconfirmed = confirms ? [...this.jobs.values()].find((one) => one.scope === scope && !one.acked) : undefined;
@@ -739,6 +740,11 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 // a start of the retired key (a peer that read the record) is answered `retired`, never made
                 expect(orbit.dead.has(oldKey)).toBe(true);
                 expect(orbit.jobs.has(oldKey)).toBe(false);
+                // and a late copy of the old start (a peer that had read the record) is refused by Orbit and makes no job
+                const late = (await orbit.call('post', `api/bots/${who.botId}/computer-jobs`, { userId: who.userId, title: 'Fill in my visa form' }, undefined, undefined, { 'X-Computer-Start-Attempt': oldKey, 'X-Computer-Start-Acks': '1' })) as { data: { ok: boolean; reason?: string } };
+                expect(late.data).toEqual({ ok: false, reason: 'retired_by_game' });
+                expect(orbit.jobs.has(oldKey)).toBe(false);
+                expect(orbit.jobs.size).toBe(1);
                 expect(orbit.jobs.size).toBe(1);
             });
 
@@ -1582,7 +1588,8 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 const who = ids();
                 const orbit = new FakeOrbit();
                 await seed(who);
-                scripted(orbit, [{ ok: false, reason: 'retired_by_game' }]);
+                // Orbit itself (the fake) knows the key as one the game retired
+                orbit.dead.add(HELD);
                 const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
                 expect(answer).toMatchObject({ started: false, reason: 'expired' });
                 expect(orbit.posts.map((one) => one.key)).toEqual([HELD]);

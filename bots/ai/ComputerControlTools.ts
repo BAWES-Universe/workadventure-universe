@@ -164,10 +164,40 @@ export function isClearYes(message: string | undefined, titles: string[] = []): 
     const [first, second] = tokens[0] === 'please' || tokens[0] === 'pls' ? tokens.slice(1) : tokens;
     if (first === undefined) return false;
     if (!(YES_FIRST.has(first) || (second !== undefined && YES_PAIRS.has(`${first} ${second}`)) || YES_PAIRS.has(first))) return false;
-    const own = new Set(titles.flatMap((title) => tokensOf(title)));
+    const { named, whole } = titleRunsNamed(tokens, titles);
+    // A condition word is never part of a yes because it happens to be in a title: only inside a run that is the title's whole token sequence ("yes, cancel Upload after review")
+    if (tokens.some((word, index) => CONDITION_WORDS.has(word) && !whole[index])) return false;
     const pairWords = new Set([...YES_PAIRS].flatMap((pair) => pair.split(' ')));
-    return tokens.every((word) => YES_FILLER.has(word) || YES_FIRST.has(word) || pairWords.has(word) || ENDING_VERB.has(word) || own.has(word));
+    return tokens.every((word, index) => YES_FILLER.has(word) || YES_FIRST.has(word) || pairWords.has(word) || ENDING_VERB.has(word) || named[index]);
 }
+
+/**
+ * The words of a message that are the TITLE of a job it is naming: a run that starts at the title's FIRST word and comes right after an ending verb or "called"/"named" ("yes, cancel Upload after
+ * review"). A word that only happens to be in a title is not the title's: "yes, after review" is a condition even when the job is called "Upload after review" (CodeRabbit on the round 8 head, 1).
+ */
+function titleRunsNamed(tokens: string[], titles: string[]): { named: boolean[]; whole: boolean[] } {
+    const named = new Array<boolean>(tokens.length).fill(false);
+    // The words of a run that is the title's WHOLE token sequence
+    const whole = new Array<boolean>(tokens.length).fill(false);
+    for (const title of titles.map((one) => tokensOf(one)).filter((words) => words.length > 0)) {
+        for (let at = 0; at < tokens.length; at++) {
+            if (!endsJobBefore(tokens, at)) continue;
+            let length = 0;
+            while (at + length < tokens.length && length < title.length && tokens[at + length] === title[length]) length++;
+            for (let i = 0; i < length; i++) {
+                named[at + i] = true;
+                if (length === title.length) whole[at + i] = true;
+            }
+        }
+    }
+    return { named, whole };
+}
+
+/** Words that make a yes conditional or timed ("yes, after the review", "yes, only if it fails", "yes, tomorrow"): they are checked BEFORE anything else and pass only inside the whole title of the job asked about. */
+const CONDITION_WORDS = new Set([
+    'after', 'afterwards', 'before', 'when', 'whenever', 'once', 'until', 'till', 'unless', 'if', 'only', 'later', 'tomorrow', 'tonight', 'then', 'first', 'while', 'because', 'since',
+    'بعد', 'قبل', 'عندما', 'لما', 'اذا', 'الا', 'فقط', 'غدا', 'بكرا', 'بكره', 'الليله', 'ثم', 'اول', 'بينما',
+]);
 
 /** Words that name ANOTHER thing to do with a job than ending it: a yes that says "yes, pause it" is not a yes to a question about cancelling. */
 const OTHER_ACTION = new Set(['pause', 'paused', 'pausing', 'resume', 'resumed', 'resuming', 'redirect', 'redirected']);
@@ -667,7 +697,7 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
         if (!answer.ok) return refused(reasonOf(answer), jobs[0], view);
         // Jobs that were live but not in the set the person confirmed (they began after the question): never stopped, and said so in Brick's own words (a statement, so a plain yes after it confirms nothing)
         if (answer.ok && answer.left && answer.left.length > 0) {
-            return { result: { done: true, someLeft: true, andThen: 'Some jobs were stopped and some were NOT. A fixed line under your reply already names them: do not say it again and do not reword it. Do not stop or cancel the left jobs unless the person asks in a new message.' }, lines: [CONTROL_WORDS.stoppedSome(answer.stopped ?? jobs.length, answer.left)] };
+            return { result: { done: true, someLeft: true, andThen: 'Some jobs were stopped and some were NOT. A fixed line under your reply already names them: do not say it again and do not reword it. Do not stop or cancel the left jobs unless the person asks in a new message.' }, lines: [CONTROL_WORDS.stoppedSome(answer.stopped ?? null, jobs.length, answer.left)] };
         }
         const only = jobs.length === 1 ? jobs[0] : null;
         return { result: { done: true }, lines: [only ? lineOf(hasStarted(only) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, only.title) : CONTROL_WORDS.stoppedAll(jobs.length)] };

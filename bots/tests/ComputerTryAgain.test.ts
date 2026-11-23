@@ -13,7 +13,7 @@ import axios from 'axios';
 import { AdminApiService, COMPUTER_CONTINUES_HEADER, cannotContinueOf } from '../server/AdminApiService';
 import { CANNOT_CONTINUE_NOTE, START_NEW_JOB_LABEL, START_REFUSAL_WORDS, TRY_AGAIN_WORDS, cannotContinue } from '../ai/ComputerTryAgainWords';
 import { AIService } from '../ai/AIService';
-import { ConfirmationQueue, computerToolDefinitions, forgetSettledStarts, runComputerTool, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
+import { ConfirmationQueue, computerToolDefinitions, forgetSettledStarts, runComputerTool, TRY_AGAIN_PENDING_SLOT, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
 import { asksToTryAgain, offersTryAgain, retryJobOf, tryAgainNote, type RetryJob } from '../ai/ComputerTryAgain';
 import { jobLine, quotedTitle } from '../ai/JobStatusLine';
 import { CONTROL_WORDS } from '../ai/ComputerControlWords';
@@ -547,7 +547,9 @@ describe('try_again with no job named for this turn', () => {
         expect(queue.tell()).toHaveLength(1);
     });
 
-    it('the person\'s yes after the offer is an ordinary new start: no continuation, a key of its own', async () => {
+    // The tool's own call after an offer (the model's call once the person has said yes or tapped the card): the reply path of the tap is in Brick.moreBricks.test.ts (the system line, no
+    // `try_again`, `newJobAsked` kept for that turn only); a typed yes has no code path of its own, the model calls the tool, and this is that call
+    it('a direct use_computer call after the offer (what a yes or a tap leads to) is an ordinary new start: no continuation, no ended-jobs read, a key of its own', async () => {
         const admin = world([], { ok: true, job: { id: 'j', status: 'running', queuedFor: null }, restoredFrom: null });
         await runDelivered({ job: 'Visa form' }, ctx(admin));
         expect(admin.startComputerJob.mock.calls[0][2]).not.toHaveProperty('continuesJobId');
@@ -572,6 +574,96 @@ describe('try_again with no job named for this turn', () => {
         expect(fresh).toMatchObject({ started: true });
         expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
         expect(admin.startComputerJob.mock.calls[0][2]).not.toHaveProperty('continuesJobId');
+    });
+
+    // CodeRabbit on the round 8 head, 3 and 15: the calls of one round run together
+    describe('overlapping calls of one round', () => {
+        const deferred = <T,>() => {
+            let resolve!: (value: T) => void;
+            let reject!: (error: Error) => void;
+            const promise = new Promise<T>((done, fail) => ((resolve = done), (reject = fail)));
+            return { promise, resolve, reject };
+        };
+        const heldWorld = (hold: Promise<unknown>) => ({ startComputerJob: vi.fn().mockResolvedValue(started), computerEndedJobs: vi.fn().mockReturnValue(hold) });
+        /** Lets everything that can run without the held promise run. */
+        const settleMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+        it('a fresh start dispatched while the try_again lookup is still pending WAITS for it, and is refused when the question was asked; so is every call after', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const memory = new Map();
+            const over = { startKeys: memory, confirmations: new ConfirmationQueue() };
+            const asking = runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, over));
+            const fresh = runComputerTool({ job: 'Something new' }, ctx(admin as never, over));
+            await settleMicrotasks();
+            // the lookup has not answered: the fresh call has decided nothing and sent nothing
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            hold.resolve([VISA, TAXI]);
+            expect(await asking).toMatchObject({ started: false, asked: 'which' });
+            const freshAnswer = await fresh;
+            expect(freshAnswer).toMatchObject({ started: false });
+            expect(String(freshAnswer.note)).toMatch(/NOTHING was started/);
+            expect(await runComputerTool({ job: 'Something new' }, ctx(admin as never, over))).toMatchObject({ started: false });
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+        });
+
+        it('a fresh start that began BEFORE the try_again, and was waiting on its own steps, is stopped right before its paid send', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const gate = deferred<void>();
+            // the shared store answers late (as a slow Redis does): the fresh call is waiting on it when the try_again begins
+            const store = { expected: () => true, delete: async () => undefined, claim: async (_scope: string, entry: { key: string; at: number; payload?: unknown }) => (await gate.promise, { ...entry, mine: true }) };
+            const over = { startKeys: new Map(), confirmations: new ConfirmationQueue(), startKeyStore: store as never };
+            // dispatched in the order of the model's calls, neither awaited yet
+            const fresh = runComputerTool({ job: 'Something new' }, ctx(admin as never, over));
+            const asking = runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, over));
+            hold.resolve([VISA, TAXI]);
+            await asking;
+            gate.resolve();
+            expect(await fresh).toMatchObject({ started: false });
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+        });
+
+        it('two try_agains in one round, one of which asks: neither starts (the one naming an ended job exactly waits, then finds the question)', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const over = { startKeys: new Map(), confirmations: new ConfirmationQueue() };
+            const asking = runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, over));
+            const exact = runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin as never, over));
+            hold.resolve([VISA, TAXI]);
+            const [, exactAnswer] = await Promise.all([asking, exact]);
+            expect(exactAnswer).toMatchObject({ started: false });
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+        });
+
+        it('a lookup that cannot be answered asks nothing and blocks nothing: a fresh call that waited for it goes on as an ordinary ask', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const memory = new Map();
+            const over = { startKeys: memory };
+            const asking = runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin as never, over));
+            const fresh = runDelivered({ job: 'Something new' }, ctx(admin as never, over));
+            await settleMicrotasks();
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            hold.reject(new Error('down'));
+            expect(await asking).toMatchObject({ started: false });
+            expect(await fresh).toMatchObject({ started: true });
+            expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+            expect(memory.has(TRY_AGAIN_PENDING_SLOT)).toBe(false);
+        });
+    });
+
+    // CodeRabbit on the round 8 head, 2: a title longer than a start carries is still compared whole
+    it('a title of more than 120 letters that names an ended job EXACTLY carries it on (compared whole, cut only when it becomes a start)', async () => {
+        const long = { id: OLD, title: `Fill in the visa form for ${'a'.repeat(100)} and send it to the embassy by the end of the week` };
+        expect(long.title.length).toBeGreaterThan(120);
+        const admin = world([long]);
+        const answer = await runDelivered({ job: long.title, try_again: true }, ctx(admin, { startKeys: new Map() }));
+        expect(answer).toMatchObject({ started: true });
+        expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+        const sent = admin.startComputerJob.mock.calls[0][2] as { title: string; continuesJobId?: string };
+        expect(sent.continuesJobId).toBe(OLD);
+        expect(sent.title.length).toBeLessThanOrEqual(120);
     });
 
     it('a try_again that could not ask Orbit puts no guard up (they may simply ask again)', async () => {
