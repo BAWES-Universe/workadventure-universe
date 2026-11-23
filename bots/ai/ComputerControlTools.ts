@@ -363,14 +363,18 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     context.state.resolved.set(resolvedKey, job);
 
     switch (name) {
-        case PAUSE_JOB_TOOL:
-            if (isPaused(job) && !context.state.calls.has(`pause|${job.id}`)) return say(context, [lineOf(CONTROL_REFUSALS.alreadyPaused, job.title)], { done: false });
+        case PAUSE_JOB_TOOL: {
+            // A job that is already paused: their Pause still GOES to Orbit (GPT's sixth answer, finding 5), because a job the month or a limit paused carries on by itself
+            // when room appears, and their asking for it to pause means it must not. Orbit takes that as their own pause; what they read is that it is paused.
+            const already = isPaused(job);
             return once(context, `pause|${job.id}`, async () => {
                 const answer = await acting({ action: 'pause', jobId: job.id });
                 if (!answer.ok) return refused(reasonOf(answer), job, view);
+                if (already) return { result: { done: true, already: true }, lines: [lineOf(CONTROL_REFUSALS.alreadyPaused, job.title)] };
                 const lost = answer.signInsKept === false;
                 return { result: { done: true }, lines: [lineOf(lost ? CONTROL_WORDS.pausedSignInLost : CONTROL_WORDS.paused, job.title)] };
             });
+        }
         case RESUME_JOB_TOOL:
             if (!isPaused(job) && !context.state.calls.has(`resume|${job.id}`)) return say(context, [lineOf(CONTROL_REFUSALS.notPaused, job.title)], { done: false });
             return once(context, `resume|${job.id}`, async () => {

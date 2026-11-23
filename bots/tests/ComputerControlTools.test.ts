@@ -142,12 +142,33 @@ describe('pause and carry on (they act at once, and name the job)', () => {
         expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.pausedSignInLost, 'Visa form')]);
     });
 
-    it('never pauses a job that is already paused: it asks whether to resume it', async () => {
-        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking')]));
+    // GPT's sixth answer, finding 5: their Pause of a job that is already paused still reaches Orbit, because a job the month or a limit paused would otherwise carry on by
+    // itself the moment room appears. Orbit takes it as their own pause; what they read is the approved "already paused" line.
+    it('sends their Pause of a job that is already paused to Orbit all the same, and asks whether to resume it', async () => {
+        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking', { pausedWhy: 'allowance' })]));
+        const c = chat(orbit.admin);
+        const result = await c.run(PAUSE_JOB_TOOL, { job: 'hotel' });
+        expect(orbit.acted()).toEqual([{ action: 'pause', jobId: 'job-hotel' }]);
+        expect(result).toMatchObject({ done: true, already: true });
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_REFUSALS.alreadyPaused, 'Hotel booking')]);
+    });
+
+    it('sends that Pause once in a turn, however often it is asked for, and says the same each time', async () => {
+        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking', { pausedWhy: 'rule' })]));
         const c = chat(orbit.admin);
         await c.run(PAUSE_JOB_TOOL, { job: 'hotel' });
-        expect(orbit.acted()).toEqual([]);
+        c.retry();
+        await c.run(PAUSE_JOB_TOOL, { job: 'hotel' });
+        expect(orbit.acted()).toEqual([{ action: 'pause', jobId: 'job-hotel' }]);
         expect(await c.deliver()).toEqual([lineOf(CONTROL_REFUSALS.alreadyPaused, 'Hotel booking')]);
+    });
+
+    it('says what Orbit said when it refuses their Pause of a paused job, and claims nothing', async () => {
+        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking')]), { pause: { ok: false, reason: 'over' } });
+        const c = chat(orbit.admin);
+        const result = await c.run(PAUSE_JOB_TOOL, { job: 'hotel' });
+        expect(result).toMatchObject({ done: false, success: false, reason: 'over' });
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_REFUSALS.over, 'Hotel booking')]);
     });
 
     it('says "hand it back first" when the person holds the screen (Orbit refuses the pause)', async () => {

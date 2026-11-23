@@ -24,7 +24,7 @@
 
 import type { StepsField } from '../ai/ToolSteps';
 
-export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule' | 'late' | 'paused' | 'carried_on' | 'can_carry_on';
+export type ReportKind = 'done' | 'failed' | 'needs' | 'unanswered' | 'month' | 'rule' | 'late' | 'paused' | 'carried_on' | 'can_carry_on' | 'back_in_line';
 /** Why Orbit paused a job by itself (computers plan, piece 3): the person's month of computer time is used up, or a spending limit they set was reached. */
 export type PausedWhy = 'allowance' | 'rule';
 export type Waiting = 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer';
@@ -84,7 +84,7 @@ export interface ComputerReport {
     heldScreen: boolean;
 }
 
-const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule', 'late', 'paused', 'carried_on', 'can_carry_on'];
+const KINDS: readonly ReportKind[] = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule', 'late', 'paused', 'carried_on', 'can_carry_on', 'back_in_line'];
 
 /** The longest an App's name is said, and how many are named before "and N more": a follow-up is one short message. */
 const APP_NAME_MAX = 40;
@@ -168,7 +168,7 @@ export function computerReportOf(raw: unknown): ComputerReport | null {
     const pausedWhy = kind === 'paused' && (report.pausedWhy === 'allowance' || report.pausedWhy === 'rule') ? (report.pausedWhy as PausedWhy) : null;
     if (kind === 'paused' && (seq === null || pausedWhy === null)) return null;
     // Carrying on by itself, and "it can carry on now" (something changed while it waited, so it asks): each told once, by its number, the way Orbit names them
-    if ((kind === 'carried_on' || kind === 'can_carry_on') && seq === null) return null;
+    if ((kind === 'carried_on' || kind === 'can_carry_on' || kind === 'back_in_line') && seq === null) return null;
     return {
         key: report.key,
         jobId: report.jobId,
@@ -333,6 +333,9 @@ export function reportText(report: ComputerReport): string {
         // And once when it carries on by itself
         case 'carried_on':
             return `I'm carrying on with “${name}”.`;
+        // More time arrived and the pause is over, but another job has the computer (or every computer is busy): it is in line, not running. One line for either reason: "when its turn comes" is true for both (GPT's sixth answer, finding 5)
+        case 'back_in_line':
+            return `“${name}” is back in line. It carries on by itself when its turn comes.`;
         // More time arrived, but something about the job changed while it waited (or the person held its screen), so it asks: a yes is the person's own resume
         case 'can_carry_on':
             return `“${name}” can carry on now. Want me to?`;

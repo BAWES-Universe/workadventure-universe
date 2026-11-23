@@ -1680,9 +1680,10 @@ export class AdminApiService {
      * record proves. Throws when Orbit cannot be asked, so nothing is taken for "nothing to tell".
      */
     async computerReports(): Promise<ComputerReport[]> {
-        // `accepts=late,paused,carried_on,can_carry_on`: this game knows the late follow-up and what is said about a job Orbit paused by itself (`paused`, then `carried_on` or
-        // `can_carry_on`). Orbit offers each of those kinds only to a game that names it (an older game is untouched while Orbit is deployed first)
-        const response = await this.brickCall<{ reports?: unknown }>('get', 'api/computer/jobs/reports', undefined, { accepts: 'late,paused,carried_on,can_carry_on' });
+        // `accepts=late,paused,carried_on,can_carry_on,back_in_line`: this game knows the late follow-up and what is said about a job Orbit paused by itself (`paused`, then
+        // `carried_on` when it is running again, `can_carry_on` when it asks first, or `back_in_line` when the pause is over but its turn has not come). Orbit offers each of those
+        // kinds only to a game that names it (an older game is untouched while Orbit is deployed first)
+        const response = await this.brickCall<{ reports?: unknown }>('get', 'api/computer/jobs/reports', undefined, { accepts: 'late,paused,carried_on,can_carry_on,back_in_line' });
         const reports = Array.isArray(response.data?.reports) ? response.data.reports : [];
         return reports.map(computerReportOf).filter((report): report is ComputerReport => report !== null);
     }

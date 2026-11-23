@@ -14,7 +14,7 @@ import { ComputerReports, type ComputerSpeaker, type ComputerSpoke } from '../se
  * - POST { jobId, kind, seq }: these kinds without a numeric seq are a 400; an unknown job is a 404; confirming marks that telling only, twice is safe.
  */
 
-type TellingKind = 'paused' | 'carried_on' | 'can_carry_on';
+type TellingKind = 'paused' | 'carried_on' | 'can_carry_on' | 'back_in_line';
 interface Telling {
     jobId: string;
     kind: TellingKind;
@@ -24,8 +24,8 @@ interface Telling {
     told: boolean;
 }
 
-const OPT_IN_KINDS = ['late', 'paused', 'carried_on', 'can_carry_on'];
-const TELLING_KINDS: TellingKind[] = ['paused', 'carried_on', 'can_carry_on'];
+const OPT_IN_KINDS = ['late', 'paused', 'carried_on', 'can_carry_on', 'back_in_line'];
+const TELLING_KINDS: TellingKind[] = ['paused', 'carried_on', 'can_carry_on', 'back_in_line'];
 const ALL_KINDS = ['done', 'failed', 'needs', 'unanswered', 'month', 'rule', 'late', ...TELLING_KINDS];
 const JOBS: Record<string, { botId: string; title: string; person: string }> = {
     'job-1': { botId: 'brick-1', title: 'Visa form', person: '@sara:chat.test' },
@@ -181,7 +181,7 @@ describe('what Brick says about a job Orbit paused by itself, end to end against
         const { said, reports } = chat();
         expect(await reports.tick()).toBe(3);
         expect(asked).toHaveLength(1);
-        expect(asked[0].split(',')).toEqual(expect.arrayContaining(['late', 'paused', 'carried_on', 'can_carry_on']));
+        expect(asked[0].split(',')).toEqual(expect.arrayContaining(['late', 'paused', 'carried_on', 'can_carry_on', 'back_in_line']));
         expect(said.map((one) => one.key)).toEqual(['computer-told:job-1:paused:1', 'computer-told:job-1:carried_on:2', 'computer-told:job-2:can_carry_on:1']);
         expect(tellings.every((one) => one.told)).toBe(true);
     });
@@ -214,6 +214,11 @@ describe('what Brick says about a job Orbit paused by itself, end to end against
 
     it('can_carry_on (C7.3: the Apps changed, a step’s outcome is unknown, or the screen was taken back): Brick asks once, confirmed by its number', async () => {
         expect(await oneRound({ jobId: 'job-2', kind: 'can_carry_on', seq: 1 })).toBe('“Hotel booking” can carry on now. Want me to?');
+    });
+
+    // GPT's sixth answer, finding 5: the pause is over, but the job is in line rather than running. One line for either reason it waits (another job on this computer, or every computer busy)
+    it('back_in_line: more time arrived and the pause is over, but its turn has not come: said once, confirmed by its number', async () => {
+        expect(await oneRound({ jobId: 'job-2', kind: 'back_in_line', seq: 1 })).toBe('“Hotel booking” is back in line. It carries on by itself when its turn comes.');
     });
 
     it('a pause then its carrying on of the same job are two messages, each confirmed under its own number, never one for the other', async () => {

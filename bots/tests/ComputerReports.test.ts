@@ -690,7 +690,7 @@ describe('the late follow-up: an App step the provider confirmed after all', () 
         expect(got.map((one) => [one.jobId, one.kind])).toEqual([['job-1', 'late']]);
         // Asking with accepts=late is what lets Orbit offer it: an older game never asks and never meets the kind
         expect(calls[0].slice(0, 2)).toEqual(['get', 'api/computer/jobs/reports']);
-        expect(calls[0][3]).toEqual({ accepts: 'late,paused,carried_on,can_carry_on' });
+        expect(calls[0][3]).toEqual({ accepts: 'late,paused,carried_on,can_carry_on,back_in_line' });
         expect(await admin.keepComputerReportTold(got[0])).toBe(true);
         expect(calls[1]).toEqual(['post', 'api/computer/jobs/reports', { jobId: 'job-1', kind: 'late', seq: 1, outcome: 'delivered', through: T1 }]);
         expect(await admin.keepComputerReportUndeliverable(got[0], 'origin_gone')).toBe(true);
@@ -1069,6 +1069,10 @@ describe('a job Orbit paused by itself (the month or the person`s own limit), an
         // The old name was never Orbit's: a report under it is not one this game reads
         expect(computerReportOf({ ...raw, kind: 'carrying_on' })).toBeNull();
         expect(reportText(computerReportOf({ ...raw, kind: 'can_carry_on' }) as ComputerReport)).toBe('“Visa form” can carry on now. Want me to?');
+        // GPT's sixth answer, finding 5: the pause is over but the job is queued, not running. Told by the pause's number, no price and no reason why more arrived
+        expect(computerReportOf({ ...raw, kind: 'back_in_line' })).toMatchObject({ kind: 'back_in_line', seq: 1, pausedWhy: null, heldScreen: false });
+        expect(computerReportOf({ ...raw, kind: 'back_in_line', seq: undefined })).toBeNull();
+        expect(reportText(computerReportOf({ ...raw, kind: 'back_in_line' }) as ComputerReport)).toBe('“Visa form” is back in line. It carries on by itself when its turn comes.');
     });
 
     it('a limit reached while the person held the screen: Brick took the screen back, and says the two section 7 lines once, in place of the usual pause line', () => {
