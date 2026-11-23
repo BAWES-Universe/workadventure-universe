@@ -2382,7 +2382,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /**
      * An event that will not be handled again (see `MatrixEventHandler.onGaveUp`): reported to Sentry as a warning (nothing of what the person wrote is in it), and when it was a message of a
-     * person and the chat can be resolved, the person gets the same "couldn't answer" line as for any failed answer, never silence. Work that had begun is only reported: they may have been answered.
+     * person and the chat can be resolved, the person gets the same "couldn't answer" line as for any failed answer, never silence: for work that had begun too (its server went away), where
+     * they may have been answered and the line is then only a little more than they needed.
      */
     async onGaveUp(event: MatrixEvent, why: 'tries' | 'paid'): Promise<void> {
         try {
@@ -2390,7 +2391,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
         } catch {
             /* a report is never in the way */
         }
-        if (why !== 'tries' || event.type !== 'm.room.message' || botIdFromMatrixId(this.config.domain, event.sender)) return;
+        // Both ways the person is told, never left in silence: an event that ran out of tries was not answered; one whose server went away after paid work had begun MAY have been (the inbox
+        // cannot tell a turn that never started from one that ran and was cut off), so the same line, which asks them to send it again, is the safe one
+        if (event.type !== 'm.room.message' || botIdFromMatrixId(this.config.domain, event.sender)) return;
         try {
             const botId = await this.botForRoom(event.room_id, true);
             if (!botId || this.purgedBots.has(botId)) return;

@@ -405,6 +405,39 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             expect(await other.take(dead, message(dead))).toBe(false);
         });
 
+        // CodeRabbit on 8f22995a (old thread r4666780321): the give-back never gives up while the process lives, and the entry keeps beating so no other server closes it as paid work
+        it('a give-back the store refuses more often than the old eight tries is still retried, the entry keeps beating (another server takes nothing), and it succeeds when the store is back', async () => {
+            const id = fresh('refused-long');
+            let refused = 0;
+            const said: string[] = [];
+            const flaky = createEventInbox(
+                () =>
+                    ({
+                        eval: async (script: string, o: unknown) => {
+                            if (isRelease(script) && ++refused <= 12) throw new Error('store down');
+                            return realEval(script, o);
+                        },
+                    }) as never,
+                { ttlSeconds: 60, beatEveryMs: 40, staleMs: 300, maxTries: 3, log: (line: string) => void said.push(line) }
+            );
+            const entry = (await flaky.take(id, message(id))) as InboxEntry;
+            await entry.admit();
+            await entry.paid();
+            expect(await entry.release()).toBe('unsure');
+            // well past the stale time and past the eighth failed call: the entry still beats, so a scan at another server takes nothing and closes nothing
+            const other = inboxOn({ staleMs: 300 });
+            await vi.waitFor(() => expect(refused).toBeGreaterThan(9), { timeout: 4000 });
+            const during = await other.recover();
+            expect(during).toEqual([]);
+            expect(during.closed).toHaveLength(0);
+            expect(await stateOf(id)).toMatch(/\|\$$/);
+            expect(said.some((line) => line.includes('still does not take an event back'))).toBe(true);
+            // the store is back: the mark is taken off, the entry waits for a try, and the retries are over
+            await entry.givingBack?.();
+            expect(await stateOf(id)).toBe('p|-|1');
+            expect(refused).toBe(13);
+        });
+
         it('a give-back that closed the entry (its last try) with its answer lost is reported as closed when it is tried again, once', async () => {
             const id = fresh('lost-close');
             let lost = 0;
@@ -652,6 +685,10 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
                 expect(handled).toEqual([]);
                 expect(await stateOf(paidId)).toBe('d');
                 expect(await stateOf(triesId)).toBe('d');
+                // said once: a later scan finds both closed and tells nobody again
+                expect(await router.recover()).toBe(0);
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                expect(told).toHaveLength(2);
             });
 
             it('the closed list is not an element of what a scan returns, so a scan that took nothing is an empty list', async () => {

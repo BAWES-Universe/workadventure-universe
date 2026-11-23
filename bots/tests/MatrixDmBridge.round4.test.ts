@@ -498,7 +498,7 @@ describe('a message that arrives while the store that knows the chat is down', (
             bridge.stop();
         });
 
-        it('an event that ran out of tries tells the person it was not answered (never silence) and reports it to Sentry; work that had begun is only reported', async () => {
+        it('an event that ran out of tries tells the person it was not answered (never silence) and reports it to Sentry; work that had begun (its server went away) is told the same way, once', async () => {
             const client = makeClient();
             const stores = makeStores();
             const bridge = new MatrixDmBridge(config, client as never, stores.deps);
@@ -508,7 +508,13 @@ describe('a message that arrives while the store that knows the chat is down', (
             expect(notes).toHaveLength(1);
             expect(JSON.stringify(notes[0])).toMatch(/trouble|couldn|answer/i);
             client.sendMessage.mockClear();
+            // work that had begun when its server went away: the person is told too (they may have been answered; the line asks them to send it again), once
             await bridge.onGaveUp(message('hello?'), 'paid');
+            expect(client.sendMessage).toHaveBeenCalledTimes(1);
+            expect(JSON.stringify(client.sendMessage.mock.calls[0][2])).toMatch(/trouble|couldn|answer/i);
+            // something that is not a person's message is only reported
+            client.sendMessage.mockClear();
+            await bridge.onGaveUp({ ...message('hello?'), type: 'm.room.member' }, 'paid');
             expect(client.sendMessage).not.toHaveBeenCalled();
             // a chat that cannot be resolved is only reported, and never throws
             await expect(bridge.onGaveUp({ ...message('hi'), room_id: '!unknown:matrix.test' }, 'tries')).resolves.toBeUndefined();

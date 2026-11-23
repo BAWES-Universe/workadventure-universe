@@ -38,7 +38,7 @@ const arrivalOf = (): number => {
     lastArrival = Math.max(Date.now() * 1000, lastArrival + 1);
     return lastArrival;
 };
-/** How many times a give-back that the store did not take is tried again before it is left. */
+/** After how many calls that the store did not answer a give-back says (once) that it is still trying: it never stops while the process lives. */
 export const GIVE_BACK_TRIES = 8;
 /** How many stale entries one scan takes. */
 export const RECOVER_BATCH = 50;
@@ -332,7 +332,7 @@ export function createEventInbox(
             await step(redis, script, eventId, args).catch((error) => say(`Could not mark an event as ${what}; it is taken up again by another server:`, error));
         };
         /**
-         * Given back for another try. When the store does not take it, the entry keeps beating and the give-back is tried again (a few times, a beat apart) instead of being left: a paid mark
+         * Given back for another try. When the store does not take it, the entry keeps beating and the give-back is tried again (for as long as this process lives, with a back-off) instead of being left: a paid mark
          * that the store wrote but never confirmed to this server stands on an entry whose work never began, and an entry that went quiet with that mark on it would be closed by another server
          * as paid work, and the person's message lost. Only a server that dies before the store takes it back leaves that mark standing.
          */
@@ -364,28 +364,29 @@ export function createEventInbox(
                 return first;
             }
             let tried = 1;
-            let running = false;
-            // Whoever must wait for this server's work to be over (a shutdown) can wait for the retries too: they end when the store took the give-back, or the tries ran out, after `onClosed` ran
+            // Whoever must wait for this server's work to be over (a shutdown) can wait for the retries too: they end when the store took the give-back (after `onClosed` ran, when it was the last try)
             retrying = new Promise<void>((resolve) => (retried = resolve));
-            const again = setInterval(() => {
-                if (running) return;
-                running = true;
-                void attempt()
-                    .then((given) => {
+            // The give-back is tried again for as long as this process lives, with a back-off (a beat apart, then twice that), and the entry KEEPS BEATING meanwhile: an entry that went quiet with
+            // a paid mark on it would be closed by another server as paid work while this one is still running. Only a server that dies before the store takes it back leaves that mark standing
+            let delay = beatEveryMs;
+            const later = (): void => {
+                const timer = setTimeout(() => {
+                    void attempt().then((given) => {
                         tried += 1;
-                        if (given || tried >= GIVE_BACK_TRIES) {
-                            clearInterval(again);
+                        if (given) {
                             clearInterval(beat);
                             if (given === 'closed') onClosed?.();
-                            if (!given) say('Gave up giving an event back; it is taken up again by another server (or closed, if it carries a paid mark):', eventId);
                             retried();
+                            return;
                         }
-                    })
-                    .finally(() => {
-                        running = false;
+                        if (tried === GIVE_BACK_TRIES) say('The store still does not take an event back; it keeps beating and the give-back is tried again, so no other server closes it as paid work:', eventId);
+                        delay = Math.min(delay * 2, beatEveryMs * 2);
+                        later();
                     });
-            }, beatEveryMs);
-            again.unref?.();
+                }, delay);
+                timer.unref?.();
+            };
+            later();
             return 'unsure';
         };
         return {
