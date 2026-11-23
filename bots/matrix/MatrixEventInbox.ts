@@ -65,6 +65,9 @@ const arrivalOf = (): number => {
 };
 /** After how many calls that the store did not answer a give-back says (once) that it is still trying: it never stops while the process lives. */
 export const GIVE_BACK_TRIES = 8;
+/** A waiting entry's hand-off at shutdown is tried this many times, this far apart, before it is reported as not confirmed (CodeRabbit on ea88b4c1, finding 5). */
+export const YIELD_TRIES = 3;
+export const YIELD_RETRY_MS = 100;
 /** How many stale entries one scan takes. */
 export const RECOVER_BATCH = 50;
 
@@ -394,9 +397,14 @@ return 1
  * A try counts only when the event runs (CodeRabbit on 68379005, finding 8): the first wait of an acquisition gives its try back (KEYS[10] names that acquisition), and the go counts it again.
  * The age limit is met on the way from waiting to running (finding 9): an entry taken in before ARGV[6] is never run late. It is closed as UNANSWERED (ARGV[7] seconds, with its event) and
  * answers `3`, so the person is told to send it again (that is the fresh consent).
+ * The closure leaves the mark of the acquisition that closed it in KEYS[10] (`!stale|<token>`, as long as the unanswered state): when the answer to that call is lost, the same acquisition
+ * asks again (or gives the entry back at shutdown) and is told `3` again, so it can still tell the person (CodeRabbit on ea88b4c1, finding 9). Any other acquisition is told `2`.
  */
 const TURN = `
 ${AGE}local held = redis.call('GET', KEYS[1])
+if held == 'u' and redis.call('GET', KEYS[10]) == '!stale|' .. ARGV[1] then
+  return 3
+end
 if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' then
   return 2
 end
@@ -422,7 +430,7 @@ local function go()
       redis.call('DEL', KEYS[4])
       redis.call('DEL', KEYS[6])
       redis.call('DEL', KEYS[8])
-      redis.call('DEL', KEYS[10])
+      redis.call('SET', KEYS[10], '!stale|' .. ARGV[1], 'EX', tonumber(ARGV[7]))
       redis.call('SET', KEYS[3], payload, 'EX', tonumber(ARGV[7]))
       return 3
     end
@@ -456,10 +464,14 @@ return go()
 `;
 /**
  * A waiting entry given back at shutdown (it never ran): no owner, the oldest score, and its count of tries one less, so the server that takes it over counts it back to where it was.
- * Waiting was never a try. Only while it is still this acquisition's and nothing was paid for.
+ * Waiting was never a try. Only while it is still this acquisition's and nothing was paid for. `1` given back, `0` not this acquisition's (nothing to give back), `3` this acquisition's own
+ * gate closed it as stale and the answer to that was lost (finding 9): the caller tells the person.
  */
 const YIELD = `
 local held = redis.call('GET', KEYS[1])
+if held == 'u' and redis.call('GET', KEYS[10]) == '!stale|' .. ARGV[1] then
+  return 3
+end
 if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' or string.sub(held, -2) == '|$' then
   return 0
 end
@@ -514,8 +526,12 @@ export interface InboxEntry {
     turn?(): Promise<'go' | 'wait' | 'gone' | 'stale'>;
     /** The person's answer to this event is out (Matrix gave it `replyId`): kept beside the entry as the proof a server that takes it over reads (G2). Never throws. */
     answered?(replyId: string): Promise<void>;
-    /** A waiting entry given back at shutdown: it never ran, so it does not count as a try, and another server takes it up at its next scan. Never throws. */
-    yieldBack?(): Promise<void>;
+    /**
+     * A waiting entry given back at shutdown: it never ran, so it does not count as a try, and another server takes it up at its next scan. `given` once the store confirmed it (given back,
+     * or no longer this acquisition's: nothing is left to give back), `stale` when this acquisition's own gate had closed it as stale and the answer to that was lost (the caller tells the
+     * person), `unsure` when the store did not confirm it after a few tries (CodeRabbit on ea88b4c1, finding 5): the old owner may still be listed until its beat goes stale. Never throws.
+     */
+    yieldBack?(): Promise<'given' | 'stale' | 'unsure'>;
     /** When the event was taken in (milliseconds), as kept with it: the same for every try and every server that takes it over. Absent for an entry kept before the stamp existed. */
     readonly arrived?: number;
 }
@@ -794,7 +810,28 @@ export function createEventInbox(
                     (error) => say('Could not keep the link to the answer of an event (a server that takes it over will tell the person it was not answered):', error)
                 );
             },
-            yieldBack: () => end(YIELD, [token, eventId], 'given back while it waited'),
+            yieldBack: async () => {
+                if (over) return 'given';
+                over = true;
+                // The entry keeps beating while the hand-off is tried again: a give-back the store did not confirm is not reported as done (finding 5). YIELD is safe to repeat: a first call
+                // that was written but whose answer was lost is answered `0` (no longer this acquisition's), which is the confirmation
+                for (let tried = 1; ; tried += 1) {
+                    try {
+                        // eslint-disable-next-line no-await-in-loop
+                        const answer = await step(redis, YIELD, eventId, [token, eventId], room);
+                        clearInterval(beat);
+                        return answer === 3 || answer === '3' ? 'stale' : 'given';
+                    } catch (error) {
+                        if (tried >= YIELD_TRIES) {
+                            say('Could not give a waiting event back at shutdown; another server takes it up once its beat goes stale:', error);
+                            clearInterval(beat);
+                            return 'unsure';
+                        }
+                        // eslint-disable-next-line no-await-in-loop
+                        await new Promise<void>((resolve) => setTimeout(resolve, YIELD_RETRY_MS).unref?.());
+                    }
+                }
+            },
             // kept in microseconds (so events taken in one millisecond keep their order); told in milliseconds
             ...(typeof arrived === 'number' && Number.isFinite(arrived) ? { arrived: Math.floor(arrived / 1000) } : {}),
         };

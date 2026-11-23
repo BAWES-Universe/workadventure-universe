@@ -564,8 +564,13 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     // Made from the original event's id: the same event handled again (another server, a second try) is the same continuation, never a new one
                     event_id: `$app-${createHash('sha256').update(event.event_id).digest('hex').slice(0, 32)}`,
                     // The original event's own time when it has one; never this try's clock, which another try would give differently (CodeRabbit on 68379005): without one the
-                    // time the inbox kept with the event is the moment of consent (`hooks.arrived`)
-                    ...(typeof event.origin_server_ts === 'number' ? { origin_server_ts: event.origin_server_ts } : {}),
+                    // time the inbox kept with the event is the moment of consent. Put on the continuation itself (CodeRabbit on ea88b4c1, finding 6), so a Brick that rests keeps
+                    // that time with the message it remembers, and answers it later with the same moment of consent
+                    ...(typeof event.origin_server_ts === 'number'
+                        ? { origin_server_ts: event.origin_server_ts }
+                        : typeof tracked?.arrived === 'number'
+                          ? { origin_server_ts: tracked.arrived }
+                          : {}),
                     content: { msgtype: 'm.text', body: note },
                 };
                 // Said by the bridge, outside the message's own content: a person's message can hold any content at all
@@ -1894,7 +1899,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         const couldNotAnswer = async (config?: BotConfiguration) => {
             const attempts = attemptsOf(event) + 1;
             if (catchUp && attempts < WAITING_MAX_ATTEMPTS) {
-                await this.rememberWaiting(botId, event, attempts);
+                await this.rememberWaiting(botId, event, attempts, hooks?.arrived);
                 return;
             }
             if (batch?.troubleSent) return;
@@ -2016,7 +2021,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
         if (config.enabled === false) {
             // Resting again is not a failed answer, so a message already tried keeps its count.
-            await this.rememberWaiting(botId, event, attemptsOf(event));
+            await this.rememberWaiting(botId, event, attemptsOf(event), hooks?.arrived);
             if (!catchUp) await this.sayResting(botId, event, config, language, user.uuid);
             return;
         }
@@ -2260,10 +2265,18 @@ export class MatrixDmBridge implements MatrixEventHandler {
             await sendSignIn();
             // A reply with no words (only artifacts or files) is proved by its parts (CodeRabbit on 68379005, finding 6): the ids Matrix gave each one that got through. Only when every
             // part landed is the answer proved; one that failed, was suppressed, or gave no id leaves it unproved (a server that takes the event over then tells the person)
-            const parts = { due: wordsEvent ? 0 : (reply.artifacts?.length ?? 0) + (reply.media?.length ?? 0), landed: [] as string[], missed: false };
-            const landed = (id: unknown) => {
+            // A reply WITH words is proved only by the event of its words (CodeRabbit on ea88b4c1, finding 7): a card or a file that landed never proves words that were not confirmed
+            const parts = { due: reply.text ? 0 : (reply.artifacts?.length ?? 0) + (reply.media?.length ?? 0), landed: [] as string[], missed: false, proved: false };
+            // Kept the moment the last part landed (finding 8): before the copy of a file is awaited, so a server that stops during that copy has the proof already
+            const proveIfWhole = async (): Promise<void> => {
+                if (parts.proved || parts.due === 0 || parts.missed || parts.landed.length !== parts.due) return;
+                parts.proved = true;
+                await hooks?.answered?.(parts.landed[parts.landed.length - 1]);
+            };
+            const landed = async (id: unknown): Promise<void> => {
                 if (typeof id === 'string' && id) parts.landed.push(id);
                 else parts.missed = true;
+                await proveIfWhole();
             };
             for (const card of reply.artifacts ?? []) {
                 // A live artifact the bot made or changed: the game shows a card to open it
@@ -2277,7 +2290,12 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 // Whether the send was begun: a purge that starts while a file is on its way does not undo a file that got through (it is still recorded)
                 let began = false;
                 let fileEvent: string | undefined;
-                const sent = await this.say(botId, () => ((began = true), this.sendMedia(botUserId, event.room_id, item, (id) => (fileEvent = id)))).then(
+                // Counted the moment Matrix accepted the file (finding 8), not once its copy is kept
+                const accepted = async (id: string): Promise<void> => {
+                    fileEvent = id;
+                    await landed(id);
+                };
+                const sent = await this.say(botId, () => ((began = true), this.sendMedia(botUserId, event.room_id, item, accepted))).then(
                     // Nothing was sent when the Brick was already silenced
                     (copy) => (began ? { copy } : null),
                     (error) => {
@@ -2287,7 +2305,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 );
                 // On the person's list of files once it reached them (#1508); keeping it never stops the reply.
                 // The list keeps our own copy (#1572), so a tool link that expires or is signed cannot lose the file.
-                landed(sent ? fileEvent : undefined);
+                // A file Matrix did not accept (or gave no id for) leaves the answer unproved; one it accepted was counted already
+                if (!fileEvent) parts.missed = true;
                 if (sent) {
                     try {
                         reply.mediaSent?.(sent.copy ? { ...item, originalUrl: item.originalUrl ?? item.url, url: sent.copy } : item);
@@ -2296,7 +2315,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     }
                 }
             }
-            if (parts.due > 0 && !parts.missed && parts.landed.length === parts.due) await hooks?.answered?.(parts.landed[parts.landed.length - 1]);
+            await proveIfWhole();
             answered = true;
         } catch (error: any) {
             // The fence before paid work was not confirmed: this is not an answer that failed, and no note is sent. The event goes back to the inbox as one nothing was paid for
@@ -2529,7 +2548,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /** Keep the latest message in this chat for the bot to answer once it is back on. `attempts` counts failed answers. */
-    private async rememberWaiting(botId: string, event: MatrixEvent, attempts = 0): Promise<void> {
+    private async rememberWaiting(botId: string, event: MatrixEvent, attempts = 0, arrived?: number): Promise<void> {
         // Nothing is kept for a Brick being purged, also by an answer that was already under way when the purge began
         if (this.purgedBots.has(botId)) return;
         const content = event.content ?? {};
@@ -2548,7 +2567,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             event_id: event.event_id,
             room_id: event.room_id,
             sender: event.sender,
-            origin_server_ts: event.origin_server_ts ?? Date.now(),
+            // The event's own time, else the time the inbox kept with it (CodeRabbit on ea88b4c1, finding 6): this try's clock only for an event that has neither
+            origin_server_ts: event.origin_server_ts ?? arrived ?? Date.now(),
             type: 'm.room.message',
             content: kept,
             ...(attempts > 0 || connected ? { unsigned: { ...(attempts > 0 ? { universe_attempts: attempts } : {}), ...(connected ? { universe_connected_app: connected } : {}) } } : {}),
@@ -2846,7 +2866,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
     }
 
     /** Sends the file; returns the link of the copy on our uploader that the bot's list keeps, or null when there is none. */
-    private async sendMedia(botUserId: string, roomId: string, item: PendingMedia, onSent?: (eventId: string) => void): Promise<string | null> {
+    private async sendMedia(botUserId: string, roomId: string, item: PendingMedia, onSent?: (eventId: string) => void | Promise<void>): Promise<string | null> {
         const { FileParser } = await import('../services/FileParser');
         await FileParser.validateUrl(item.url);
         const response = await axios.get(item.url, {
@@ -2872,8 +2892,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             url: mxc,
             info: { mimetype: mimeType, size: data.length },
         });
-        // The id Matrix gave the file's message: the proof that this part of an answer landed (finding 6)
-        if (typeof sentAs === 'string' && sentAs) onSent?.(sentAs);
+        // The id Matrix gave the file's message: the proof that this part of an answer landed (finding 6), counted (and, for the last part, kept) BEFORE the copy is awaited (CodeRabbit
+        // on ea88b4c1, finding 8). Counting it never fails the send
+        if (typeof sentAs === 'string' && sentAs) await Promise.resolve(onSent?.(sentAs)).catch(() => undefined);
         return this.keepCopy(item, data, mimeType, filename);
     }
 

@@ -119,6 +119,8 @@ export function createMatrixAppServiceRouter(
     const waitTimers = new Map<string, NodeJS.Timeout>();
     /** Hand-offs of waiting entries at shutdown that the store has not confirmed yet. */
     const yielding = new Set<Promise<void>>();
+    /** A hand-off the store did not confirm (CodeRabbit on ea88b4c1, finding 5): the shutdown is then not reported as drained, since the old owner may still be listed. */
+    let handOffUnsure = false;
 
     const requireHomeserver = (req: Request, res: Response, next: NextFunction) => {
         const header = req.headers.authorization;
@@ -263,17 +265,23 @@ export function createMatrixAppServiceRouter(
     };
     /**
      * A waiting entry given back (shutdown): tracked until the store took it, so `settle` waits for every hand-off, the ones that reach the gate after it began too (CodeRabbit on 68379005,
-     * finding 4), within its own deadline (finding 5).
+     * finding 4), within its own deadline (finding 5). One the store did not confirm makes `settle` answer false (CodeRabbit on ea88b4c1, finding 5); one this acquisition's own gate had
+     * closed as stale, whose answer was lost, is told to the person here (finding 9).
      */
-    const yieldOne = (entry: InboxEntry): Promise<void> => {
-        const run = (entry.yieldBack?.() ?? Promise.resolve()).catch(() => undefined);
+    const yieldOne = (event: MatrixEvent, entry: InboxEntry): Promise<void> => {
+        const run = (entry.yieldBack?.() ?? Promise.resolve('given' as const))
+            .catch(() => 'unsure' as const)
+            .then(async (how) => {
+                if (how === 'unsure') handOffUnsure = true;
+                else if (how === 'stale') await gaveUp(event, 'stale');
+            });
         yielding.add(run);
         void run.finally(() => yielding.delete(run));
         return run;
     };
     /** Waits behind an earlier event of its room: held (its entry beats), off the chain, asked again soon. At shutdown it is given back instead (it never ran: not a try). */
     const wait = (event: MatrixEvent, entry: InboxEntry): Promise<void> => {
-        if (closing) return yieldOne(entry);
+        if (closing) return yieldOne(event, entry);
         const queued = waiting.get(event.room_id) ?? [];
         queued.push({ event, entry });
         waiting.set(event.room_id, queued);
@@ -422,7 +430,7 @@ export function createMatrixAppServiceRouter(
         let timer: NodeJS.Timeout | undefined;
         const timedOut = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs)));
         // What waits behind an earlier event never ran: given back now (not a try), so the next scan anywhere takes it up in its room's order
-        for (const one of [...waiting.values()].flat()) void yieldOne(one.entry);
+        for (const one of [...waiting.values()].flat()) void yieldOne(one.event, one.entry);
         waiting.clear();
         for (const timer of waitTimers.values()) clearTimeout(timer);
         waitTimers.clear();
@@ -434,10 +442,11 @@ export function createMatrixAppServiceRouter(
                 // The chains, and the reports of events given up on (which a chain can start as it ends): both until none is left
                 // The chains, the reports, and the hand-offs of waiting events (one that met the gate after this began too): until none is left
                 const work = [...roomChains.values(), ...reporting, ...yielding];
-                if (work.length === 0) return true as const;
+                // Drained only when every hand-off was confirmed by the store (finding 5)
+                if (work.length === 0) return !handOffUnsure;
                 // eslint-disable-next-line no-await-in-loop
                 await Promise.all(work.map((one) => one.catch(() => undefined)));
-                if (roomChains.size === 0 && reporting.size === 0 && yielding.size === 0) return true as const;
+                if (roomChains.size === 0 && reporting.size === 0 && yielding.size === 0) return !handOffUnsure;
             }
         })();
         try {

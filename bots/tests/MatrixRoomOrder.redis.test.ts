@@ -593,6 +593,49 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             const bridge = bridgeFor(room, { text: 'Here it is.', media: [], artifacts: [card] }, async () => '$card');
             expect(await run(bridge, room, 'words-and-card')).toEqual(['$text']);
         });
+
+        // CodeRabbit on ea88b4c1, finding 7
+        it('an answer with words whose words Matrix gave no id for is not proved by a card that landed', async () => {
+            quiet();
+            const room = roomOf('words-unconfirmed');
+            const bridge = bridgeFor(room, { text: 'Here it is.', media: [], artifacts: [card] }, async () => '$card');
+            (bridge as any).client.sendText = vi.fn(async () => undefined);
+            expect(await run(bridge, room, 'words-unconfirmed')).toEqual([]);
+        });
+
+        // CodeRabbit on ea88b4c1, finding 8
+        it('a file-only answer is proved the moment Matrix accepts the last file, before the copy on the uploader is kept', async () => {
+            quiet();
+            const room = roomOf('media-copy');
+            const { FileParser } = await import('../services/FileParser');
+            vi.spyOn(FileParser, 'validateUrl').mockResolvedValue(undefined as never);
+            const axios = (await import('axios')).default;
+            vi.spyOn(axios, 'get').mockResolvedValue({ data: Buffer.from('pdf'), headers: { 'content-type': 'application/pdf' } } as never);
+            const files = [
+                { url: 'https://files.example/one.pdf', mediaType: 'file', name: 'one.pdf' },
+                { url: 'https://files.example/two.pdf', mediaType: 'file', name: 'two.pdf' },
+            ];
+            const mediaSent = vi.fn();
+            let n = 0;
+            const bridge = bridgeFor(room, { text: '', media: files, artifacts: [], mediaSent }, async () => `$file-${++n}`);
+            (bridge as any).client.uploadMedia = vi.fn(async () => 'mxc://matrix.test/pdf');
+            // the copy of the LAST file hangs (the first is kept at once)
+            let keepLast!: (url: string) => void;
+            const copies = [async () => 'https://uploader.test/one.pdf', () => new Promise<string>((resolve) => (keepLast = resolve))];
+            (bridge as any).deps.uploadAttachment = vi.fn(() => copies.shift()!());
+            const proofs: string[] = [];
+            const answering = bridge.onEvent(say(room, fresh('media-copy'), 'Send me both'), { paid: async () => undefined, durable: true, answered: async (id) => void proofs.push(id) });
+            await vi.waitFor(() => expect(keepLast).toBeDefined());
+            // Matrix took both files: the proof is kept already, while the copy is still on its way
+            await vi.waitFor(() => expect(proofs).toEqual(['$file-2']));
+            expect(mediaSent).toHaveBeenCalledTimes(1);
+            keepLast('https://uploader.test/two.pdf');
+            await answering;
+            // the copy still goes on the list, and the proof is kept once
+            expect(mediaSent).toHaveBeenCalledTimes(2);
+            expect(mediaSent.mock.calls[1][0]).toMatchObject({ url: 'https://uploader.test/two.pdf' });
+            expect(proofs).toEqual(['$file-2']);
+        });
     });
 
     describe('CodeRabbit on 68379005: the gate, recovery and shutdown (findings 4, 5, 7, 8, 9)', () => {
@@ -774,6 +817,134 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             // the room goes on: a later event that reaches the front in time runs
             expect((await X.put('t3', say(room, third, 'three'))).status).toBe(200);
             await vi.waitFor(() => expect(handled).toEqual([third]));
+        });
+    });
+
+    describe('CodeRabbit on ea88b4c1: a hand-off at shutdown, and a stale closure whose answer was lost (findings 5 and 9)', () => {
+        const realEval = (script: string, o: unknown) => (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, o);
+        const isTurn = (script: string) => script.includes('local function go()');
+        const isYield = (script: string) => script.includes("A wait that already gave this acquisition's try back");
+        /** An inbox over the real store whose every call goes through `around`: it can fail a call before it is written, or write it and lose the answer. */
+        const wrapped = (around: (script: string, keys: string[], run: () => Promise<unknown>) => Promise<unknown>, extra: Parameters<typeof createEventInbox>[1] = {}) =>
+            tracked(
+                createEventInbox(
+                    () =>
+                        ({
+                            eval: (script: string, o: { keys: string[] }) => around(script, o.keys, () => realEval(script, o)),
+                            zRangeByScore: (...args: unknown[]) => (client as never as { zRangeByScore: (...a: unknown[]) => Promise<string[]> }).zRangeByScore(...args),
+                        }) as never,
+                    { ttlSeconds: 60, beatEveryMs: 60_000, staleMs: 60_000, log: () => undefined, ...extra }
+                )
+            );
+        const firstFails = (id: () => string) => {
+            let failed = false;
+            return async (event: MatrixEvent) => {
+                if (event.event_id === id() && !failed) {
+                    failed = true;
+                    throw new Error('before paid work');
+                }
+            };
+        };
+        /** Two events of a room: the first fails before paid work (given back), so the second waits behind it on this server. */
+        const waitingPair = async (what: string, around: Parameters<typeof wrapped>[0]) => {
+            const room = roomOf(what);
+            const [first, second] = [fresh(`${what}-first`), fresh(`${what}-second`)];
+            const A = await serve(wrapped(around), firstFails(() => first));
+            expect((await A.put('t1', say(room, first, 'one'), say(room, second, 'two'))).status).toBe(200);
+            await vi.waitFor(async () => expect(await stateOf(first)).toBe('p|-|1'));
+            await vi.waitFor(async () => expect(await stateOf(second)).toMatch(/^p\|[^-|][^|]*\|0$/));
+            return { A, first, second };
+        };
+
+        it('5: a hand-off the store refuses every time (nothing written) is not reported as drained: settle says false within its deadline, and the entry is still the old owner\'s', async () => {
+            quiet();
+            const { A, second } = await waitingPair('yield-refused', (script, _keys, run) => (isYield(script) ? Promise.reject(new Error('store down')) : run()));
+            const started = Date.now();
+            expect(await A.router.settle(2_000)).toBe(false);
+            expect(Date.now() - started).toBeLessThan(1_500);
+            expect(await stateOf(second)).toMatch(/^p\|[^-|][^|]*\|0$/);
+        });
+
+        it('5: a hand-off refused once and then taken is confirmed: settle says true, and the entry is given back with no try spent', async () => {
+            quiet();
+            let refused = 0;
+            const { A, second } = await waitingPair('yield-once', (script, _keys, run) => (isYield(script) && refused++ === 0 ? Promise.reject(new Error('store hiccup')) : run()));
+            expect(await A.router.settle(2_000)).toBe(true);
+            expect(refused).toBe(2);
+            expect(await stateOf(second)).toBe('p|-|0');
+        });
+
+        it('5: a hand-off the store wrote but whose answer was lost is confirmed by the next call (no longer this acquisition\'s), and its try is not given back twice', async () => {
+            quiet();
+            let lost = 0;
+            const { A, second } = await waitingPair('yield-lost', async (script, _keys, run) => {
+                const answer = await run();
+                if (isYield(script) && lost++ === 0) throw new Error('the answer was lost');
+                return answer;
+            });
+            expect(await A.router.settle(2_000)).toBe(true);
+            expect(lost).toBe(2);
+            expect(await stateOf(second)).toBe('p|-|0');
+        });
+
+        /** The first runs long on A; the second waits on X with a short age limit, and X's look that closes it as stale writes but loses its answer (and, when `refuseAfter`, every look after it fails before writing). */
+        const staleLost = async (what: string, refuseAfter: boolean) => {
+            const room = roomOf(what);
+            const [first, second] = [fresh(`${what}-first`), fresh(`${what}-second`)];
+            let finishFirst!: () => void;
+            const A = await serve(inboxOn({ staleMs: 60_000, beatEveryMs: 20 }), (event) => (event.event_id === first ? new Promise<void>((resolve) => (finishFirst = resolve)) : Promise.resolve()));
+            cleanups.push(() => finishFirst?.());
+            expect((await A.put('t1', say(room, first, 'one'))).status).toBe(200);
+            await vi.waitFor(() => expect(finishFirst).toBeDefined());
+            const told: Array<[string, string]> = [];
+            const handled: string[] = [];
+            let closedLost = false;
+            const X = await serve(
+                wrapped(
+                    async (script, keys, run) => {
+                        const mine = isTurn(script) && keys[0] === `matrix:event:${second}`;
+                        if (mine && closedLost && refuseAfter) throw new Error('store down');
+                        const answer = await run();
+                        if (mine && !closedLost && String(answer) === '3') {
+                            closedLost = true;
+                            throw new Error('the answer was lost');
+                        }
+                        return answer;
+                    },
+                    { beatEveryMs: 20, unfinishedMaxMs: 300 }
+                ),
+                async (event) => void handled.push(event.event_id),
+                { onGaveUp: async (event, why) => void told.push([event.event_id, why]) }
+            );
+            expect((await X.put('t2', say(room, second, 'two'))).status).toBe(200);
+            await vi.waitFor(async () => expect(await stateOf(second)).toMatch(/^p\|[^-|][^|]*\|0$/));
+            await pause(400);
+            finishFirst();
+            await vi.waitFor(() => expect(closedLost).toBe(true));
+            return { X, second, told, handled };
+        };
+
+        it('9: the same acquisition asks the gate again after the answer to its stale closure was lost, and is told stale again: the person is told once', async () => {
+            quiet();
+            const { second, told, handled } = await staleLost('stale-lost', false);
+            await vi.waitFor(() => expect(told).toEqual([[second, 'stale']]));
+            await pause(200);
+            expect(told).toEqual([[second, 'stale']]);
+            expect(handled).toEqual([]);
+            expect(await stateOf(second)).toBe('u');
+            // the recoverable status still keeps the event
+            expect(await client.get(`matrix:inbox:${second}`)).toContain(second);
+        });
+
+        it('9: a server that shuts down before it could ask again learns it from the hand-off, and still tells the person', async () => {
+            quiet();
+            const { X, second, told, handled } = await staleLost('stale-lost-stop', true);
+            await pause(100);
+            expect(told).toEqual([]);
+            expect(await X.router.settle(2_000)).toBe(true);
+            expect(told).toEqual([[second, 'stale']]);
+            expect(handled).toEqual([]);
+            expect(await stateOf(second)).toBe('u');
         });
     });
 

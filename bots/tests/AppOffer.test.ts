@@ -319,6 +319,38 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(client.sendText.mock.calls.map(([, , words]) => words)).toContain(appConnectedLine('Google Calendar'));
     });
 
+    // CodeRabbit on ea88b4c1, finding 6: the continuation a resting Brick remembers keeps the moment of consent the inbox kept, never the clock of the moment it was stored
+    it('keeps the inbox\'s time with a continuation it remembers while the Brick rests, and answers it later with that time', async () => {
+        const { bridge, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
+        deps.reply.mockResolvedValue({ text: 'Tomorrow: 10:00 standup.', media: [] });
+        await bridge.onEvent(invite());
+        // taken in by the inbox a minute before the Brick rested on it
+        const arrived = Date.now() - 60_000;
+        await bridge.onEvent(connected(), { paid: async () => undefined, durable: true, arrived });
+        expect(deps.reply).not.toHaveBeenCalled();
+
+        deps.getBotConfig.mockResolvedValue({ ...config, enabled: true });
+        await bridge.checkWaiting();
+
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        expect(deps.reply.mock.calls[0][4]).toMatchObject({ note: true, eventTs: arrived });
+    });
+
+    it('keeps the inbox\'s time with any message a resting Brick remembers that has no time of its own', async () => {
+        const { bridge, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
+        deps.reply.mockResolvedValue({ text: 'Sure.', media: [] });
+        await bridge.onEvent(invite());
+        const arrived = Date.now() - 60_000;
+        await bridge.onEvent(message('What is on tomorrow?'), { paid: async () => undefined, durable: true, arrived });
+        expect(deps.reply).not.toHaveBeenCalled();
+
+        deps.getBotConfig.mockResolvedValue({ ...config, enabled: true });
+        await bridge.checkWaiting();
+
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        expect(deps.reply.mock.calls[0][4]).toMatchObject({ eventTs: arrived });
+    });
+
     it('ignores a connected event that is not whole, and one a bot sent', async () => {
         const { bridge, deps } = makeBridge();
         await bridge.onEvent(invite());
