@@ -240,6 +240,10 @@ if redis.call('ZSCORE', KEYS[5], ARGV[2]) then
 end
 return 1
 `;
+/** Reads the event kept with an entry (KEYS[3]), to know its room before a take-over. */
+const PEEK = `
+return redis.call('GET', KEYS[3])
+`;
 /**
  * Takes over an entry whose owner went away (it has no owner, or its last beat is older than the stale time): the event itself comes back with it, so this server can handle it. `nil`
  * when it is not there to take (it is done or closed, it already left the inbox, or its owner is alive). An entry it CLOSES instead answers `!<why>|<event>`:
@@ -552,6 +556,17 @@ export function createEventInbox(
         }
     };
     /** One step in the store against a deadline that rejects: a store that never answers must not hold the room. */
+    /** The room of an entry, read from the event kept with it (`undefined` when there is none, it cannot be read, or the store does not answer in time). */
+    const roomKept = async (redis: Client, eventId: string): Promise<string | undefined> => {
+        try {
+            const kept = await step(redis, PEEK, eventId, []);
+            if (typeof kept !== 'string' || kept.startsWith('!')) return undefined;
+            const read = JSON.parse(kept) as { event?: unknown } | null;
+            return roomOf(typeof read === 'object' && read !== null && 'event' in read ? read.event : read);
+        } catch {
+            return undefined;
+        }
+    };
     const step = async (redis: Client, script: string, eventId: string, args: string[], room?: string): Promise<unknown> => {
         let timer: NodeJS.Timeout | undefined;
         try {
@@ -735,6 +750,9 @@ export function createEventInbox(
                 const stale = await within(redis.zRangeByScore(INBOX_KEY, 0, cutoff, { LIMIT: { offset: 0, count: batch } }));
                 for (const eventId of stale) {
                     const token = tokenOf();
+                    // The room the entry belongs to is read from its kept event first, so a closure or a take-over works on that room's order (an entry closed here leaves its room)
+                    // eslint-disable-next-line no-await-in-loop
+                    const room = await roomKept(redis, eventId);
                     // eslint-disable-next-line no-await-in-loop
                     const payload = await step(redis, TAKEOVER, eventId, [
                         token,
@@ -745,7 +763,7 @@ export function createEventInbox(
                         String(maxTries),
                         String(Date.now() - unfinishedMaxMs),
                         String(unansweredSeconds),
-                    ]).catch((error) => {
+                    ], room).catch((error) => {
                         say('Could not take over an event left by another server:', error);
                         return null;
                     });
@@ -773,7 +791,7 @@ export function createEventInbox(
                     } catch (error) {
                         say('An event left by another server could not be read; it is dropped:', error);
                         // eslint-disable-next-line no-await-in-loop
-                        await step(redis, DONE, eventId, [token, String(ttlSeconds), eventId]).catch(() => undefined);
+                        await step(redis, DONE, eventId, [token, String(ttlSeconds), eventId], room).catch(() => undefined);
                     }
                 }
             } catch (error) {

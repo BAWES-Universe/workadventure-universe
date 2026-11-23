@@ -228,6 +228,8 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             expect(await router.recover()).toBe(0);
             // the one whose event is still there is told to the handler (the person hears of it); the one with no event left is logged loudly
             await vi.waitFor(() => expect(told).toEqual([[noState, 'lost']]));
+            // the one whose event was kept left its room's order at once (its room is read from the event)
+            expect(await client.zScore(`matrix:room-order:${room}`, noState)).toBeNull();
             expect(await stateOf(noEvent)).toBe('u');
             expect(await client.zScore(INBOX_KEY, noState)).toBeNull();
             expect(await client.zScore(INBOX_KEY, noEvent)).toBeNull();
@@ -246,6 +248,31 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             expect(await stateOf(id)).toBe('d');
             await pause(1_300);
             expect(await stateOf(id)).toBeNull();
+        });
+    });
+
+    describe('G2: an intake that never comes again does not hold its room for good', () => {
+        it('a beating entry that was never admitted keeps its short life (the beat takes no expiry off) and lapses, and the room goes on', async () => {
+            quiet();
+            const room = roomOf('beat-unadmitted');
+            const [id, later] = [fresh('beat-unadmitted'), fresh('after-unadmitted')];
+            const inbox = inboxOn({ ttlSeconds: 1, beatEveryMs: 50, staleMs: 60_000 });
+            const taken = (await inbox.take(id, say(room, id, 'Pause the job'))) as InboxEntry;
+            // several beats while its transaction is still open
+            await pause(300);
+            for (const key of [`matrix:event:${id}`, `matrix:inbox:${id}`]) {
+                const left = await client.ttl(key);
+                expect(left).toBeGreaterThan(0);
+                expect(left).toBeLessThanOrEqual(1);
+            }
+            // its transaction never comes again: it lapses while it still beats
+            await pause(1_200);
+            expect(await stateOf(id)).toBeNull();
+            const order: string[] = [];
+            const { put } = await serve(inboxOn({ staleMs: 60_000 }), async (event) => void order.push(event.event_id));
+            expect((await put('t2', say(room, later, 'Resume the job'))).status).toBe(200);
+            await vi.waitFor(() => expect(order).toEqual([later]));
+            await taken.undo().catch(() => undefined);
         });
     });
 
@@ -330,6 +357,8 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             expect(note[BOT_STATUS_KEY].title).toBe('Cut off');
             expect(notesIn(second.client, 'trouble')).toBe(0);
             expect(await stateOf(id)).toBe('u');
+            // the closed entry left its room's order at once (the scan read its room from the kept event)
+            expect(await client.zScore(`matrix:room-order:${room}`, id)).toBeNull();
             expect(second.deps.reply).not.toHaveBeenCalled();
             // once: the next scan says nothing more
             expect(await B.router.recover()).toBe(0);
@@ -363,6 +392,32 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             expect(await B.router.recover()).toBe(0);
             await vi.waitFor(() => expect(notesIn(second.client)).toBe(1));
             expect(second.deps.reply).not.toHaveBeenCalled();
+        });
+
+        it('a state that lapsed (lost: whether it was paid is unknown) gets the "Cut off" note, never "trouble"; one that ran out of tries gets "trouble"', async () => {
+            quiet();
+            const room = roomOf('lost-note');
+            const [lost, spent] = [fresh('lost-note'), fresh('spent-note')];
+            const dead = inboxOn({ owner: 'dies', staleMs: 60 });
+            await ((await dead.take(lost, say(room, lost, 'Pause the job'))) as InboxEntry).admit();
+            await client.del(`matrix:event:${lost}`);
+            await pause(150);
+            const second = makeBridge(room, async () => ({ text: 'x', media: [] }));
+            const B = await serve(inboxOn({ staleMs: 60 }), (event, hooks) => second.bridge.onEvent(event, hooks), { onGaveUp: (event, why) => second.bridge.onGaveUp(event, why) });
+            expect(await B.router.recover()).toBe(0);
+            await vi.waitFor(() => expect(notesIn(second.client)).toBe(1));
+            expect(notesIn(second.client, 'trouble')).toBe(0);
+            expect(await stateOf(lost)).toBe('u');
+            expect(second.deps.reply).not.toHaveBeenCalled();
+            // the other side of the line: nothing paid ran (it only ran out of tries), so the person is asked to send it again
+            const otherRoom = roomOf('spent-note');
+            const third = makeBridge(otherRoom, async () => ({ text: 'x', media: [] }));
+            const C = await serve(inboxOn({ staleMs: 60, maxTries: 1 }), async () => {
+                throw new Error('fails');
+            }, { onGaveUp: (event, why) => third.bridge.onGaveUp(event, why) });
+            expect((await C.put('t9', say(otherRoom, spent, 'Pause the job'))).status).toBe(200);
+            await vi.waitFor(() => expect(notesIn(third.client, 'trouble')).toBe(1));
+            expect(notesIn(third.client)).toBe(0);
         });
     });
 
