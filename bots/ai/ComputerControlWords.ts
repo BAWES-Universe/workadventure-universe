@@ -124,6 +124,17 @@ export const CONTROL_WORDS = {
     /** MOCK "Stopped everything (said in chat)". With one job, the cancelled line says it, naming the job. */
     stoppedAll: (count: number): string => `I've stopped all ${count} jobs on my computer. Their files are kept.`,
     /**
+     * FINAL (Fable, 23 Nov, `/mnt/project-files/release-0-5-0/brick-stop-all-final/strings.txt`): every reply to a confirmed Stop all that left NOTHING, by `stopped` (S: the length of Orbit's list, or null when it
+     * sent none) and `asked` (A: the jobs the question named, used only to choose singular or plural and to know that some of them were not stopped). Any number said is Orbit's, and "all" only when S
+     * equals A. A = S = 1 is the approved cancelled line (said by the caller, which names the job). `title`: the one job's title when A = 1, when it has one.
+     */
+    stoppedNothingLeft: (stopped: number | null, asked: number, title?: string | null): string => {
+        if (stopped === null) return asked >= 2 ? 'The jobs I asked you about have all ended now. Their files are kept.' : 'The job I asked you about has ended now. Its files are kept.';
+        if (stopped === 0) return asked >= 2 ? 'Those jobs had already ended.' : title ? `${quotedTitle(title)} had already ended.` : 'That job had already ended.';
+        if (stopped >= asked) return `I've stopped all ${stopped} jobs on my computer. Their files are kept.`;
+        return stopped === 1 ? "I've stopped 1 job on my computer. The rest had already ended. Their files are kept." : `I've stopped ${stopped} jobs on my computer. The rest had already ended. Their files are kept.`;
+    },
+    /**
      * FINAL (Fable, 23 Nov, `/mnt/project-files/brick-three-job-lines/strings.txt`, GPT seventh note D2): a Stop all where jobs were LEFT (they began after the person was asked, so they are not in the set
      * they confirmed). Two lines joined by a newline: what was stopped, then what was left. The second is a statement, never a question: a plain yes after it confirms nothing.
      * `left` holds each job's title (null for one with none).

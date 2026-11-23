@@ -406,7 +406,7 @@ describe('cancel one job: Brick always asks first, and only the person\'s next m
 
 describe('stop everything: always asks, naming every job, and ends exactly those', () => {
     it('asks with every job named and Pause offered; stops on the next message\'s yes', async () => {
-        const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking'), paused('job-hotel', 'Hotel booking')]), { stop: viewOf(null) });
+        const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking'), paused('job-hotel', 'Hotel booking')]), { stop: { ...viewOf(null), stopped: ['job-visa', 'job-taxi', 'job-hotel'] } });
         const c = chat(orbit.admin);
         await c.run(STOP_COMPUTER_TOOL);
         expect(orbit.acted()).toEqual([]);
@@ -502,13 +502,55 @@ describe('stop everything: always asks, naming every job, and ends exactly those
     });
 
     it('with one job, the stop ends it and names it', async () => {
-        const orbit = door(viewOf(working()), { stop: viewOf(null) });
+        const orbit = door(viewOf(working()), { stop: { ...viewOf(null), stopped: ['job-visa'] } });
         const c = chat(orbit.admin);
         await c.run(STOP_COMPUTER_TOOL);
         await c.deliver();
         c.nextMessage();
         await c.run(STOP_COMPUTER_TOOL);
         expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Visa form')]);
+    });
+
+    // Fable's FINAL table for every reply to a confirmed Stop all that left nothing (brick-stop-all-final/strings.txt): any number said is Orbit's, "all" only when it equals the number asked about
+    describe('a Stop that left nothing: the number is Orbit\'s', () => {
+        const three = () => [working(), inLine('job-taxi', 'Taxi booking'), paused('job-hotel', 'Hotel booking')];
+        const stopWith = async (stopped: unknown, jobs: Job[]) => {
+            const orbit = door(viewOf(jobs[0], jobs.slice(1)), { stop: { ...viewOf(null), ...(stopped === undefined ? {} : { stopped }) } });
+            const c = chat(orbit.admin);
+            await c.run(STOP_COMPUTER_TOOL);
+            await c.deliver();
+            c.nextMessage();
+            await c.run(STOP_COMPUTER_TOOL);
+            return c.deliver();
+        };
+        it('every row of the table', async () => {
+            expect(await stopWith(['a', 'b', 'c'], three())).toEqual(["I've stopped all 3 jobs on my computer. Their files are kept."]);
+            expect(await stopWith(['a'], [working()])).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Visa form')]);
+            expect(await stopWith(['a', 'b'], three())).toEqual(["I've stopped 2 jobs on my computer. The rest had already ended. Their files are kept."]);
+            expect(await stopWith(['a'], three())).toEqual(["I've stopped 1 job on my computer. The rest had already ended. Their files are kept."]);
+            expect(await stopWith([], three())).toEqual(['Those jobs had already ended.']);
+            expect(await stopWith([], [working()])).toEqual(['“Visa form” had already ended.']);
+            expect(await stopWith([], [working({ title: '' })])).toEqual(['That job had already ended.']);
+            expect(await stopWith(undefined, three())).toEqual(['The jobs I asked you about have all ended now. Their files are kept.']);
+            expect(await stopWith(undefined, [working()])).toEqual(['The job I asked you about has ended now. Its files are kept.']);
+        });
+        it('a number Orbit did not send is never said: the number of jobs asked about is not a count', async () => {
+            for (const lines of [await stopWith(undefined, three()), await stopWith('many', three())]) expect(lines[0]).not.toMatch(/\d/);
+        });
+        it('a count in place of a list (an older Orbit) is Orbit\'s number all the same', async () => {
+            expect(await stopWith(2, three())).toEqual(["I've stopped 2 jobs on my computer. The rest had already ended. Their files are kept."]);
+        });
+        it('with jobs left, the words are unchanged and never say "The rest had already ended"', async () => {
+            const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { stop: { ...viewOf(null), stopped: ['job-visa'], left: [{ id: 'job-new', title: 'New job' }] } });
+            const c = chat(orbit.admin);
+            await c.run(STOP_COMPUTER_TOOL);
+            await c.deliver();
+            c.nextMessage();
+            await c.run(STOP_COMPUTER_TOOL);
+            const lines = await c.deliver();
+            expect(lines[0]).toBe(CONTROL_WORDS.stoppedSome(1, 2, ['New job']));
+            expect(lines[0]).not.toMatch(/rest had already ended/);
+        });
     });
 
     it('every confirmed job ended before the yes: nothing is sent (never a bare stop), and the person hears there is nothing to stop', async () => {
@@ -1136,7 +1178,7 @@ describe('CodeRabbit: a reply asked again replays what the control did, and clai
                     asks.push(ask);
                     if (ask.action === 'list') return controlAnswerOf(state);
                     state = viewOf(null);
-                    return controlAnswerOf(state);
+                    return controlAnswerOf({ ...state, ...(action === 'stop' ? { stopped: ['job-visa'] } : {}) });
                 }),
             };
             const c = chat(admin);

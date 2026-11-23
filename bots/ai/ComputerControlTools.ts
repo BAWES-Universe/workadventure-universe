@@ -699,8 +699,11 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
         if (answer.ok && answer.left && answer.left.length > 0) {
             return { result: { done: true, someLeft: true, andThen: 'Some jobs were stopped and some were NOT. A fixed line under your reply already names them: do not say it again and do not reword it. Do not stop or cancel the left jobs unless the person asks in a new message.' }, lines: [CONTROL_WORDS.stoppedSome(answer.stopped ?? null, jobs.length, answer.left)] };
         }
+        // Nothing left: any number said is Orbit's (never the number of jobs the question named), and "all" only when it equals that number (Fable, FINAL)
+        const stopped = answer.ok && typeof answer.stopped === 'number' ? answer.stopped : null;
         const only = jobs.length === 1 ? jobs[0] : null;
-        return { result: { done: true }, lines: [only ? lineOf(hasStarted(only) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, only.title) : CONTROL_WORDS.stoppedAll(jobs.length)] };
+        if (only && stopped === 1) return { result: { done: true }, lines: [lineOf(hasStarted(only) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, only.title)] };
+        return { result: { done: true }, lines: [CONTROL_WORDS.stoppedNothingLeft(stopped, jobs.length, only?.title)] };
     });
 }
 
