@@ -1816,6 +1816,33 @@ export class AdminApiService {
     }
 
     /**
+     * The ended jobs of this person on this Brick that Orbit would carry on, newest first (GPT seventh note, E): what "which job do you mean?" lists when "try again" is said and no job is
+     * named for the turn. Orbit's `ended` (`{ id, title, how, endedAt, continuable }` each, asked for up to 5): only the ones with `continuable: true` are offered (Orbit still decides after the
+     * pick). An Orbit that sends no `ended` list is answered with the one `retry` job it names. `null` when Orbit cannot be asked or the computer is not on (nothing is listed, and nothing is
+     * started either way). One request, read only.
+     */
+    async computerEndedJobs(viaBotId: string, userId: string): Promise<Array<{ id: string; title: string }> | null> {
+        try {
+            const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown; ended?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1', ended: '5' });
+            if (!(response.data?.available === true && response.data?.on === true)) return null;
+            const jobs: Array<{ id: string; title: string }> = [];
+            if (Array.isArray(response.data.ended)) {
+                for (const raw of response.data.ended) {
+                    if (typeof raw !== 'object' || raw === null || (raw as { continuable?: unknown }).continuable !== true) continue;
+                    const one = retryJobOf({ ...raw, how: 'ended' });
+                    if (one && !jobs.some((seen) => seen.id === one.id)) jobs.push({ id: one.id, title: one.title });
+                }
+                return jobs;
+            }
+            const single = retryJobOf(response.data.retry);
+            return single ? [{ id: single.id, title: single.title }] : [];
+        } catch (error) {
+            console.warn("[AdminApiService] Could not read a Brick's ended computer jobs:", error instanceof Error ? error.message : error);
+            return null;
+        }
+    }
+
+    /**
      * The job this very start made (#2000): read only, asked after a start whose answer was slow. Every start carries a `startKey` of its own (one random id per start
      * the person asked for), Orbit keeps it with the job the start makes, and this asks for the job of THAT key and no other: the title, the conversation and the time
      * are only what a person reads, so a job of an earlier start (the same title, just before) is never taken for this one. `'none'` when Orbit answers that no job
@@ -2041,6 +2068,29 @@ export class AdminApiService {
     }
 
     /**
+     * Retires a start key that Orbit never saw (CodeRabbit on 24dea75c, item 4): the person asked for something ELSE while that key was still open, so the old request may never be
+     * sent again behind their back. Orbit marks the key (a tombstone, under the person's lock) so that a start with it is answered `retired`, never made. Same door as `start-ack`:
+     * `{ action: 'start-retire', userId, isGuest?, attempt }`. `{ retired: true }`: the key is dead. `{ retired: false }`: that start DID happen (Orbit has a job or an attempt for it), so it is
+     * looked up as before. `undefined`: Orbit cannot say (an Orbit without it, the call failed): nothing is assumed. Never throws.
+     */
+    async retireComputerStart(viaBotId: string, userId: string, retire: { isGuest?: boolean; attempt: string }): Promise<{ retired: boolean } | undefined> {
+        try {
+            const response = await this.brickCall<{ ok?: unknown; retired?: unknown }>(
+                'post',
+                `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`,
+                { action: 'start-retire', userId, ...(typeof retire.isGuest === 'boolean' ? { isGuest: retire.isGuest } : {}), attempt: retire.attempt },
+                undefined,
+                ACK_TIMEOUT_MS
+            );
+            if (response.data?.ok !== true || typeof response.data.retired !== 'boolean') return undefined;
+            return { retired: response.data.retired };
+        } catch (error) {
+            console.warn('[AdminApiService] Could not retire a computer start at Orbit:', error instanceof Error ? error.message : error);
+            return undefined;
+        }
+    }
+
+    /**
      * Starts a job on the Brick's computer for its owner (#2000). Throws when Orbit cannot be reached. Every start carries a key of its own (`startKey`, one random id
      * per start), which Orbit keeps with the job it makes. A start whose answer did not come back whole (it took longer than we wait, a gateway cut it, the connection
      * was reset or broken, or a server or proxy answered 5xx: see `mayHaveStarted`) is not a failure of the computer when Orbit says that the job of THIS key was made.
@@ -2057,7 +2107,7 @@ export class AdminApiService {
     ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; continued?: true } | ({ ok: false; reason: string; queued?: true; app?: string; earlier?: EarlierStart; cannotContinue?: CannotContinue })> {
         // The key of this start. A caller that asks for the same thing again (a reply written again, a tool call retried) sends the key of the first ask, so Orbit answers with
         // the job that ask made and never makes a second; a deliberate second job is a new ask and has a key of its own
-        const startKey = typeof ask.startKey === 'string' && START_KEY_SHAPE.test(ask.startKey) ? ask.startKey : randomUUID();
+        const startKey = typeof ask.startKey === 'string' && START_KEY_SHAPE.test(ask.startKey) ? ask.startKey : `t${Date.now().toString(36)}-${randomUUID().replace(/-/g, '')}`;
         // Asks Orbit which job THIS start made (by its key), and says what is true of it: the same for a start whose answer was lost and for one whose answer came but
         // did not say what happened
         const lookUp = async (): Promise<ComputerJobToldResult> => {

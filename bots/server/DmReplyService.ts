@@ -129,6 +129,8 @@ export interface DmReplyHooks {
     roomId?: string;
     /** The Matrix event of the message (its id): the key of a computer start made for it is made from it, so the same event delivered again makes no second job. */
     eventId?: string;
+    /** When the person wrote it (the event's own `origin_server_ts`): the moment of their consent, which the key of a computer start made for it carries. */
+    eventTs?: number;
     /** The artifacts the person pointed at by replying to a card (game #1781): the bot may open those even when another bot made them. */
     pointedArtifactIds?: string[];
     /** A line from the system about something the person did (a card they tapped), not words they typed: nothing is learned about them from it. */
@@ -608,6 +610,7 @@ export class DmReplyService extends BaseBehavior {
         if (turnMemory) {
             turnMemory.dmRoomId = hooks.roomId;
             turnMemory.dmEventId = hooks.eventId;
+            turnMemory.dmEventTs = hooks.eventTs;
             // Only this turn's reply: a card pointed at earlier is not pointed at again by the next message
             turnMemory.pointedArtifacts = hooks.pointedArtifactIds ?? [];
             turnMemory.pendingArtifacts = [];

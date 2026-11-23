@@ -68,6 +68,11 @@ class FakeOrbit {
     /** What a confirmation does: reaches Orbit, or is lost on the way (nothing happens there). */
     onAck: 'ok' | 'lose' = 'ok';
     status = 'running';
+    /** What `start-retire` does: an Orbit without it (default: the old behaviour), or the one with it (a key that made nothing is marked dead; one that made a job is not). */
+    onRetire: 'unsupported' | 'supported' = 'unsupported';
+    /** The calls of `start-retire` that reached Orbit, and the keys it has marked dead. */
+    retires: string[] = [];
+    readonly dead = new Set<string>();
 
     private stateOf = (status: string): 'live' | 'done' | 'ended' => (status === 'running' || status === 'queued' || status === 'waiting' ? 'live' : status === 'done' ? 'done' : 'ended');
 
@@ -75,6 +80,13 @@ class FakeOrbit {
         if (method === 'post') {
             const sent = body as { action?: string; userId: string; title: string; brief?: string; writes?: boolean; plan?: unknown; origin?: unknown; attempt?: string };
             const scope = `${path.split('/')[2] ?? ''}|${sent.userId}`;
+            if (sent.action === 'start-retire') {
+                this.retires.push(sent.attempt ?? '');
+                if (this.onRetire === 'unsupported') return { data: { ok: false, reason: 'unknown_action' } };
+                if (this.jobs.has(sent.attempt ?? '')) return { data: { ok: true, retired: false } };
+                this.dead.add(sent.attempt ?? '');
+                return { data: { ok: true, retired: true } };
+            }
             if (sent.action === 'start-ack') {
                 this.acks.push({ attempt: sent.attempt ?? '', userId: sent.userId });
                 if (this.onAck === 'lose') throw Object.assign(new Error('timeout of 5000ms exceeded'), { isAxiosError: true, code: 'ECONNABORTED' });
@@ -88,6 +100,7 @@ class FakeOrbit {
             const title = sent.title;
             this.posts.push({ key, title, ...(sent.brief ? { brief: sent.brief } : {}), ...(sent.writes === undefined ? {} : { writes: sent.writes }), ...(sent.plan ? { plan: sent.plan } : {}), ...(sent.origin ? { origin: sent.origin } : {}), confirms });
             const make = () => {
+                if (this.dead.has(key)) return { data: { ok: false, reason: 'retired' } };
                 if (!this.jobs.has(key)) {
                     // the guard sits at the moment of creation: the oldest job of this person on this Brick that was never confirmed stands in the way of a start with another key
                     const unconfirmed = confirms ? [...this.jobs.values()].find((one) => one.scope === scope && !one.acked) : undefined;
@@ -698,6 +711,87 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             expect(answer).toMatchObject({ started: true, earlier: true });
         });
 
+        describe('CodeRabbit item 4: a request with another title finds an open key that Orbit never saw', () => {
+            const open = async (orbit: FakeOrbit, who: { botId: string; userId: string }) => {
+                orbit.onPost = 'limiter-before-commit';
+                orbit.onGet = 'none';
+                const server = process_(orbit, who);
+                await askWith(server, SAID);
+                orbit.onPost = 'whole';
+                orbit.posts = [];
+                return server;
+            };
+
+            it('Orbit retires the old key: the old words are NEVER sent again, the person\'s new ask goes as a new start under a new key, and the dead record is gone', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                orbit.onRetire = 'supported';
+                const server = await open(orbit, who);
+                const oldKey = (await held(who))!.key;
+                const answer = await server.ask('Book me a table for Friday');
+                expect(orbit.retires).toEqual([oldKey]);
+                expect(answer).toMatchObject({ started: true });
+                expect(answer).not.toHaveProperty('earlier');
+                expect(orbit.posts).toHaveLength(1);
+                expect(orbit.posts[0]).toMatchObject({ title: 'Book me a table for Friday' });
+                expect(orbit.posts[0].key).not.toBe(oldKey);
+                expect(orbit.posts.some((one) => one.title === 'Fill in my visa form')).toBe(false);
+                // a start of the retired key (a peer that read the record) is answered `retired`, never made
+                expect(orbit.dead.has(oldKey)).toBe(true);
+                expect(orbit.jobs.has(oldKey)).toBe(false);
+                expect(orbit.jobs.size).toBe(1);
+            });
+
+            it('Orbit says that start DID happen (retired: false): it is looked up as before and the person is told of THAT job, nothing new is made', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                orbit.onRetire = 'supported';
+                const server = await open(orbit, who);
+                const oldKey = (await held(who))!.key;
+                // the start of the old key reached Orbit after all: the first read said no job, the one after retiring finds it
+                orbit.jobs.set(oldKey, { id: 'job-1', status: 'running', title: 'Fill in my visa form', scope: `${who.botId}|${who.userId}`, attempt: oldKey, acked: false });
+                orbit.onGet = 'truth';
+                const real = orbit.call;
+                let reads = 0;
+                orbit.call = (async (...args: Parameters<FakeOrbit['call']>) => {
+                    if (args[0] === 'get') {
+                        reads += 1;
+                        if (reads === 1) return { data: { started: null } };
+                    }
+                    return real(...args);
+                }) as FakeOrbit['call'];
+                (server.context.admin as unknown as { brickCall: unknown }).brickCall = orbit.call;
+                const answer = await server.ask('Book me a table for Friday');
+                expect(orbit.retires).toEqual([oldKey]);
+                // told as the OLD ask's job (the same answer an ordinary look-up of it gives), never as the new ask's
+                expect(answer).toMatchObject({ earlier: true });
+                expect(orbit.dead.size).toBe(0);
+                expect(orbit.jobs.size).toBe(1);
+                expect(orbit.posts).toHaveLength(0);
+            });
+
+            it('an Orbit without `start-retire` (or one that cannot say): nothing changes, the old words go again as before', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                const server = await open(orbit, who);
+                const answer = await server.ask('Book me a table for Friday');
+                expect(orbit.retires).toHaveLength(1);
+                expect(orbit.posts[0]).toMatchObject({ title: 'Fill in my visa form' });
+                expect(answer).toMatchObject({ started: true, earlier: true });
+            });
+
+            it('the SAME request again is never retired: it goes again as itself', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                orbit.onRetire = 'supported';
+                const server = await open(orbit, who);
+                const answer = await askWith(server, SAID);
+                expect(orbit.retires).toHaveLength(0);
+                expect(answer).toMatchObject({ started: true });
+                expect(orbit.dead.size).toBe(0);
+            });
+        });
+
         it('a confirmation that fails with an error of its own never breaks the answer to the person', async () => {
             const who = ids();
             const orbit = new FakeOrbit();
@@ -1289,7 +1383,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
     });
     describe('GPT fifth note, S2: a start keeps its identity when its inbound event is delivered again', () => {
         const KEY_SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
-        const EVENT = { roomId: '!dm:matrix.test', eventId: '$visa-1' };
+        const EVENT = { roomId: '!dm:matrix.test', eventId: '$visa-1', ts: 1_700_000_000_000 };
 
         it('the key of a start is made from the Brick, the chat, the inbound event and the start\'s ordinal, in the shape Orbit takes, and a start of a chat with no inbound event has a random one', async () => {
             const who = ids();
@@ -1297,13 +1391,13 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             const server = process_(orbit, who);
             await server.ask('Fill in my visa form', { inbound: EVENT });
             const key = orbit.posts[0].key;
-            expect(key).toBe(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0));
+            expect(key).toBe(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts));
             expect(key).toMatch(KEY_SHAPE);
-            expect(key.startsWith('mx_')).toBe(true);
-            expect(startKeyFor(who.botId, EVENT.roomId, '$visa-2', 0)).not.toBe(key);
-            expect(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 1)).not.toBe(key);
-            expect(startKeyFor('another-brick', EVENT.roomId, EVENT.eventId, 0)).not.toBe(key);
-            expect(startKeyFor(who.botId, '!another:matrix.test', EVENT.eventId, 0)).not.toBe(key);
+            expect(key).toMatch(/^t[0-9a-z]+-mx_/);
+            expect(startKeyFor(who.botId, EVENT.roomId, '$visa-2', 0, EVENT.ts)).not.toBe(key);
+            expect(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 1, EVENT.ts)).not.toBe(key);
+            expect(startKeyFor('another-brick', EVENT.roomId, EVENT.eventId, 0, EVENT.ts)).not.toBe(key);
+            expect(startKeyFor(who.botId, '!another:matrix.test', EVENT.eventId, 0, EVENT.ts)).not.toBe(key);
             const plain = ids();
             const other = new FakeOrbit();
             await process_(other, plain).ask('Fill in my visa form');
@@ -1323,7 +1417,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             };
             await reply();
             const keys = orbit.posts.map((one) => one.key);
-            expect(keys).toEqual([startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0), startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 1)]);
+            expect(keys).toEqual([startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts), startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 1, EVENT.ts)]);
             expect(orbit.jobs.size).toBe(1);
             // the same event delivered again (a restart: nothing is remembered): the same two keys, one job
             await client.del(startKeyNameOf(`${who.botId}|${who.userId}`));
@@ -1364,7 +1458,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             const server = process_(orbit, who);
             await server.ask('Fill in my visa form', { inbound: EVENT });
             forgetSettledStarts(server.memory);
-            await server.ask('Fill in my visa form', { inbound: { roomId: EVENT.roomId, eventId: '$visa-2' } });
+            await server.ask('Fill in my visa form', { inbound: { ...EVENT, eventId: '$visa-2' } });
             expect(orbit.posts[1].key).not.toBe(orbit.posts[0].key);
             expect(orbit.jobs.size).toBe(2);
             expect(orbit.reservations).toBe(2);
@@ -1386,39 +1480,137 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             };
         };
 
-        it('S2 `expired` (this start\'s own attempt stopped beating): nothing was made, so the ask starts afresh under a NEW key, never the old one again; ONE job and ONE reservation, the stored key is the new one', async () => {
+        // GPT seventh note, A (game part): `expired` is final. Nothing was made by that attempt, and a fresh key here could pay for a job the person no longer wants
+        // GPT seventh note, A2: the key carries the moment of consent
+        it('a key carries the issue time of the person\'s message (`t<base36>-<rest>`), the same for every redelivery of that event; a start with no event has a timed random key', async () => {
             const who = ids();
             const orbit = new FakeOrbit();
-            scripted(orbit, [{ ok: false, reason: 'expired' }]);
-            const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
-            expect(answer).toMatchObject({ started: true });
-            expect(orbit.posts).toHaveLength(2);
-            const [old, fresh] = orbit.posts.map((one) => one.key);
-            expect(fresh).not.toBe(old);
-            expect(old).toBe(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0));
-            // the new key is made from the same event too: the same message delivered again would make the same new key, so a replay still makes one job
-            expect(fresh).toBe(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, `${old}.1`));
-            expect(fresh).toMatch(KEY_SHAPE);
-            expect([...orbit.jobs.keys()]).toEqual([fresh]);
-            expect(orbit.reservations).toBe(1);
-            // what the person is told confirms the job of the NEW key
-            expect(orbit.acks.map((one) => one.attempt)).toEqual([fresh]);
+            await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+            const [key] = orbit.posts.map((one) => one.key);
+            expect(key).toMatch(/^t[0-9a-z]+-mx_[0-9a-f]{32}$/);
+            expect(parseInt(key.slice(1, key.indexOf('-')), 36)).toBe(EVENT.ts);
+            expect(key.length).toBeLessThanOrEqual(64);
+            // another moment of the same event would be another key, so Orbit's consent window sees the message's own time
+            expect(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts + 1)).not.toBe(key);
+            const random = new FakeOrbit();
+            const before = Date.now();
+            await process_(random, ids()).ask('Fill in my visa form');
+            const [loose] = random.posts.map((one) => one.key);
+            expect(loose).toMatch(/^t[0-9a-z]+-[0-9a-f]{32}$/);
+            expect(loose.length).toBeLessThanOrEqual(64);
+            expect(parseInt(loose.slice(1, loose.indexOf('-')), 36)).toBeGreaterThanOrEqual(before);
         });
 
-        it('S2 `expired`, the reply that names the job not delivered: the key kept for the person is the NEW one (with the words of the ask), so the next message finds that job and makes no other', async () => {
+        it('S2 `expired` (this start\'s own attempt stopped beating): ONE post only, never a start under another key; nothing is made, reserved or acknowledged, and the dead key is not kept', async () => {
             const who = ids();
             const orbit = new FakeOrbit();
             scripted(orbit, [{ ok: false, reason: 'expired' }]);
             const server = process_(orbit, who);
-            await server.ask('Fill in my visa form', { inbound: EVENT, deliver: false });
-            const [old, fresh] = orbit.posts.map((one) => one.key);
-            expect(fresh).not.toBe(old);
-            expect(await held(who)).toMatchObject({ key: fresh, payload: { title: 'Fill in my visa form' } });
-            // the next message (a fresh process): the new key is the one looked up and its job is the one told of
-            forgetSettledStarts(server.memory);
-            orbit.lookups = [];
-            await process_(orbit, who).ask('Fill in my visa form reworded');
-            expect(orbit.lookups).toEqual([fresh]);
+            const answer = await server.ask('Fill in my visa form', { inbound: EVENT });
+            expect(answer).toMatchObject({ started: false, success: false, reason: 'expired' });
+            expect(String(answer.note)).toMatch(/did not start/);
+            expect(orbit.posts.map((one) => one.key)).toEqual([startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts)]);
+            expect(orbit.jobs.size).toBe(0);
+            expect(orbit.reservations).toBe(0);
+            expect(orbit.acks).toEqual([]);
+            expect(server.lines).toEqual([]);
+            expect(await held(who)).toBeNull();
+        });
+
+        it('S2 `expired`: every later ask of the same turn (the same title, or another) gets the same final answer and sends nothing', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            const server = process_(orbit, who);
+            await server.ask('Fill in my visa form', { inbound: EVENT });
+            const again = await server.ask('Fill in my visa form', { inbound: EVENT });
+            const other = await server.ask('Book me a table for Friday', { inbound: EVENT });
+            expect(again).toMatchObject({ started: false, reason: 'expired' });
+            expect(other).toMatchObject({ started: false, reason: 'expired' });
+            expect(orbit.posts).toHaveLength(1);
+            expect(orbit.jobs.size).toBe(0);
+            expect(orbit.reservations).toBe(0);
+        });
+
+        it('S2 `expired` for a start with no inbound event (a random key): the same, one post and no job', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            const answer = await process_(orbit, who).ask('Fill in my visa form');
+            expect(answer).toMatchObject({ started: false, reason: 'expired' });
+            expect(orbit.posts).toHaveLength(1);
+            expect(orbit.jobs.size).toBe(0);
+        });
+
+        // Opus's contract (round 8, A2 game rule 2): `expired` on a key ADOPTED from another start goes back to THIS message's own key, once
+        describe('`expired` on a key adopted from another start', () => {
+            const HELD = 't1h0000-mx_00000000000000000000000000000001';
+            const seed = async (who: { botId: string; userId: string }, title = 'Fill in my visa form') => new RedisStartKeys(() => client as never).claim(`${who.botId}|${who.userId}`, { key: HELD, at: Date.now(), payload: { title, writes: true } }, 600_000, 600_000);
+            it('the held key is sent first and answers expired: this message\'s own key is then sent ONCE and makes ONE job; the dead key\'s record is gone', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                await seed(who);
+                scripted(orbit, [{ ok: false, reason: 'expired' }]);
+                const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+                expect(answer).toMatchObject({ started: true });
+                const own = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts);
+                expect(orbit.posts.map((one) => one.key)).toEqual([HELD, own]);
+                expect([...orbit.jobs.keys()]).toEqual([own]);
+                expect(orbit.reservations).toBe(1);
+                expect(orbit.acks.map((one) => one.attempt)).toEqual([own]);
+            });
+            // CodeRabbit item 7: the order of what reaches Orbit, not only what reached it
+            it('the held key (another start\'s) is LOOKED UP before it is sent: the look-up of the key comes first in the trace, then its send, then this message\'s own key', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                await seed(who);
+                scripted(orbit, [{ ok: false, reason: 'expired' }]);
+                const trace: string[] = [];
+                const inner = (orbit as unknown as { call: (...args: unknown[]) => Promise<unknown> }).call;
+                (orbit as unknown as { call: unknown }).call = async (...args: unknown[]) => {
+                    const [method, , body, params, , headers] = args as [string, string, { action?: string } | undefined, Record<string, string> | undefined, unknown, Record<string, string> | undefined];
+                    if (method === 'get') trace.push(`look:${params?.attempt}`);
+                    else if (!body?.action) trace.push(`send:${headers?.['X-Computer-Start-Attempt']}`);
+                    return inner(...args);
+                };
+                await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+                const own = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts);
+                expect(trace.indexOf(`look:${HELD}`)).toBeGreaterThanOrEqual(0);
+                expect(trace.indexOf(`look:${HELD}`)).toBeLessThan(trace.indexOf(`send:${HELD}`));
+                expect(trace.indexOf(`send:${HELD}`)).toBeLessThan(trace.indexOf(`send:${own}`));
+            });
+            it('the own key answers expired too: final, nothing more is sent (never a third key)', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                await seed(who);
+                scripted(orbit, [{ ok: false, reason: 'expired' }, { ok: false, reason: 'expired' }]);
+                const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+                expect(answer).toMatchObject({ started: false, reason: 'expired' });
+                expect(orbit.posts).toHaveLength(2);
+                expect(orbit.jobs.size).toBe(0);
+            });
+            it('the own key is superseded by the job a reworded earlier start made: that job is the answer, no second job', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                await seed(who);
+                scripted(orbit, [{ ok: false, reason: 'expired' }, { ok: false, reason: 'earlier', earlier: { id: 'job-superseding', status: 'running', attempt: 'tzzzzzz-mx_00000000000000000000000000000009' } }]);
+                const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+                expect(answer).toMatchObject({ started: false });
+                expect(orbit.posts).toHaveLength(2);
+                expect(orbit.jobs.size).toBe(0);
+            });
+        });
+
+        it('S2 `expired`, then the person asks again in a NEW message: an ordinary new start with its own key (and one job), the dead key is never the one sent', async () => {
+            const who = ids();
+            const orbit = new FakeOrbit();
+            scripted(orbit, [{ ok: false, reason: 'expired' }]);
+            await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
+            const later = await process_(orbit, who).ask('Fill in my visa form', { inbound: { ...EVENT, eventId: '$visa-again' } });
+            expect(later).toMatchObject({ started: true });
+            const [dead, fresh] = orbit.posts.map((one) => one.key);
+            expect(fresh).not.toBe(dead);
+            expect(fresh).toBe(startKeyFor(who.botId, EVENT.roomId, '$visa-again', 0, EVENT.ts));
             expect(orbit.jobs.size).toBe(1);
             expect(orbit.reservations).toBe(1);
         });
@@ -1429,7 +1621,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             const server = process_(orbit, who);
             const first = new ConfirmationQueue();
             await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: first, inbound: EVENT });
-            const keyA = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0);
+            const keyA = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts);
             expect(orbit.posts.map((one) => one.key)).toEqual([keyA]);
             // that reply is delivered, and the person's next reply (the same turn: the same inbound event) is written with a new queue that counts from 0, while A's start is still kept
             await deliverTold(first);
@@ -1438,154 +1630,9 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             const keys = orbit.posts.map((one) => one.key);
             expect(keys).toHaveLength(2);
             expect(keys[1]).not.toBe(keyA);
-            expect(keys[1]).toBe(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 1));
+            expect(keys[1]).toBe(startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 1, EVENT.ts));
             expect(orbit.jobs.size).toBe(2);
             expect(orbit.reservations).toBe(2);
-        });
-
-        it('S2 `expired`, another server already holds a key of this ask: that key is the one sent (never the local one), after it is looked up; what it made is told, and with none yet its own words go with it', async () => {
-            const HELD = 'mx_held0000000000000000000000000001';
-            for (const made of [true, false]) {
-                const who = ids();
-                const orbit = new FakeOrbit();
-                if (made) orbit.jobs.set(HELD, { id: 'job-held', status: 'running', title: 'Fill in my visa form', scope: `${who.botId}|${who.userId}`, attempt: HELD, acked: false });
-                scripted(orbit, [{ ok: false, reason: 'expired' }]);
-                const server = process_(orbit, who);
-                const real = new RedisStartKeys(() => client as never);
-                let claims = 0;
-                const store = {
-                    expected: () => true,
-                    delete: (scope: string, key: string) => real.delete(scope, key),
-                    claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
-                        claims += 1;
-                        // The held key stands for the words of the OTHER attempt, which are not the words of the one that expired
-                        if (claims === 2) return { key: HELD, at: Date.now(), payload: { title: 'The held ask', writes: true } } as never;
-                        return real.claim(scope, entry as never, keep, life);
-                    },
-                };
-                const queue = new ConfirmationQueue();
-                const answer = await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: queue, inbound: EVENT });
-                const sentKeys = orbit.posts.map((one) => one.key);
-                // the keys that reached Orbit as a start: the old one (answered expired) and, when no job of the held key was found, the held key; never the local fresh key
-                const local = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, `${startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0)}.1`);
-                expect(sentKeys, String(made)).not.toContain(local);
-                if (made) {
-                    expect(sentKeys).toHaveLength(1);
-                    expect(answer).toMatchObject({ started: false, earlier: true });
-                    expect(orbit.jobs.size).toBe(1);
-                } else {
-                    expect(sentKeys).toEqual([startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0), HELD]);
-                    // and the words that go with it are the held key's own, not the local proposal's
-                    expect(orbit.posts.map((one) => one.title)).toEqual(['Fill in my visa form', 'The held ask']);
-                    expect(answer).toMatchObject({ started: true });
-                    expect([...orbit.jobs.keys()]).toEqual([HELD]);
-                }
-                expect(orbit.reservations).toBe(made ? 0 : 1);
-            }
-        });
-
-        // CodeRabbit on #2114 (d098522a): a key adopted from another server is that server's record; this call never deletes it, even when its own send of that key fails
-        it('S2 `expired`, another server\'s key adopted and the send of it FAILS: its record stays in the store (only a key this call made is ever deleted)', async () => {
-            const HELD = 'mx_held0000000000000000000000000002';
-            const who = ids();
-            const orbit = new FakeOrbit();
-            scripted(orbit, [{ ok: false, reason: 'expired' }]);
-            // the post of the adopted key fails (nothing answered, no job)
-            const inner = (orbit as unknown as { call: (...args: unknown[]) => Promise<unknown> }).call;
-            let posts = 0;
-            (orbit as unknown as { call: unknown }).call = async (...args: unknown[]) => {
-                const [method, , body] = args as [string, string, { action?: string } | undefined];
-                if (method === 'post' && !body?.action && ++posts === 2) throw new Error('Orbit did not answer');
-                return inner(...args);
-            };
-            const server = process_(orbit, who);
-            const real = new RedisStartKeys(() => client as never);
-            const deleted: string[] = [];
-            let claims = 0;
-            const store = {
-                expected: () => true,
-                delete: (scope: string, key: string) => (deleted.push(key), real.delete(scope, key)),
-                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
-                    claims += 1;
-                    if (claims === 2) {
-                        // another server's record, in the store itself
-                        await real.claim(scope, { key: HELD, at: Date.now(), payload: { title: 'The held ask', writes: true } } as never, keep, life).catch(() => undefined);
-                        return { key: HELD, at: Date.now(), payload: { title: 'The held ask', writes: true } } as never;
-                    }
-                    return real.claim(scope, entry as never, keep, life);
-                },
-            };
-            await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
-            expect(posts).toBe(2);
-            // the adopted key was never deleted by this call
-            expect(deleted).not.toContain(HELD);
-        });
-
-        // CodeRabbit on 27ab3385: two servers answered `expired` for the same inbound event and worked out the SAME replacement key; the one that claims second holds the first one's record, not its own
-        it('S2 `expired`, another server claimed the SAME new key first and this one\'s send of it FAILS: that record stays in the store (it is the other server\'s reservation, still open)', async () => {
-            const who = ids();
-            const orbit = new FakeOrbit();
-            scripted(orbit, [{ ok: false, reason: 'expired' }]);
-            const inner = (orbit as unknown as { call: (...args: unknown[]) => Promise<unknown> }).call;
-            let posts = 0;
-            (orbit as unknown as { call: unknown }).call = async (...args: unknown[]) => {
-                const [method, , body] = args as [string, string, { action?: string } | undefined];
-                if (method === 'post' && !body?.action && ++posts === 2) throw new Error('Orbit did not answer');
-                return inner(...args);
-            };
-            const server = process_(orbit, who);
-            const real = new RedisStartKeys(() => client as never);
-            const fresh = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, `${startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0)}.1`);
-            const deleted: string[] = [];
-            let claims = 0;
-            const store = {
-                expected: () => true,
-                delete: (scope: string, key: string) => (deleted.push(key), real.delete(scope, key)),
-                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
-                    claims += 1;
-                    // the other server got there first with the same key (its send is still open)
-                    if (claims === 2) await real.claim(scope, { ...entry, key: fresh } as never, keep, life);
-                    return real.claim(scope, entry as never, keep, life);
-                },
-            };
-            await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
-            expect(posts).toBe(2);
-            expect(claims).toBe(2);
-            // the failed send did not delete the other server's record
-            expect(deleted).not.toContain(fresh);
-            const kept = JSON.parse((await client.get(startKeyNameOf(`${who.botId}|${who.userId}`))) ?? 'null') as { key: string } | null;
-            expect(kept?.key).toBe(fresh);
-        });
-
-        // CodeRabbit on a767269a: a record this call did not store is another attempt's even when it holds the very key worked out here: look it up, and send only ITS words
-        it('S2 `expired`, another server holds the SAME new key with its own words: that key is looked up first and only the other server\'s words are sent under it (never this ask\'s)', async () => {
-            const who = ids();
-            const orbit = new FakeOrbit();
-            scripted(orbit, [{ ok: false, reason: 'expired' }]);
-            const server = process_(orbit, who);
-            const real = new RedisStartKeys(() => client as never);
-            const fresh = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, `${startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0)}.1`);
-            const looked: string[] = [];
-            const inner = (server.context.admin as unknown as { lookUpComputerStart: (...args: unknown[]) => Promise<unknown> }).lookUpComputerStart.bind(server.context.admin);
-            (server.context.admin as unknown as { lookUpComputerStart: unknown }).lookUpComputerStart = async (...args: unknown[]) => {
-                looked.push((args[2] as { startKey: string }).startKey);
-                return inner(...args);
-            };
-            let claims = 0;
-            const store = {
-                expected: () => true,
-                delete: (scope: string, key: string, options?: { unlessRead?: boolean }) => real.delete(scope, key, options),
-                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
-                    claims += 1;
-                    // the other server got there first with the same key and the words of ITS ask
-                    if (claims === 2) await real.claim(scope, { key: fresh, at: Date.now(), payload: { title: 'The other server ask', writes: true } } as never, keep, life);
-                    return real.claim(scope, entry as never, keep, life);
-                },
-            };
-            await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
-            expect(looked).toContain(fresh);
-            expect(orbit.posts.map((one) => one.key)).toEqual([startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0), fresh]);
-            expect(orbit.posts[1].title).toBe('The other server ask');
         });
 
         it('the first key held by another server for the very key proposed: looked up, sent with the stored words only; and a record with no words is only looked up', async () => {
@@ -1594,7 +1641,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 const orbit = new FakeOrbit();
                 const server = process_(orbit, who);
                 const real = new RedisStartKeys(() => client as never);
-                const key = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0);
+                const key = startKeyFor(who.botId, EVENT.roomId, EVENT.eventId, 0, EVENT.ts);
                 await real.claim(`${who.botId}|${who.userId}`, { key, at: Date.now(), ...(stored ? { payload: stored } : {}) } as never, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS);
                 const answer = await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, confirmations: new ConfirmationQueue(), inbound: EVENT });
                 if (stored) {
@@ -1632,87 +1679,6 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
                 expect(Boolean(await held(who)), name).toBe(kept);
             }
-        });
-
-        it('S2 `expired`, the shared store expected but it did not confirm the new key: nothing is sent under it (another server may hold a key of this ask), and the next ask checks it again', async () => {
-            const who = ids();
-            const orbit = new FakeOrbit();
-            scripted(orbit, [{ ok: false, reason: 'expired' }]);
-            const server = process_(orbit, who);
-            const real = new RedisStartKeys(() => client as never);
-            let claims = 0;
-            const store = {
-                expected: () => true,
-                delete: (scope: string, key: string) => real.delete(scope, key),
-                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
-                    claims += 1;
-                    // the first key is kept; the replacement's claim times out
-                    if (claims === 2) return undefined;
-                    return real.claim(scope, entry as never, keep, life);
-                },
-            };
-            const answer = await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
-            expect(answer).toMatchObject({ started: false, unconfirmed: true });
-            // only the first key (answered expired) reached Orbit: the replacement was never sent
-            expect(orbit.posts).toHaveLength(1);
-            expect(orbit.jobs.size).toBe(0);
-            // the next ask claims the replacement afresh, and then sends it: one job, one reservation
-            const again = await runComputerTool({ job: 'Fill in my visa form' }, { ...server.context, startKeyStore: store as never, confirmations: new ConfirmationQueue(), inbound: EVENT });
-            expect(again).toMatchObject({ started: true });
-            expect(orbit.posts).toHaveLength(2);
-            expect(orbit.jobs.size).toBe(1);
-            expect(orbit.reservations).toBe(1);
-        });
-
-        it('S2 `expired`, the key adopted holds no words: the words of the attempt that expired are not kept under it, so neither this ask nor the next one sends it', async () => {
-            const HELD = 'mx_held0000000000000000000000000002';
-            const who = ids();
-            const orbit = new FakeOrbit();
-            scripted(orbit, [{ ok: false, reason: 'expired' }]);
-            const server = process_(orbit, who);
-            const real = new RedisStartKeys(() => client as never);
-            let claims = 0;
-            const store = {
-                expected: () => true,
-                delete: (scope: string, key: string) => real.delete(scope, key),
-                claim: async (scope: string, entry: { key: string; at: number; payload?: unknown }, keep: number, life: number) => {
-                    claims += 1;
-                    if (claims === 2) return { key: HELD, at: Date.now() } as never;
-                    if (claims > 2) return { key: HELD, at: Date.now() } as never;
-                    return real.claim(scope, entry as never, keep, life);
-                },
-            };
-            const context = { ...server.context, startKeyStore: store as never, inbound: EVENT };
-            const first = await runComputerTool({ job: 'Fill in my visa form' }, { ...context, confirmations: new ConfirmationQueue() });
-            expect(first).toMatchObject({ started: false, unknown: true });
-            expect(orbit.posts).toHaveLength(1);
-            // the entry the next ask finds stands for the adopted key and has no words
-            const second = await runComputerTool({ job: 'Fill in my visa form' }, { ...context, confirmations: new ConfirmationQueue() });
-            expect(second).toMatchObject({ started: false, unknown: true });
-            expect(orbit.posts).toHaveLength(1);
-            expect(orbit.jobs.size).toBe(0);
-        });
-
-        it('S2 `expired` for a start with no inbound event (a random key): the new key is random too, and one job is made', async () => {
-            const who = ids();
-            const orbit = new FakeOrbit();
-            scripted(orbit, [{ ok: false, reason: 'expired' }]);
-            await process_(orbit, who).ask('Fill in my visa form');
-            expect(new Set(orbit.posts.map((one) => one.key)).size).toBe(2);
-            expect(orbit.jobs.size).toBe(1);
-            expect(orbit.reservations).toBe(1);
-        });
-
-        it('S2 `expired` again and again: at most two fresh starts are made (three posts in all), then the ask is told as one that did not start, and no key is left open', async () => {
-            const who = ids();
-            const orbit = new FakeOrbit();
-            scripted(orbit, [{ ok: false, reason: 'expired' }, { ok: false, reason: 'expired' }, { ok: false, reason: 'expired' }]);
-            const answer = await process_(orbit, who).ask('Fill in my visa form', { inbound: EVENT });
-            expect(answer).toMatchObject({ started: false, success: false });
-            expect(orbit.posts).toHaveLength(3);
-            expect(new Set(orbit.posts.map((one) => one.key)).size).toBe(3);
-            expect(orbit.jobs.size).toBe(0);
-            expect(await held(who)).toBeNull();
         });
 
         it('S2 `earlier` with an older start that has made NO job yet (id and status null): its key is adopted and looked up, nothing is read of a job, nothing is acknowledged, no job is made; when the older start makes its job it is found by that key', async () => {
@@ -1795,7 +1761,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             });
             const event = (id: string, body = 'Hi', at?: number) => {
                 ids_.push(id);
-                return { type: 'm.room.message', room_id: '!dm:matrix.test', sender: '@alice:matrix.test', event_id: id, ...(at === undefined ? {} : { origin_server_ts: at }), content: { msgtype: 'm.text', body } };
+                return { type: 'm.room.message', room_id: '!dm:matrix.test', sender: '@alice:matrix.test', event_id: id, origin_server_ts: at ?? 1_700_000_000_000, content: { msgtype: 'm.text', body } };
             };
             const fresh = (what = 'ev') => `$${what}-${randomUUID()}`;
             const quiet = () => new Promise((resolve) => setTimeout(resolve, 150));
@@ -1829,7 +1795,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                         }
                         await hooks?.paid();
                         statesAtPaid.push(await client.get(`matrix:event:${one.event_id}`));
-                        await process_(orbit, who).ask('Fill in my visa form', { inbound: { roomId: one.room_id, eventId: one.event_id } });
+                        await process_(orbit, who).ask('Fill in my visa form', { inbound: { roomId: one.room_id, eventId: one.event_id, ...(typeof one.origin_server_ts === 'number' ? { ts: one.origin_server_ts } : {}) } });
                         answers.push(one.event_id);
                     },
                     userExists: async () => true,
