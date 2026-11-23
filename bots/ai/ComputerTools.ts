@@ -45,6 +45,7 @@ export function computerToolDefinitions(): { type: 'function'; function: { name:
                         app_steps: { type: 'integer', description: 'With app: about how many steps (your own turns) that app would take to do the whole job. Your best guess, a whole number.' },
                         app_cannot: { type: 'string', description: 'Only when one of your apps could seem to fit this job: in a few words, why that app cannot do it (it has no such action, or the job lives on a website screen). Leave out otherwise.' },
                         reads_only: { type: 'boolean', description: 'True when the job only looks and writes nothing anywhere (it may run beside another job). Leave out otherwise.' },
+                        try_again: { type: 'boolean', description: 'True only when your instructions name a job under "Try again" and the person asks you to try that job again or carry on with it: it carries on from where it stopped. Leave out otherwise.' },
                     },
                     required: ['job'],
                 },
@@ -208,6 +209,11 @@ export interface ComputerToolContext {
     reviewed?: ReadonlySet<string>;
     /** Called once a job is running, so a development server can pretend to do it. */
     onStarted?: (jobId: string) => void;
+    /**
+     * "Try again" (piece 8): the ended job Orbit named for this turn, only when the person's words ask to try again or this is their first message since Brick told them how it ended
+     * (`ComputerTryAgain`). A `use_computer` with `try_again: true` carries THAT job on, under its title; without it (or without `try_again`) a start is an ordinary fresh job.
+     */
+    retry?: { id: string; title: string };
     /**
      * The start keys of this person's asks to this Brick (kept by the chat's memory). ONE start is open at a time, whatever its title: while its outcome is not known (`unknown`) or
      * its job was found live (`starting`), every ask (a reply written again, a tool call retried, a reworded title, the person asking again, an hour or a day later) is that start:
@@ -396,10 +402,13 @@ export async function reviewAppSteps(
 
 /** Runs use_computer. Never throws: the model is told in plain words what happened. */
 export async function runComputerTool(args: Record<string, unknown>, context: ComputerToolContext): Promise<Record<string, unknown>> {
-    const job = text(args.job, TITLE_MAX);
+    // "Try again" of the job Orbit named for this turn: that job, under its own title (the bar shows the same job), carried on from where it stopped. Orbit decides again
+    const carryOn = args.try_again === true && context.retry ? context.retry : undefined;
+    const job = carryOn ? text(carryOn.title, TITLE_MAX) : text(args.job, TITLE_MAX);
     if (!job) return { error: 'Say in a few words what the job is.' };
     const brief = typeof args.details === 'string' ? args.details.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, DETAILS_MAX) : '';
-    const fits = appThatFits(job, brief, context.apps);
+    // A job that carries on was already on the computer: the order of choosing was made when it began
+    const fits = carryOn ? null : appThatFits(job, brief, context.apps);
     const appCannot = text(args.app_cannot, 300);
     const stepsGiven = typeof args.app_steps === 'number' && Number.isInteger(args.app_steps) && args.app_steps >= 1;
     const afterReview = !!fits && stepsGiven && !!context.reviewed && [...context.reviewed].some((app) => plain(app) === plain(fits));
@@ -444,7 +453,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         return runComputerTool(args, context);
     }
     // Open until the answer says otherwise: a start in flight that a new message of the person cleared would be sent again under another key (a second job)
-    const current: StoredStartPayload = { title: job, ...(brief ? { brief } : {}), ...(args.reads_only === true ? { writes: false } : {}), ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}) };
+    const current: StoredStartPayload = { title: job, ...(brief ? { brief } : {}), ...(args.reads_only === true ? { writes: false } : {}), ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}), ...(carryOn ? { continues: carryOn.id } : {}) };
     // A new start of THIS inbound event has the key its event, chat and ordinal make (the same event again, the same key); a start the chat did not come from has a random one
     const newKey = () => (context.inbound && context.confirmations ? startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart()) : randomUUID());
     const entry: StartKeyEntry = earlier ?? { key: newKey(), at: now, open: true, unchecked: true, payload: current };
@@ -526,7 +535,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             entry.sent = true;
             try {
                 // The words of the ask that FIRST sent this key, never the words of this call (when they differ the answer is told as that earlier ask's)
-                const sendIt = async (): Promise<StartAnswer> => (await context.admin.startComputerJob(context.botId, context.userId, { title: said.title, startKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(said.brief ? { brief: said.brief } : {}), writes: said.writes, ...(said.plan ? { plan: said.plan } : {}), ...(said.origin ? { origin: said.origin } : {}) })) as unknown as StartAnswer;
+                const sendIt = async (): Promise<StartAnswer> => (await context.admin.startComputerJob(context.botId, context.userId, { title: said.title, startKey, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), ...(said.brief ? { brief: said.brief } : {}), writes: said.writes, ...(said.plan ? { plan: said.plan } : {}), ...(said.origin ? { origin: said.origin } : {}), ...(said.continues ? { continuesJobId: said.continues } : {}) })) as unknown as StartAnswer;
                 sent = await sendIt();
                 // Orbit says THIS start's own attempt stopped beating or was let go (`expired`): nothing was made by it, and it may not be revived. The ask starts afresh under a NEW key (the old
                 // one is never sent again), at most twice; the key a retried message makes is the same new key, so a replay of the same event still makes one job
@@ -611,7 +620,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // yet. The confirmation waits for this reply to be delivered (`ConfirmationQueue`), and the record of the key goes after it. A look-up never confirms by itself either.
         if (started.ok || ['starting', 'done', 'ended'].includes(started.reason)) {
             const askedEarlier = looked !== undefined || resentEarlier;
-            confirmLater(startKey, !started.ok && started.reason === 'starting', { state: started.ok ? (started.job.status === 'queued' ? 'queued' : 'started') : stateOf(started.reason), earlier: !started.ok && askedEarlier, ...(started.ok && started.job.status === 'queued' ? { queuedFor: started.job.queuedFor } : {}), ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
+            confirmLater(startKey, !started.ok && started.reason === 'starting', { state: started.ok ? (started.job.status === 'queued' ? 'queued' : 'started') : stateOf(started.reason), earlier: !started.ok && askedEarlier, ...(started.ok && started.job.status === 'queued' ? { queuedFor: started.job.queuedFor } : {}), ...(started.ok && started.continued === true ? { continued: true as const } : {}), ...(entry.payload?.title ? { title: entry.payload.title } : {}) });
         }
         // The answer to a look-up of a start sent EARLIER is said as that earlier job's, never as this ask's, and so is the answer of a key that went out before with other words than these
         return answerOf(started, context, looked !== undefined || resentEarlier);
@@ -624,11 +633,11 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
 
 
 /** An answer to a start, as one shape (`reason` and `app` when it is a no, `job` and `restoredFrom` when it is a yes). */
-type StartAnswer = { ok: boolean; reason: string; queued?: true; app?: string; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; earlier?: { id: string | null; status: string | null; attempt: string } };
+type StartAnswer = { ok: boolean; reason: string; queued?: true; app?: string; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; earlier?: { id: string | null; status: string | null; attempt: string }; /** Orbit carried it on in the old job's conversation ("try again", piece 8). */ continued?: true };
 
 /** Whether two starts said the same (title, details, writes, the way Brick weighed, the chat). */
 function samePayload(a: StoredStartPayload | undefined, b: StoredStartPayload): boolean {
-    return !!a && JSON.stringify([a.title, a.brief ?? null, a.writes ?? null, a.plan?.app ?? null, a.plan?.steps ?? null, a.plan?.appCannot ?? null, a.origin?.kind ?? null, a.origin?.ref ?? null]) === JSON.stringify([b.title, b.brief ?? null, b.writes ?? null, b.plan?.app ?? null, b.plan?.steps ?? null, b.plan?.appCannot ?? null, b.origin?.kind ?? null, b.origin?.ref ?? null]);
+    return !!a && JSON.stringify([a.title, a.brief ?? null, a.writes ?? null, a.plan?.app ?? null, a.plan?.steps ?? null, a.plan?.appCannot ?? null, a.origin?.kind ?? null, a.origin?.ref ?? null, a.continues ?? null]) === JSON.stringify([b.title, b.brief ?? null, b.writes ?? null, b.plan?.app ?? null, b.plan?.steps ?? null, b.plan?.appCannot ?? null, b.origin?.kind ?? null, b.origin?.ref ?? null, b.continues ?? null]);
 }
 
 /** Said with the answer of a job the person asked for earlier: what is asked now may be something else, and the game cannot tell. */
@@ -663,7 +672,7 @@ function answerOf(started: StartAnswer, context: ComputerToolContext, earlier = 
         case 'ended':
             return { ...answer, note: `Orbit found ${which} and it has already ended (it failed or was stopped). ${LINE_TELLS_THEM}${before ? different : ' Do not start it again unless they ask you to.'}` };
         default: {
-            const running = before ? 'The job they asked for earlier is running.' : 'The job is running.';
+            const running = before ? 'The job they asked for earlier is running.' : started.ok && started.continued ? 'The job is carrying on from where it stopped, in the same conversation on your computer.' : 'The job is running.';
             return {
                 ...answer,
                 note: when
@@ -742,6 +751,8 @@ function answerWords(started: StartAnswer, context: ComputerToolContext, earlier
         note:
             (when
                 ? `The job is running. Your computer came back from its copy of ${when}. Say in one sentence that it is working on it and that it came back from that day's copy; anything made after that day is gone, so offer to make it again if it matters. They can Watch or Stop from the bar above.`
-                : 'The job is running. Say in one short sentence what you started. They can Watch or Stop from the bar above this chat. Do not say how long it will take.') + laterNote,
+                : started.continued
+                  ? 'The job is carrying on from where it stopped, in the same conversation on your computer. Say so in one short sentence. They can Watch or Stop from the bar above this chat. Do not say how long it will take.'
+                  : 'The job is running. Say in one short sentence what you started. They can Watch or Stop from the bar above this chat. Do not say how long it will take.') + laterNote,
     };
 }

@@ -24,6 +24,8 @@ export interface StoredStartPayload {
     writes?: boolean;
     plan?: { app: string; steps?: number; appCannot?: string };
     origin?: { kind: 'dm'; ref: string };
+    /** "Try again" (piece 8): the ended job this start carries on, as Orbit named it. Part of the start's identity: sent again with it, never with another ask's. */
+    continues?: string;
 }
 
 /** What is kept for one ask: the key sent, when it was first sent (ms), and what it said. */
@@ -58,6 +60,10 @@ export function startPayloadOf(raw: unknown): StoredStartPayload | undefined {
         const origin = one.origin as Record<string, unknown> | null;
         if (typeof origin !== 'object' || origin === null || origin.kind !== 'dm' || typeof origin.ref !== 'string' || origin.ref === '' || origin.ref.length > 1000) return undefined;
         out.origin = { kind: 'dm', ref: origin.ref };
+    }
+    if (one.continues !== undefined) {
+        if (typeof one.continues !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(one.continues)) return undefined;
+        out.continues = one.continues;
     }
     return out;
 }

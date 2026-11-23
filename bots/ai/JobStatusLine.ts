@@ -4,6 +4,7 @@
  * The line is built from the state Orbit really gave for the job (started, queued and why, found again and still going, done, ended), appended to the reply in the SAME `m.text` event, and the
  * job is confirmed only after Matrix returned that event's id. The tests read the strings from here (`jobLine`, `withJobLines`), never as literals, so a change of wording is a change of this file.
  */
+import { CONTROL_WORDS } from './ComputerControlWords';
 
 /**
  * Which job a reply names to the person and what became of it: started now, waiting its turn (`queuedFor` is Orbit's reason: `allowance`, `turn`, `busy`, `pool`), found again (`recovered`: Orbit
@@ -14,6 +15,8 @@ export interface JobNote {
     title?: string;
     earlier?: boolean;
     queuedFor?: string | null;
+    /** "Try again" (piece 8): Orbit carried the job on in its old conversation. Said with the approved resume words (the steering mock's "Resumed" lines), never a new sentence. */
+    continued?: boolean;
 }
 
 /** One line in its two forms: with the job's title (already in its quotes), and with none. */
@@ -88,6 +91,10 @@ export const quotedTitle = (title: string): string => `\u201c${title.replace(/[\
 /** The fixed line of one job, from the state Orbit really gave for it. */
 export function jobLine(note: JobNote): string {
     const pick = (line: Line): string => (note.title ? line.titled(quotedTitle(note.title)) : line.plain);
+    // A job "try again" carried on: it goes on from where it stopped, in the words the mock approved for a job that carries on (now, next, or waiting for a free computer). Waiting for the month is said as any job waiting for it
+    if (note.continued && note.state === 'started') return pick(CONTROL_WORDS.resumedNow);
+    if (note.continued && note.state === 'queued' && note.queuedFor === 'turn') return pick(CONTROL_WORDS.resumedNext);
+    if (note.continued && note.state === 'queued' && (note.queuedFor === 'busy' || note.queuedFor === 'pool')) return pick(CONTROL_WORDS.resumedWaiting);
     switch (note.state) {
         case 'done':
             return pick(note.earlier ? JOB_STATUS_WORDS.done.earlier : JOB_STATUS_WORDS.done.now);

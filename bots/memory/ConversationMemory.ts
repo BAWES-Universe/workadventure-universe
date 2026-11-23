@@ -177,6 +177,8 @@ export interface BotPlayerMemory {
     /** Brick's controls of its computer jobs in this chat (see `ComputerControlTools`): the question it asked before cancelling or stopping, which only the person's next message can
      * answer, and this turn's controls, so a reply asked again never pauses, cancels or passes a message on twice. Runtime only. */
     computerControls?: import('../ai/ComputerControlTools').ControlState;
+    /** "Try again" (piece 8): the ended job Orbit named for THIS turn, when the person asked to try it again (`ComputerTryAgain`); `use_computer` with `try_again` carries it on. Set fresh each turn. Runtime only. */
+    computerRetry?: { id: string; title: string };
     /** The jobs of an App that someone else asked for in the turn being answered and that may have run (no answer came back), by job and
      * inputs: the same one is not sent again in this turn (#2006). Cleared when the next turn starts. Runtime only. */
     sharedUncertain?: Set<string>;
