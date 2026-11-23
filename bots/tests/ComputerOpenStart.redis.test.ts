@@ -72,6 +72,8 @@ class FakeOrbit {
     onRetire: 'unsupported' | 'supported' = 'unsupported';
     /** The calls of `start-retire` that reached Orbit, and the keys it has marked dead. */
     retires: string[] = [];
+    /** When set, `start-retire` answers only after this resolves (the person's next message can arrive meanwhile). */
+    retireGate?: Promise<void>;
     readonly dead = new Set<string>();
 
     private stateOf = (status: string): 'live' | 'done' | 'ended' => (status === 'running' || status === 'queued' || status === 'waiting' ? 'live' : status === 'done' ? 'done' : 'ended');
@@ -82,6 +84,7 @@ class FakeOrbit {
             const scope = `${path.split('/')[2] ?? ''}|${sent.userId}`;
             if (sent.action === 'start-retire') {
                 this.retires.push(sent.attempt ?? '');
+                if (this.retireGate) await this.retireGate;
                 if (this.onRetire === 'unsupported') return { data: { ok: false, reason: 'unknown_action' } };
                 if (this.jobs.has(sent.attempt ?? '')) return { data: { ok: true, retired: false } };
                 this.dead.add(sent.attempt ?? '');
@@ -746,6 +749,23 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 expect(orbit.jobs.has(oldKey)).toBe(false);
                 expect(orbit.jobs.size).toBe(1);
                 expect(orbit.jobs.size).toBe(1);
+            });
+
+            // CodeRabbit on 543f5b35, R2-2: the person writes again while the old start is being retired: the new ask belongs to the turn it was made in
+            it('the person writes again while the old key is being retired: the retired key stays dead, and nothing is sent in the newer turn', async () => {
+                const who = ids();
+                const orbit = new FakeOrbit();
+                orbit.onRetire = 'supported';
+                const server = await open(orbit, who);
+                let release!: () => void;
+                orbit.retireGate = new Promise<void>((done) => (release = done));
+                const asking = server.ask('Book me a table for Friday');
+                while (orbit.retires.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+                forgetSettledStarts(server.memory);
+                release();
+                expect(await asking).toMatchObject({ started: false });
+                expect(orbit.posts).toHaveLength(0);
+                expect(orbit.jobs.size).toBe(0);
             });
 
             it('Orbit says that start DID happen (retired: false): it is looked up as before and the person is told of THAT job, nothing new is made', async () => {

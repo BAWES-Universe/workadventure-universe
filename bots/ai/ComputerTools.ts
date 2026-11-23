@@ -319,6 +319,14 @@ const tryAgainSettling = (starts: Map<string, StartKeyEntry> | undefined): Promi
  * that nothing was started. Kept beside the map, not in it (the map holds only starts), and cleared by the person's next message (`forgetSettledStarts`).
  */
 const dispatchedTurns = new WeakSet<Map<string, StartKeyEntry>>();
+
+/**
+ * Which turn of the conversation a call belongs to: counted up by the person's next message (`forgetSettledStarts`). A call remembers the number it began under; when it differs after an
+ * await, the person has written again, and nothing of that call may reach the newer turn (no question, no offer, no start). Kept beside the map, not in it.
+ */
+const turnEpochs = new WeakMap<Map<string, StartKeyEntry>, number>();
+const epochOf = (starts: Map<string, StartKeyEntry> | undefined): number => (starts ? (turnEpochs.get(starts) ?? 0) : 0);
+const OVERTAKEN_NOTE = 'They wrote again while this was being checked, so nothing was started by this call.';
 const START_DISPATCHED_NOTE = 'A start for this person was already sent in this same turn, so this call sent nothing more and asked them nothing. Do not call use_computer again in this turn. Say nothing more about starting: what that start did is told to them separately.';
 const TRY_AGAIN_ASKED_NOTE = 'They have not chosen yet, so NOTHING was started. A fixed line under your reply already asked them: do not ask it again and do not call use_computer again in this turn. Only their next message can start anything.';
 const COULD_NOT_CHECK_NOTE = 'It is not known whether this job started. Say in one short sentence, in the person\'s language and in these words: "I couldn\'t check whether this job has started. I\'ll use the same request when you check again." They can also look at the bar above this chat. Do not say it failed or that it started.';
@@ -330,6 +338,7 @@ const askedOf = (job: string, origin: { kind: 'dm'; ref: string } | undefined): 
 export function forgetSettledStarts(starts: Map<string, StartKeyEntry> | undefined, now = Date.now()): void {
     if (!starts) return;
     dispatchedTurns.delete(starts);
+    turnEpochs.set(starts, epochOf(starts) + 1);
     for (const [asked, entry] of starts) if (!entry.open || now - entry.at >= OPEN_START_KEEP_MS) starts.delete(asked);
 }
 
@@ -469,7 +478,7 @@ const sameTitle = (one: string, other: string): boolean => titleKey(one) === tit
  * `try_again` with no job to carry on for this turn. Reads the person's ended jobs on this Brick (Orbit's own list, never the model's word): one that the words name exactly carries on;
  * ended jobs otherwise are asked about ("which job do you mean?"); none is offered a new job. Nothing here sends a start.
  */
-async function tryAgainWithoutJob(args: Record<string, unknown>, context: ComputerToolContext): Promise<{ carryOn: { id: string; title: string } } | { answer: Record<string, unknown>; asked: boolean }> {
+async function tryAgainWithoutJob(args: Record<string, unknown>, context: ComputerToolContext, stillThisTurn: () => boolean): Promise<{ carryOn: { id: string; title: string } } | { answer: Record<string, unknown>; asked: boolean }> {
     // The title is compared as the person's words gave it, up to what Orbit keeps (200), NEVER cut to the 120 a start carries first: a longer title would never match itself (CodeRabbit on the round 8 head, 2)
     const named = typeof args.job === 'string' ? args.job.replace(/\s+/g, ' ').trim().slice(0, ENDED_TITLE_READ_MAX) : '';
     let ended: Array<{ id: string; title: string }> | null = null;
@@ -478,6 +487,8 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
     } catch {
         ended = null;
     }
+    // The person may have written again while the ended jobs were being read: nothing of this retry (no question, no offer) reaches the newer turn
+    if (!stillThisTurn()) return { asked: false, answer: { started: false, success: false, note: OVERTAKEN_NOTE } };
     if (!ended) return { asked: false, answer: { started: false, success: false, note: 'The computer could not be reached just now, so nothing was started. Say so in one plain sentence; they can ask again in a moment.' } };
     // A title that appears twice stands for its newest job; at most three are shown
     const titles: Array<{ id: string; title: string }> = [];
@@ -506,11 +517,14 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
 export async function runComputerTool(args: Record<string, unknown>, context: ComputerToolContext): Promise<Record<string, unknown>> {
     // "Try again" of the job Orbit named for this turn: that job, under its own title (the bar shows the same job), carried on from where it stopped. Orbit decides again
     let carryOn = args.try_again === true && context.retry ? context.retry : undefined;
+    // The turn this call began under (before anything is awaited): the person writing again ends it
+    const turn = epochOf(context.startKeys);
     // "Try again" with no job named for this turn (GPT seventh note, E): NEVER a fresh paid start. The words name exactly one ended job of theirs: that one carries on (Orbit decides). Otherwise they
     // are asked which, or offered a new job: nothing is sent, and a fresh start comes only from their own tap or yes
     // After such a call in this turn, nothing is started in this turn, however the model words its next call: only the person's next message clears it
     // A `try_again` beside this call may still be reading the ended jobs: this call decides only after it has settled (the calls of one round run together)
     for (let wait = tryAgainSettling(context.startKeys); wait; wait = tryAgainSettling(context.startKeys)) await wait;
+    if (epochOf(context.startKeys) !== turn) return { started: false, success: false, note: OVERTAKEN_NOTE };
     if (context.startKeys?.has(TRY_AGAIN_ASKED_SLOT)) return { started: false, success: false, note: TRY_AGAIN_ASKED_NOTE };
     if (args.try_again === true && !carryOn) {
         // A start already sent in this turn (a fresh call beside this one went first): nothing is asked, and nothing says that nothing was started
@@ -521,13 +535,13 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         context.startKeys?.set(TRY_AGAIN_PENDING_SLOT, pending);
         let settled: Awaited<ReturnType<typeof tryAgainWithoutJob>>;
         try {
-            settled = await tryAgainWithoutJob(args, context);
+            settled = await tryAgainWithoutJob(args, context, () => context.startKeys === undefined || (context.startKeys.get(TRY_AGAIN_PENDING_SLOT) === pending && epochOf(context.startKeys) === turn));
             // The person may have written again while the ended jobs were being read (their message cleared this turn's marks, this one included): this turn is over, and its question is
             // never written into the newer turn, where it would stop that turn's own start
-            const overtaken = context.startKeys !== undefined && context.startKeys.get(TRY_AGAIN_PENDING_SLOT) !== pending;
+            const overtaken = context.startKeys !== undefined && (context.startKeys.get(TRY_AGAIN_PENDING_SLOT) !== pending || epochOf(context.startKeys) !== turn);
             // A question put to the person ends every start of this turn (set in the same step that lets the mark go); a lookup that could not be answered, or a job carried on, asks nothing and blocks nothing
             if ('answer' in settled && settled.asked && !overtaken) context.startKeys?.set(TRY_AGAIN_ASKED_SLOT, { key: '', at: Date.now(), open: false });
-            if (overtaken && 'carryOn' in settled) return { started: false, success: false, note: 'They wrote again while this was being checked, so nothing was started by this call.' };
+            if (overtaken && 'carryOn' in settled) return { started: false, success: false, note: OVERTAKEN_NOTE };
         } finally {
             if (context.startKeys?.get(TRY_AGAIN_PENDING_SLOT) === pending) context.startKeys.delete(TRY_AGAIN_PENDING_SLOT);
             settle();
@@ -683,6 +697,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                     // Orbit will answer `retired` to that key, so no peer can make a job with it: the record goes, whoever has read it
                     await context.startKeyStore?.delete(scope, startKey).catch(() => undefined);
                     leave();
+                    // They wrote again while that start was being retired: this ask is over with the turn it was made in (nothing is sent in the newer one)
+                    if (epochOf(context.startKeys) !== turn) return { started: false, success: false, note: OVERTAKEN_NOTE };
                     return runComputerTool(args, context);
                 }
                 if (gone?.retired === false) {
@@ -699,6 +715,9 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             // Right before the paid send, after the last await: a `try_again` beside this call may have asked the person (or be about to) since this call began. Nothing goes out in this turn after it
             // (no yield when nothing is pending: the check and the send below follow with no await between them)
             for (let wait = tryAgainSettling(context.startKeys); wait; wait = tryAgainSettling(context.startKeys)) await wait;
+            // The person wrote again during any wait above (the store, the lookup, a pending question): the start belongs to the turn it was asked in and goes nowhere in the newer one. Its open record
+            // STAYS (an open start is kept until its outcome is known); one already sent keeps its reconciliation
+            if (epochOf(context.startKeys) !== turn) return { started: false, success: false, note: OVERTAKEN_NOTE };
             if (context.startKeys?.has(TRY_AGAIN_ASKED_SLOT)) {
                 if (!priorSend) await dropKey();
                 return { started: false, success: false, note: TRY_AGAIN_ASKED_NOTE };

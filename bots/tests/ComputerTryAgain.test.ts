@@ -690,6 +690,100 @@ describe('try_again with no job named for this turn', () => {
             expect(admin.startComputerJob).not.toHaveBeenCalled();
         });
 
+        // CodeRabbit on 543f5b35, R2-1: a retry overtaken by the person's next message leaves no offer in the newer turn
+        it('the person writes again while the ended jobs are read and none exist: no "start a new job" offer and no words reach the newer turn; a current retry still offers', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const offered: string[] = [];
+            const queue = new ConfirmationQueue();
+            const memory = new Map();
+            const first = runComputerTool({ job: 'Upload the report', try_again: true }, ctx(admin as never, { startKeys: memory, confirmations: queue, offerNewJob: (title) => void offered.push(title) }));
+            forgetSettledStarts(memory);
+            hold.resolve([]);
+            expect(await first).toMatchObject({ started: false });
+            expect(offered).toEqual([]);
+            expect(queue.tell()).toEqual([]);
+            expect(memory.has(TRY_AGAIN_ASKED_SLOT)).toBe(false);
+            // not overtaken: the same retry offers as before
+            const quiet = deferred<unknown>();
+            const current = runComputerTool({ job: 'Upload the report', try_again: true }, ctx(heldWorld(quiet.promise) as never, { startKeys: new Map(), confirmations: new ConfirmationQueue(), offerNewJob: (title) => void offered.push(title) }));
+            quiet.resolve([]);
+            expect(await current).toMatchObject({ started: false });
+            expect(offered).toEqual(['Upload the report']);
+        });
+
+        it('the same with ended jobs to choose from: the question of the turn that is over is not said in the newer one', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const queue = new ConfirmationQueue();
+            const memory = new Map();
+            const first = runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, { startKeys: memory, confirmations: queue }));
+            forgetSettledStarts(memory);
+            hold.resolve([VISA, TAXI]);
+            expect(await first).toMatchObject({ started: false });
+            expect(queue.tell()).toEqual([]);
+        });
+
+        it('a fresh call that WAITED for the pending lookup while the person wrote again: it belongs to the turn that is over and sends nothing', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const memory = new Map();
+            const over = { startKeys: memory, confirmations: new ConfirmationQueue() };
+            const asking = runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, over));
+            const fresh = runComputerTool({ job: 'Something new' }, ctx(admin as never, over));
+            await settleMicrotasks();
+            forgetSettledStarts(memory);
+            hold.resolve([]);
+            await asking;
+            expect(await fresh).toMatchObject({ started: false });
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            // it never even made a record: it is a call of the turn that is over
+            expect([...memory.values()].some((entry) => entry.open)).toBe(false);
+        });
+
+        // CodeRabbit on 543f5b35, R2-2: a start waiting on the shared store when the person writes again is sent nowhere in the newer turn
+        const slowStore = (gate: { promise: Promise<void> }) => ({ expected: () => true, delete: async () => undefined, claim: async (_scope: string, entry: { key: string; at: number; payload?: unknown }) => (await gate.promise, { ...entry, mine: true }) });
+
+        it('a carried-on continuation waiting on the store while the person writes again: nothing is sent, the open record stays, and the newer turn is not marked as dispatched', async () => {
+            const admin = heldWorld(Promise.resolve([VISA, TAXI]));
+            const gate = deferred<void>();
+            const memory = new Map();
+            const over = { startKeys: memory, startKeyStore: slowStore(gate) as never, retry: { id: OLD, title: 'Visa form' } };
+            const going = runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin as never, over));
+            await settleMicrotasks();
+            forgetSettledStarts(memory);
+            gate.resolve();
+            const answer = await going;
+            expect(answer).toMatchObject({ started: false });
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            // open starts stay until the outcome is known
+            expect([...memory.values()].some((entry) => entry.open)).toBe(true);
+            // the newer turn's own try_again is not told that a start was dispatched
+            const retry = await runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, { startKeys: memory, confirmations: new ConfirmationQueue() }));
+            expect(String(retry.note)).not.toMatch(/already sent/);
+        });
+
+        it('the same for a fresh start; with NO newer message the start goes out as before', async () => {
+            const admin = heldWorld(Promise.resolve([]));
+            const gate = deferred<void>();
+            const memory = new Map();
+            const over = { startKeys: memory, startKeyStore: slowStore(gate) as never };
+            const going = runComputerTool({ job: 'Something new' }, ctx(admin as never, over));
+            await settleMicrotasks();
+            forgetSettledStarts(memory);
+            gate.resolve();
+            expect(await going).toMatchObject({ started: false });
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            // control: nobody wrote again
+            const admin2 = heldWorld(Promise.resolve([]));
+            const gate2 = deferred<void>();
+            const quiet = runComputerTool({ job: 'Something new' }, ctx(admin2 as never, { startKeys: new Map(), startKeyStore: slowStore(gate2) as never }));
+            await settleMicrotasks();
+            gate2.resolve();
+            expect(await quiet).toMatchObject({ started: true });
+            expect(admin2.startComputerJob).toHaveBeenCalledTimes(1);
+        });
+
         it('two try_agains in one round, one of which asks: neither starts (the one naming an ended job exactly waits, then finds the question)', async () => {
             const hold = deferred<unknown>();
             const admin = heldWorld(hold.promise);
