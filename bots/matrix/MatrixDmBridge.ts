@@ -580,6 +580,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                               ...(tracked.durable === undefined ? {} : { durable: tracked.durable }),
                               // The answer to the continuation answers the original event: the link is kept on ITS entry
                               ...(tracked.answered ? { answered: tracked.answered } : {}),
+                              ...(tracked.arrived === undefined ? {} : { arrived: tracked.arrived }),
                           }
                         : undefined
                 );
@@ -1831,6 +1832,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                   },
                   ...(hooks.durable === undefined ? {} : { durable: hooks.durable }),
                   ...(hooks.answered ? { answered: hooks.answered } : {}),
+                  ...(hooks.arrived === undefined ? {} : { arrived: hooks.arrived }),
               }
             : undefined;
         try {
@@ -2092,7 +2094,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 roomId: event.room_id,
                 ...(event.event_id ? { eventId: event.event_id } : {}),
-                ...(typeof event.origin_server_ts === 'number' ? { eventTs: event.origin_server_ts } : {}),
+                // The moment of consent a start key carries (GPT's seventh note A2): the event's own time, else the time the durable inbox kept with it. Never the clock of this try: a
+                // retry or another server taking the event over would give the same event a different key (and a second job)
+                ...(typeof event.origin_server_ts === 'number' ? { eventTs: event.origin_server_ts } : hooks?.arrived !== undefined ? { eventTs: hooks.arrived } : {}),
                 pointedArtifactIds,
                 // A starter tapped under a Brick's hello (#1995); a message that waited for a resting Brick is answered as typed
                 ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),

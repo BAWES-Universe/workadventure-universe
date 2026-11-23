@@ -453,6 +453,8 @@ export interface InboxEntry {
     answered?(replyId: string): Promise<void>;
     /** A waiting entry given back at shutdown: it never ran, so it does not count as a try, and another server takes it up at its next scan. Never throws. */
     yieldBack?(): Promise<void>;
+    /** When the event was taken in (milliseconds), as kept with it: the same for every try and every server that takes it over. Absent for an entry kept before the stamp existed. */
+    readonly arrived?: number;
 }
 
 /**
@@ -581,7 +583,7 @@ export function createEventInbox(
     };
 
     /** An entry this server holds: it beats while it is held, and the beat stops when it ends. */
-    const entryOf = (redis: Client, eventId: string, token: string, room?: string): InboxEntry => {
+    const entryOf = (redis: Client, eventId: string, token: string, room?: string, arrived?: number): InboxEntry => {
         const beat = setInterval(() => {
             void step(redis, BEAT, eventId, [token, String(ttlSeconds), String(Date.now()), eventId, String(openSeconds)], room).catch((error) => say('Could not say an event is still being handled:', error));
         }, beatEveryMs);
@@ -717,6 +719,8 @@ export function createEventInbox(
                 );
             },
             yieldBack: () => end(YIELD, [token, eventId], 'given back while it waited'),
+            // kept in microseconds (so events taken in one millisecond keep their order); told in milliseconds
+            ...(typeof arrived === 'number' && Number.isFinite(arrived) ? { arrived: Math.floor(arrived / 1000) } : {}),
         };
     };
 
@@ -733,12 +737,13 @@ export function createEventInbox(
             }
             const token = tokenOf();
             // What is written to the store holds no key: a key typed into the chat never reaches Redis, and the entry says only that one was there (the Brick refuses it as it would live)
-            const kept = JSON.stringify({ arrived: arrivalOf(), event: withoutKeys(event) });
+            const arrived = arrivalOf();
+            const kept = JSON.stringify({ arrived, event: withoutKeys(event) });
             const room = roomOf(event);
             const took = await step(redis, TAKE, eventId, [token, String(ttlSeconds), String(Date.now()), kept, eventId, String(openSeconds), room ? '1' : '0', String(Date.now() - staleMs)], room);
             if (took === 0 || took === '0') return false;
             if (took === 2 || took === '2') return 'busy';
-            return entryOf(redis, eventId, token, room);
+            return entryOf(redis, eventId, token, room, arrived);
         },
         recover: async () => {
             const redis = client();
@@ -787,7 +792,7 @@ export function createEventInbox(
                         const wrapped = typeof read === 'object' && read !== null && 'event' in read;
                         const arrived = wrapped && typeof read.arrived === 'number' ? read.arrived : undefined;
                         const event = wrapped ? read.event : read;
-                        found.push({ event, entry: entryOf(redis, eventId, token, roomOf(event)), ...(arrived === undefined ? {} : { arrived }) });
+                        found.push({ event, entry: entryOf(redis, eventId, token, roomOf(event), arrived), ...(arrived === undefined ? {} : { arrived }) });
                     } catch (error) {
                         say('An event left by another server could not be read; it is dropped:', error);
                         // eslint-disable-next-line no-await-in-loop

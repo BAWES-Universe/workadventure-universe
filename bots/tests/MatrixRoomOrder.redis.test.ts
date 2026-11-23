@@ -421,6 +421,67 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
         });
     });
 
+    describe('A2: a start key keeps its issue time on every try (the time the inbox kept, never this try\'s clock)', () => {
+        it('an event with no origin_server_ts: every try, here and at another server, is given the one time the inbox kept with it', async () => {
+            quiet();
+            const room = roomOf('arrived');
+            const id = fresh('arrived');
+            const seen: Array<number | undefined> = [];
+            const { put } = await serve(inboxOn({ staleMs: 60 }), async (event, hooks) => {
+                seen.push(hooks?.arrived);
+                throw new Error('fails before anything was paid for');
+            });
+            const bare = { ...say(room, id, 'Start the job') } as MatrixEvent & { origin_server_ts?: number };
+            delete bare.origin_server_ts;
+            expect((await put('t1', bare)).status).toBe(200);
+            await vi.waitFor(async () => expect(await stateOf(id)).toBe('p|-|1'));
+            await pause(120);
+            const B = await serve(inboxOn({ staleMs: 60 }), async (event, hooks) => void seen.push(hooks?.arrived));
+            expect(await B.router.recover()).toBe(1);
+            await vi.waitFor(() => expect(seen).toHaveLength(2));
+            const kept = JSON.parse((await client.get(`matrix:inbox:${id}`)) ?? 'null') as { arrived: number } | null;
+            const expected = kept ? Math.floor(kept.arrived / 1000) : seen[0];
+            expect(typeof seen[0]).toBe('number');
+            expect(seen).toEqual([expected, expected]);
+        });
+
+        it('the bridge gives the turn the event\'s own time, else the kept time (never the clock), as the moment of consent', async () => {
+            const room = roomOf('consent');
+            const botId = '0b7c1d2e-1111-4222-8333-944455556666';
+            const botUser = `@bot_${botId}:matrix.test`;
+            const deps: any = {
+                getBotConfig: vi.fn(async () => ({ botId, name: 'Guide', enabled: true, aiProviderRef: 'p' })),
+                checkAccess: vi.fn(async () => ({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } })),
+                reply: vi.fn(async () => ({ text: 'Started.', media: [] })),
+                rooms: { rememberDmRoom: vi.fn(async () => undefined), getDmRoomBot: vi.fn(async (r: string) => (r === room ? botId : null)), forgetDmRoom: vi.fn(async () => undefined) },
+            };
+            let sent = 0;
+            const matrix: any = {
+                ensureRegistered: vi.fn(async () => undefined),
+                setDisplayName: vi.fn(async () => undefined),
+                getDisplayName: vi.fn(async () => 'Guide'),
+                joinRoom: vi.fn(async () => undefined),
+                leaveRoom: vi.fn(async () => undefined),
+                sendText: vi.fn(async () => `$reply-${++sent}`),
+                sendMessage: vi.fn(async () => `$msg-${++sent}`),
+                setTyping: vi.fn(async () => undefined),
+                getJoinedMembers: vi.fn(async () => ['@alice:matrix.test', botUser]),
+                getRecentMessages: vi.fn(async () => []),
+            };
+            const bridge = new MatrixDmBridge(config, matrix as never, deps);
+            const hooks = { paid: async () => undefined, durable: true, arrived: 1_234_567 };
+            const bare = { ...say(room, fresh('consent-bare'), 'Start the job') } as MatrixEvent & { origin_server_ts?: number };
+            delete bare.origin_server_ts;
+            await bridge.onEvent(bare, hooks);
+            await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(1));
+            expect(deps.reply.mock.calls[0][4].eventTs).toBe(1_234_567);
+            const timed = say(room, fresh('consent-timed'), 'Start another');
+            await bridge.onEvent(timed, hooks);
+            await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(2));
+            expect(deps.reply.mock.calls[1][4].eventTs).toBe(timed.origin_server_ts);
+        });
+    });
+
     describe('G1: the gate and shutdown', () => {
         it('a member of the room order left by a server that ended it without taking it out (an older version) holds nothing up', async () => {
             quiet();

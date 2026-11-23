@@ -29,6 +29,11 @@ export interface EventHooks {
      * event over after paid work began (GPT's seventh note G2). Never throws; absent when nothing keeps the event.
      */
     answered?: (replyId: string) => Promise<void>;
+    /**
+     * When the durable inbox took this event in (milliseconds), as kept with the event: the same on every try and at every server that takes it over, so a start key made for the event
+     * keeps its issue time when the event carries no `origin_server_ts` (GPT's seventh note A2). Absent when nothing keeps the event.
+     */
+    arrived?: number;
 }
 
 export interface MatrixEventHandler {
@@ -308,6 +313,7 @@ export function createMatrixAppServiceRouter(
                     },
                     durable: entry !== undefined && entry.durable !== false,
                     ...(entry?.answered ? { answered: (replyId: string) => entry.answered!(replyId) } : {}),
+                    ...(entry?.arrived === undefined ? {} : { arrived: entry.arrived }),
                 });
             } catch (error) {
                 console.error('[MatrixAppService] Event handling failed:', error);
