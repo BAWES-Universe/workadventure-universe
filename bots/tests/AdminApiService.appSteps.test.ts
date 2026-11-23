@@ -552,3 +552,19 @@ describe('the first job on a brand-new Brick, whose machine is made inside the s
         warn.mockRestore();
     });
 });
+
+// GPT seventh note, D: a Stop all goes to Orbit WITH the jobs the person confirmed
+describe('the control door sends the confirmed jobs with a stop', () => {
+    const view = { ok: true, jobs: [], paused: false };
+    it('a stop carries `confirmedJobIds` in its body (only a stop does, and only when there are some)', async () => {
+        const stop = service(async () => ({ data: view }));
+        await stop.orbit.controlComputerJobs('brick 1', 'u1', { action: 'stop', confirmedJobIds: ['job-a', 'job-b'], commandId: 'a-command-id-0001' });
+        expect((stop.call.mock.calls[0] as unknown[])[2]).toEqual({ personId: 'u1', action: 'stop', confirmedJobIds: ['job-a', 'job-b'] });
+        const cancel = service(async () => ({ data: view }));
+        await cancel.orbit.controlComputerJobs('brick 1', 'u1', { action: 'cancel', jobId: 'job-a', confirmedJobIds: ['job-b'] });
+        expect((cancel.call.mock.calls[0] as unknown[])[2]).toEqual({ personId: 'u1', action: 'cancel', jobId: 'job-a' });
+        const bare = service(async () => ({ data: view }));
+        await bare.orbit.controlComputerJobs('brick 1', 'u1', { action: 'stop' });
+        expect((bare.call.mock.calls[0] as unknown[])[2]).toEqual({ personId: 'u1', action: 'stop' });
+    });
+});

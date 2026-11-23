@@ -677,6 +677,8 @@ export interface ComputerControlAsk {
     text?: string;
     /** With `first`: pause the job that has the computer and start this one now (the paused one carries on by itself after). */
     pauseRunning?: boolean;
+    /** With `stop`: the jobs the person confirmed. Orbit ends only those still live, never a job that began after the question was asked. */
+    confirmedJobIds?: string[];
     isGuest?: boolean;
     /**
      * This control's own id (GPT's sixth answer, finding 4), made once where the person asked for it and the same every time THAT ask is sent again: Orbit applies a control once
@@ -725,6 +727,10 @@ export type ComputerControlAnswer =
           delivery?: string;
           /** `pause`: false when the job's sign-ins could not be put away (the person signs in again when it carries on). */
           signInsKept?: boolean;
+          /** `stop`: how many jobs this stop ended (of the ones the person confirmed). */
+          stopped?: number;
+          /** `stop`: the jobs that were live but were NOT in the set the person confirmed (they began after the question), by title (null: none). Nothing was done to them. */
+          left?: Array<string | null>;
       }
     | { ok: false; reason: string };
 
@@ -759,7 +765,12 @@ export function controlAnswerOf(data: unknown): ComputerControlAnswer {
         ? data.steps.flatMap((step: unknown) => (isPlainObject(step) && typeof step.label === 'string' && countOrNull(step.seq) !== null ? [{ seq: step.seq as number, label: step.label.slice(0, 200), at: textOrNull(step.at) }] : []))
         : undefined;
     const delivery = isPlainObject(data.note) && typeof data.note.delivery === 'string' ? data.note.delivery : undefined;
-    const extra = { ...(steps ? { steps } : {}), ...(delivery ? { delivery } : {}), ...(typeof data.signInsKept === 'boolean' ? { signInsKept: data.signInsKept } : {}) };
+    // A stop says how many it ended and which live jobs it left (GPT seventh note, D2): a count or a list of ids for what it ended; a list of `{ title }` (or titles, or just a count) for what it left
+    const stopped = Array.isArray(data.stopped) ? data.stopped.length : countOrNull(data.stopped) ?? undefined;
+    const left = Array.isArray(data.left)
+        ? data.left.map((one: unknown): string | null => (typeof one === 'string' ? textOrNull(one.slice(0, 200)) : isPlainObject(one) ? textOrNull(typeof one.title === 'string' ? one.title.slice(0, 200) : null) : null))
+        : countOrNull(data.left) ? Array.from({ length: data.left as number }, (): string | null => null) : undefined;
+    const extra = { ...(steps ? { steps } : {}), ...(delivery ? { delivery } : {}), ...(typeof data.signInsKept === 'boolean' ? { signInsKept: data.signInsKept } : {}), ...(stopped !== undefined ? { stopped } : {}), ...(left && left.length > 0 ? { left } : {}) };
     // Orbit said it was done but gave no view: done, and what the line says is read from the job as it was named
     if (!raw) return { ok: true, view: null, ...extra };
     const queued = Array.isArray(raw.queued) ? raw.queued.map(controlJobOf).filter((job): job is ComputerControlJob => job !== null) : [];
@@ -2161,6 +2172,7 @@ export class AdminApiService {
                     ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}),
                     action: ask.action,
                     ...(ask.jobId ? { jobId: ask.jobId } : {}),
+                    ...(ask.action === 'stop' && Array.isArray(ask.confirmedJobIds) && ask.confirmedJobIds.length > 0 ? { confirmedJobIds: ask.confirmedJobIds } : {}),
                     ...(typeof ask.text === 'string' ? { text: ask.text } : {}),
                     ...(ask.pauseRunning ? { pauseRunning: true } : {}),
                 },

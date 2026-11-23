@@ -384,7 +384,7 @@ describe('cancel one job: Brick always asks first, and only the person\'s next m
         d.nextMessage('yes, stop everything');
         await d.run(CANCEL_JOB_TOOL, { job: 'hotel' });
         await d.run(STOP_COMPUTER_TOOL);
-        expect(again.acted()).toEqual([{ action: 'stop' }]);
+        expect(again.acted()).toEqual([{ action: 'stop', confirmedJobIds: ['job-visa', 'job-hotel'] }]);
     });
 
     it('says it is already ending, or over, when Orbit says so, and never that it was cancelled', async () => {
@@ -413,8 +413,51 @@ describe('stop everything: always asks, naming every job, and ends exactly those
         expect(await c.deliver()).toEqual([CONTROL_WORDS.askStop(quotedTitles(['Visa form', 'Taxi booking', 'Hotel booking']))]);
         c.nextMessage();
         await c.run(STOP_COMPUTER_TOOL);
-        expect(orbit.acted()).toEqual([{ action: 'stop' }]);
+        expect(orbit.acted()).toEqual([{ action: 'stop', confirmedJobIds: ['job-visa', 'job-taxi', 'job-hotel'] }]);
         expect(await c.deliver()).toEqual([CONTROL_WORDS.stoppedAll(3)]);
+    });
+
+    // GPT seventh note, D2 (Fable's final lines): Orbit ends only the confirmed jobs and says which live jobs it LEFT; they are said in Brick's own words, and a yes after that confirms nothing
+    describe('a Stop that left jobs (they came after the question)', () => {
+        const stopOf = async (answer: Record<string, unknown>, jobs = [working()]) => {
+            const orbit = door(viewOf(jobs[0], jobs.slice(1)), { stop: { ...viewOf(null), ...answer } });
+            const c = chat(orbit.admin);
+            await c.run(STOP_COMPUTER_TOOL);
+            await c.deliver();
+            c.nextMessage();
+            const result = await c.run(STOP_COMPUTER_TOOL);
+            return { result, lines: await c.deliver(), orbit, c };
+        };
+        it('says what was stopped, then what was left (one titled job)', async () => {
+            const { lines, result } = await stopOf({ stopped: 2, left: [{ id: 'job-taxi', title: 'Taxi booking' }] }, [working(), inLine('job-taxi-old', 'Taxi old'), inLine('job-x', 'Other')]);
+            expect(lines).toEqual(["I've stopped 2 jobs on my computer. Their files are kept.\n“Taxi booking” was added after I asked, so I haven't stopped it. Tell me if you want it stopped too."]);
+            expect(result).toMatchObject({ done: true, someLeft: true });
+            expect(String(result.andThen)).toMatch(/NOT/);
+        });
+        it('every size of what was stopped, and every size of what was left, as Fable wrote them', () => {
+            expect(CONTROL_WORDS.stoppedSome(1, ['A'])).toBe("I've stopped 1 job on my computer. Its files are kept.\n“A” was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(0, ['A'])).toBe("Those jobs had already ended.\n“A” was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(3, ['A', 'B', 'C'])).toBe("I've stopped 3 jobs on my computer. Their files are kept.\n“A”, “B” and “C” were added after I asked, so I haven't stopped them. Tell me if you want them stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(3, ['A', 'B'])).toContain('“A” and “B” were added after I asked, so I haven\'t stopped them.');
+            expect(CONTROL_WORDS.stoppedSome(2, [null])).toBe("I've stopped 2 jobs on my computer. Their files are kept.\n1 job was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(2, ['A', 'B', 'C', 'D'])).toContain("4 jobs were added after I asked, so I haven't stopped them. Tell me if you want them stopped too.");
+            expect(CONTROL_WORDS.stoppedSome(2, ['A', null])).toContain("2 jobs were added after I asked, so I haven't stopped them.");
+        });
+        it('a list of titles or a bare count from Orbit is read the same; without a count of what it stopped, the jobs asked about are what it stopped', async () => {
+            expect((await stopOf({ left: ['Taxi booking'] })).lines).toEqual([CONTROL_WORDS.stoppedSome(1, ['Taxi booking'])]);
+            expect((await stopOf({ stopped: ['job-visa'], left: 2 })).lines).toEqual([CONTROL_WORDS.stoppedSome(1, [null, null])]);
+        });
+        it('with nothing left, the approved line is unchanged', async () => {
+            const { lines } = await stopOf({ stopped: 1, left: [] });
+            expect(lines).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Visa form')]);
+        });
+        it('a plain yes after that line confirms nothing: the left job is asked about on its own, with its own ids', async () => {
+            const { c, orbit } = await stopOf({ stopped: 1, left: [{ id: 'job-taxi', title: 'Taxi booking' }] });
+            c.nextMessage('Yes');
+            await c.run(STOP_COMPUTER_TOOL);
+            await c.deliver();
+            expect(orbit.acted().filter((ask) => ask.action === 'stop')).toHaveLength(1);
+        });
     });
 
     it('a job that came after the question is asked about again: the yes was not for it', async () => {
@@ -740,10 +783,18 @@ describe('CodeRabbit N1/N12: only a clear yes, decided in code, ends a job', () 
         'yes but wait',
         'maybe',
         'cancel',
+        // GPT seventh note, D: a condition, a time or another target is no plain yes
+        'Yes, only after the files finish uploading',
+        'Yes, cancel Taxi booking',
+        'yes cancel it after lunch',
+        'yes, but only the visa one when it is done',
+        'Yes, tomorrow',
+        'yes cancel the visa one and the hotel',
     ];
     it('is a yes only for a short message that starts with a yes and has no word of refusing, keeping or waiting', () => {
-        for (const said of YES) expect(isClearYes(said), said).toBe(true);
-        for (const said of NOT_YES) expect(isClearYes(said), said).toBe(false);
+        // asked about the Visa form: its own title may be in a yes, no other words may
+        for (const said of YES) expect(isClearYes(said, ['Visa form']), said).toBe(true);
+        for (const said of NOT_YES) expect(isClearYes(said, ['Visa form']), said).toBe(false);
         expect(isClearYes(undefined)).toBe(false);
     });
 
@@ -1428,6 +1479,47 @@ describe('CodeRabbit on d098522a: which question a yes answers, and a question w
         expect(askNamedBy('cancel the cafe one', { kind: 'cancel', titles: ['Café receipts'] })).toBe(1);
     });
 
+    // CodeRabbit on 24dea75c (item 5) and D1: "the job called Pause menu audit" names the job; "pause it" is still another action, even when the job is itself called "Pause it"
+    it('"Yes, the job called Pause menu audit" answers the Pause menu audit question among two open ones; "Yes, pause it" answers none, even for a job called "Pause it"', async () => {
+        const orbit = door(viewOf(working({ id: 'job-pma', title: 'Pause menu audit' }), [inLine('job-hotel', 'Hotel tickets', { stepDone: 1 })]), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'Pause menu audit' }, '$q1');
+        await c.run(CANCEL_JOB_TOOL, { job: 'Hotel tickets' }, '$q1');
+        await c.deliver();
+        c.nextMessage('Yes, the job called Pause menu audit');
+        await c.run(CANCEL_JOB_TOOL, { job: 'Pause menu audit' }, '$q2');
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-pma' }]);
+        // the same message does not answer the other question
+        const other = door(viewOf(working({ id: 'job-pma', title: 'Pause menu audit' }), [inLine('job-hotel', 'Hotel tickets', { stepDone: 1 })]), { cancel: viewOf(null) });
+        const d = chat(other.admin);
+        await d.run(CANCEL_JOB_TOOL, { job: 'Pause menu audit' }, '$q1');
+        await d.run(CANCEL_JOB_TOOL, { job: 'Hotel tickets' }, '$q1');
+        await d.deliver();
+        d.nextMessage('Yes, the job called Pause menu audit');
+        await d.run(CANCEL_JOB_TOOL, { job: 'Hotel tickets' }, '$q2');
+        expect(other.acted()).toEqual([]);
+        // "pause it" is another action, for a job whose title is "Pause it" too
+        const titled = door(viewOf(working({ id: 'job-pi', title: 'Pause it' })), { cancel: viewOf(null) });
+        const e = chat(titled.admin);
+        await e.run(CANCEL_JOB_TOOL, { job: 'Pause it' }, '$q1');
+        await e.deliver();
+        e.nextMessage('Yes, pause it');
+        await e.run(CANCEL_JOB_TOOL, { job: 'Pause it' }, '$q2');
+        expect(titled.acted()).toEqual([]);
+    });
+
+    it('the tool call must match the question: "yes" to the Visa question never cancels Taxi', async () => {
+        const orbit = door(viewOf(working({ id: 'job-visa', title: 'Visa form' }), [inLine('job-taxi', 'Taxi booking', { stepDone: 1 })]), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'Visa form' }, '$q1');
+        await c.deliver();
+        c.nextMessage('Yes');
+        await c.run(CANCEL_JOB_TOOL, { job: 'Taxi booking' }, '$q2');
+        expect(orbit.acted()).toEqual([]);
+        await c.run(CANCEL_JOB_TOOL, { job: 'Visa form' }, '$q2');
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
+    });
+
     it('a job whose own TITLE says "pause" is not a different action: "Yes, cancel Pause menu audit" confirms the cancel; "Yes, pause it" still cannot', async () => {
         for (const [said, cancels] of [
             ['Yes, cancel Pause menu audit', true],
@@ -1481,6 +1573,26 @@ describe('CodeRabbit on d098522a: which question a yes answers, and a question w
             await c.deliver();
             c.nextMessage(said);
             await c.run(CANCEL_JOB_TOOL, { job: 'review' });
+            expect(orbit.acted(), said).toEqual(cancels ? [{ action: 'cancel', jobId: 'job-visa' }] : []);
+        }
+    });
+
+    // GPT seventh note, D (observed through the real control handler)
+    it('a yes with a condition, a time or another target authorizes nothing now; a plain yes still does, in the person\'s own words', async () => {
+        for (const [said, cancels] of [
+            ['Yes, only after the files finish uploading', false],
+            ['Yes, cancel Taxi booking', false],
+            ['yes cancel it after lunch', false],
+            ['Yes', true],
+            ['yes please go ahead and cancel it now', true],
+            ['Yes, cancel the Visa form', true],
+        ] as const) {
+            const orbit = door(viewOf(working({ title: 'Visa form' })), { cancel: viewOf(null) });
+            const c = chat(orbit.admin);
+            await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+            await c.deliver();
+            c.nextMessage(said);
+            await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
             expect(orbit.acted(), said).toEqual(cancels ? [{ action: 'cancel', jobId: 'job-visa' }] : []);
         }
     });

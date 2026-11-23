@@ -123,6 +123,24 @@ export const CONTROL_WORDS = {
     } as ControlLine,
     /** MOCK "Stopped everything (said in chat)". With one job, the cancelled line says it, naming the job. */
     stoppedAll: (count: number): string => `I've stopped all ${count} jobs on my computer. Their files are kept.`,
+    /**
+     * FINAL (Fable, 23 Nov, `/mnt/project-files/brick-three-job-lines/strings.txt`, GPT seventh note D2): a Stop all where jobs were LEFT (they began after the person was asked, so they are not in the set
+     * they confirmed). Two lines joined by a newline: what was stopped, then what was left. The second is a statement, never a question: a plain yes after it confirms nothing.
+     * `left` holds each job's title (null for one with none).
+     */
+    stoppedSome: (stopped: number, left: Array<string | null>): string => {
+        const first = stopped >= 2 ? `I've stopped ${stopped} jobs on my computer. Their files are kept.` : stopped === 1 ? "I've stopped 1 job on my computer. Its files are kept." : 'Those jobs had already ended.';
+        const titled = left.every((title) => !!title);
+        const second =
+            left.length === 1 && titled
+                ? `${quotedTitle(left[0] as string)} was added after I asked, so I haven't stopped it. Tell me if you want it stopped too.`
+                : left.length >= 2 && left.length <= 3 && titled
+                  ? `${listed(left.map((title) => quotedTitle(title as string)), 'and')} were added after I asked, so I haven't stopped them. Tell me if you want them stopped too.`
+                  : left.length === 1
+                    ? "1 job was added after I asked, so I haven't stopped it. Tell me if you want it stopped too."
+                    : `${left.length} jobs were added after I asked, so I haven't stopped them. Tell me if you want them stopped too.`;
+        return `${first}\n${second}`;
+    },
     /** FINAL: the question before cancelling a job that has started or is paused (by words; asked every time; only the person's next message can answer it). A job that never started is cancelled at once. */
     askCancel: {
         titled: (title) => `Cancel ${title}? Its files are kept, and the time it used is on its receipt. To come back to it later, I can pause it instead.`,
