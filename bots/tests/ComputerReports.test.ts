@@ -28,6 +28,7 @@ const base: ComputerReport = {
     searchApps: [],
     holdReleased: false,
     through: null,
+    pausedWhy: null,
 };
 const report = (over: Partial<ComputerReport>): ComputerReport => ({ ...base, ...over });
 
@@ -688,7 +689,7 @@ describe('the late follow-up: an App step the provider confirmed after all', () 
         expect(got.map((one) => [one.jobId, one.kind])).toEqual([['job-1', 'late']]);
         // Asking with accepts=late is what lets Orbit offer it: an older game never asks and never meets the kind
         expect(calls[0].slice(0, 2)).toEqual(['get', 'api/computer/jobs/reports']);
-        expect(calls[0][3]).toEqual({ accepts: 'late' });
+        expect(calls[0][3]).toEqual({ accepts: 'late,paused' });
         expect(await admin.keepComputerReportTold(got[0])).toBe(true);
         expect(calls[1]).toEqual(['post', 'api/computer/jobs/reports', { jobId: 'job-1', kind: 'late', seq: 1, outcome: 'delivered', through: T1 }]);
         expect(await admin.keepComputerReportUndeliverable(got[0], 'origin_gone')).toBe(true);
@@ -1034,3 +1035,31 @@ describe('fetching a file from Orbit', () => {
         await expect(down.admin.computerReportFile('j', 'f')).rejects.toThrow('Orbit down');
     });
 });
+
+describe('a job Orbit paused by itself (the month or the person`s own limit), and its carrying on (computers plan, decisions 23 Nov section 1)', () => {
+    const raw = { key: 'computer-told:job-1:paused:1', jobId: 'job-1', botId: 'brick-1', matrixUserId: '@sara:chat.test', origin: { kind: 'dm', ref: '!dm:chat.test' }, title: 'Visa form', seq: 1 };
+
+    it('reads a pause with its number and why, and a carrying on with its number; anything less is not told', () => {
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance' })).toMatchObject({ kind: 'paused', pausedWhy: 'allowance', seq: 1 });
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'rule' })).toMatchObject({ kind: 'paused', pausedWhy: 'rule' });
+        // The person's own Pause is never told back (they just did it), and a pause with no number cannot be marked for that pause only
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'person' })).toBeNull();
+        expect(computerReportOf({ ...raw, kind: 'paused' })).toBeNull();
+        expect(computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance', seq: null })).toBeNull();
+        expect(computerReportOf({ ...raw, kind: 'carrying_on' })).toMatchObject({ kind: 'carrying_on', seq: 1, pausedWhy: null });
+        expect(computerReportOf({ ...raw, kind: 'carrying_on', seq: undefined })).toBeNull();
+        // Why goes only with a pause
+        expect(computerReportOf({ ...raw, kind: 'carrying_on', pausedWhy: 'rule' })?.pausedWhy).toBeNull();
+    });
+
+    it('says the decided words: no number, no price, and nothing lost', () => {
+        const paused = computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'allowance' }) as ComputerReport;
+        expect(reportText(paused)).toBe("I paused “Visa form”: this month's computer time is used up. Nothing is lost. Tap Ask for more in [Usage](#usage) and it carries on by itself.");
+        const limit = computerReportOf({ ...raw, kind: 'paused', pausedWhy: 'rule' }) as ComputerReport;
+        expect(reportText(limit)).toBe('I paused “Visa form”: it reached the spending limit you set. Nothing is lost. Raise the limit or say resume.');
+        const on = computerReportOf({ ...raw, kind: 'carrying_on' }) as ComputerReport;
+        expect(reportText(on)).toBe('I’m carrying on with “Visa form”.'.replace('’', "'"));
+        for (const one of [paused, limit, on]) expect(reportText(one)).not.toMatch(/\$|\d/);
+    });
+});
+
