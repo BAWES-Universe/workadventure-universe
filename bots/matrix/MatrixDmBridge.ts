@@ -570,7 +570,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
     private async onTap(event: MatrixEvent, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
         if (!this.deps.approvals || botIdFromMatrixId(this.config.domain, event.sender)) return;
         const tap = parseTap(event.content);
-        if (!tap || !this.firstSighting(event.event_id)) return;
+        if (!tap) return;
+        await this.handledOnce(event.event_id, hooks, (tracked) => this.handleTap(event, tap, tracked));
+    }
+
+    private async handleTap(event: MatrixEvent, tap: ParsedTap, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
         const botId = await this.botForRoom(event.room_id);
         if (!botId) return;
         const members = this.roomMembers.get(event.room_id);
@@ -1775,13 +1779,43 @@ export class MatrixDmBridge implements MatrixEventHandler {
         return true;
     }
 
+    /** An event this process stopped remembering: it failed before anything was paid for, and is to be handled afresh when it comes again. */
+    private forgetSighting(eventId: string): void {
+        this.handledEvents.delete(eventId);
+        const at = this.handledOrder.lastIndexOf(eventId);
+        if (at >= 0) this.handledOrder.splice(at, 1);
+    }
+
+    /**
+     * Runs the handling of one event of Matrix once in this process (finding: a lost message). An event that THROWS before `hooks.paid` was called is forgotten again, so the durable
+     * inbox's second try (here or elsewhere, the entry having been given back) is handled and not mistaken for a repeat; once `paid` was called the event stays remembered and is never
+     * handled again. With no `hooks` nothing is given back by anyone, so the event is simply remembered as before.
+     */
+    private async handledOnce(eventId: string, hooks: { paid: () => void | Promise<void> } | undefined, handle: (hooks?: { paid: () => void | Promise<void> }) => Promise<void>): Promise<void> {
+        if (!this.firstSighting(eventId)) return;
+        let paid = false;
+        const tracked = hooks
+            ? {
+                  paid: async () => {
+                      paid = true;
+                      await hooks.paid();
+                  },
+              }
+            : undefined;
+        try {
+            await handle(tracked);
+        } catch (error) {
+            if (hooks && !paid) this.forgetSighting(eventId);
+            throw error;
+        }
+    }
+
     private async onMessage(event: MatrixEvent, batch?: { troubleSent: boolean }, hooks?: { paid: () => void | Promise<void> }): Promise<void> {
         // Ignore other bots (ours included), edits and notices.
         if (botIdFromMatrixId(this.config.domain, event.sender)) return;
         const content = event.content ?? {};
         if (content['m.relates_to']?.rel_type === 'm.replace' || content.msgtype === 'm.notice') return;
-        if (!this.firstSighting(event.event_id)) return;
-        await this.handleMessage(event, false, batch, false, hooks);
+        await this.handledOnce(event.event_id, hooks, (tracked) => this.handleMessage(event, false, batch, false, tracked));
     }
 
     /**

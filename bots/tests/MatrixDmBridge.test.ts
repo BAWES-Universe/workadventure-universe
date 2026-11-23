@@ -182,6 +182,118 @@ describe('MatrixDmBridge', () => {
         expect(paid).not.toHaveBeenCalled();
     });
 
+    // Sentry on #2114: an event that fails before anything is paid for goes back to the inbox, and its second try in the same process must be handled, not taken for a repeat
+    it('answers a message again that threw before anything was paid for, when the inbox hands it out again in the same process', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValue({ text: 'hello back', media: [] } as never);
+        // Past the short time an answer is kept, so the access check is asked of Orbit afresh
+        vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5 * 60_000 });
+        try {
+            deps.checkAccess.mockRejectedValueOnce(new Error('Orbit unreachable'));
+            const paid = vi.fn();
+            const event = message('hello');
+            await expect(bridge.onEvent(event, { paid })).rejects.toThrow('Orbit unreachable');
+            expect(paid).not.toHaveBeenCalled();
+            expect(deps.reply).not.toHaveBeenCalled();
+            // The same event comes again (the router gave its entry back): it is answered, once
+            await bridge.onEvent(event, { paid });
+            expect(paid).toHaveBeenCalledTimes(1);
+            expect(deps.reply).toHaveBeenCalledTimes(1);
+            // ...and never a third time
+            await bridge.onEvent(event, { paid });
+            expect(deps.reply).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('never handles a message again once it threw after the person was paying', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValue({ text: 'hello back', media: [] } as never);
+        const event = message('hello');
+        // The hook itself fails after it was called (the store could not write): the turn was not begun, but the event was said to be paid for (whatever the bridge then does with the failure, it is not handled again)
+        const paid = vi.fn(async () => {
+            throw new Error('store down');
+        });
+        await bridge.onEvent(event, { paid }).catch(() => undefined);
+        expect(paid).toHaveBeenCalledTimes(1);
+        await bridge.onEvent(event, { paid });
+        expect(paid).toHaveBeenCalledTimes(1);
+        expect(deps.reply).not.toHaveBeenCalled();
+    });
+
+    it('keeps an event it was given no hooks for remembered even when it throws (nothing gives it back)', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValue({ text: 'hello back', media: [] } as never);
+        vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5 * 60_000 });
+        try {
+            deps.checkAccess.mockRejectedValueOnce(new Error('Orbit unreachable'));
+            const event = message('hello');
+            await expect(bridge.onEvent(event)).rejects.toThrow('Orbit unreachable');
+            await bridge.onEvent(event);
+            expect(deps.reply).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('through the router and an inbox that gives the entry back: the person gets one answer from the second try in the same process (Sentry on #2114)', async () => {
+        await bridge.onEvent(invite());
+        deps.reply.mockResolvedValue({ text: 'hello back', media: [] } as never);
+        // A small in-memory inbox with the shared one's rules: an event it holds or has finished is not taken again; a released one comes back from `recover`
+        const states = new Map<string, 'held' | 'done' | 'released'>();
+        const events = new Map<string, unknown>();
+        const entryOf = (id: string) => ({
+            done: async () => void states.set(id, 'done'),
+            release: async () => void states.set(id, 'released'),
+            undo: async () => void states.delete(id),
+            paid: async () => undefined,
+        });
+        const inbox = {
+            owner: 'test',
+            take: async (id: string, event: unknown) => {
+                if (states.has(id)) return false as const;
+                states.set(id, 'held');
+                events.set(id, event);
+                return entryOf(id);
+            },
+            recover: async () => {
+                const back = [...states].filter(([, state]) => state === 'released').map(([id]) => id);
+                for (const id of back) states.set(id, 'held');
+                return back.map((id) => ({ event: events.get(id), entry: entryOf(id) }));
+            },
+        };
+        const router = createMatrixAppServiceRouter(config, bridge, { inbox });
+        const app = express();
+        app.use(router);
+        const server = await new Promise<Server>((resolve) => {
+            const s = app.listen(0, () => resolve(s));
+        });
+        vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5 * 60_000 });
+        try {
+            deps.checkAccess.mockRejectedValueOnce(new Error('Orbit unreachable'));
+            const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+            const event = { ...message('hello'), event_id: '$lost-1' };
+            const sent = await fetch(`${base}/_matrix/app/v1/transactions/t1`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer hs-secret' },
+                body: JSON.stringify({ events: [event] }),
+            });
+            expect(sent.status).toBe(200);
+            await vi.waitFor(() => expect(states.get('$lost-1')).toBe('released'));
+            expect(deps.reply).not.toHaveBeenCalled();
+            // The recover timer hands it out again, in this same process
+            expect(await router.recover()).toBe(1);
+            await vi.waitFor(() => expect(states.get('$lost-1')).toBe('done'));
+            expect(deps.reply).toHaveBeenCalledTimes(1);
+            expect(states.get('$lost-1')).toBe('done');
+            expect(client.sendText.mock.calls.length + client.sendMessage.mock.calls.length).toBeGreaterThan(0);
+        } finally {
+            vi.useRealTimers();
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+
     it('tries the bot name again next time when setting it failed', async () => {
         client.setDisplayName.mockRejectedValueOnce(new Error('homeserver busy'));
         expect(await bridge.userExists(BOT_USER)).toBe(true);
@@ -3172,6 +3284,28 @@ describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
         // Not a tap at all: nothing of it was paid for
         await bridge.onEvent(tapEvent({ v: 1, ask: 'act_1', revision: 2, action: 'run' }), { paid });
         expect(paid).toHaveBeenCalledTimes(1);
+    });
+
+    it('acts on a tap again that threw before anything was paid for; never again once it was acted on (Sentry on #2114)', async () => {
+        vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 5 * 60_000 });
+        try {
+            deps.checkAccess.mockRejectedValueOnce(new Error('Orbit unreachable'));
+            const paid = vi.fn();
+            const tap = tapEvent(DECIDE);
+            await expect(bridge.onEvent(tap, { paid })).rejects.toThrow('Orbit unreachable');
+            expect(paid).not.toHaveBeenCalled();
+            expect(approvals.handleTap).not.toHaveBeenCalled();
+            await bridge.onEvent(tap, { paid });
+            expect(approvals.handleTap).toHaveBeenCalledTimes(1);
+            // It throws after paid: it is not handled a second time
+            approvals.handleTap.mockRejectedValueOnce(new Error('tap failed'));
+            const second = tapEvent(DECIDE);
+            await expect(bridge.onEvent(second, { paid })).rejects.toThrow('tap failed');
+            await bridge.onEvent(second, { paid });
+            expect(approvals.handleTap).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('ignores a tap from someone Orbit does not let chat with the bot', async () => {
