@@ -601,6 +601,25 @@ describe('the person’s part', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
+    it('CodeRabbit: a worker stopped while it waits to ask for the handover again sends no handover after that (the retry is not sent, nothing is ended)', async () => {
+        const { orbit, seen, failHandovers } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);
+        failHandovers(RUNNER_GUARDS.maxBadTurns - 1);
+        let runner!: ReturnType<typeof createComputerRunner>;
+        // the wait between the first try and the retry is where the worker is stopped
+        runner = createComputerRunner({
+            orbit,
+            relayUrl: RELAY,
+            sleep: async () => runner.stop(),
+            log: quiet,
+            timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0] },
+        });
+        orbit.running = async () => [JOB];
+        await runner.tick();
+        await runner.idle();
+        expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(1);
+        expect(finished(seen)).toEqual([]);
+    });
+
     it('does not count a handover Orbit answered with a refusal as made', async () => {
         const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);
         const original = orbit.action;
@@ -2308,11 +2327,12 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
             const moments = accepted.filter((one) => one.server !== id && one.jobId === jobId && (key === '' || one.key === '' || one.key === key)).map((one) => one.at);
             return moments.length > 0 ? Math.max(...moments) : null;
         };
-        /** The moments of the fences written and not taken back, and the turn (and run) each was written for. */
-        const fences: number[] = [];
-        const fenceKeys = new Map<number, string>();
-        /** The job each fence was written for: a fence of one job never refuses a call of another, as the store keeps them under the job's own name. */
-        const fenceJobs = new Map<number, string>();
+        /**
+         * The fences written and not taken back, each under the identity the store gives it (the job, the turn and run it was written for, and its moment): two jobs that close in the same
+         * millisecond hold a fence each, and taking one back or committing one never touches the other's. A fence of one job never refuses a call of another, as the store keeps them under the job's own name.
+         */
+        const held: Array<{ at: number; job: string; key: string; committed: boolean }> = [];
+        const same = (one: { at: number; job: string; key: string }, job: string, key: string, at: number) => one.at === at && one.job === job && one.key === key;
         const keyOf = (turn: unknown) => {
             const one = turn as { turn: number; run?: string } | undefined;
             return one ? `${one.turn}|${one.run ?? ''}` : '';
@@ -2321,8 +2341,7 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
         const latency = { ms: 0, retractMs: 0, commitMs: 0, began: undefined as (() => void) | undefined, commitBegan: undefined as (() => void) | undefined };
         /** How many closes were committed and how many fences were taken back. */
         const counts = { commits: 0, retracts: 0, commitFences: 0, releases: 0 };
-        /** The fences that were committed (their moments), and what the store was asked in order (close, commit, retract, release). */
-        const committed: number[] = [];
+        /** What the store was asked in order (close, commit, retract, release). */
         const log: string[] = [];
         /** Whether the next commit finds the fence gone (it was taken back or expired). */
         const commitSays = { gone: false };
@@ -2332,11 +2351,10 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
          */
         const refuses = (jobId: string, at: number, turn?: unknown) => {
             const key = keyOf(turn);
-            return fences.some((moment) => {
-                if (fenceJobs.get(moment) !== jobId) return false;
-                const own = fenceKeys.get(moment) ?? '';
-                if (!(key === '' || own === '' || own === key)) return false;
-                return moment >= at - FENCE_LIFE_MS || (committed.includes(moment) && key !== '' && own === key);
+            return held.some((one) => {
+                if (one.job !== jobId) return false;
+                if (!(key === '' || one.key === '' || one.key === key)) return false;
+                return one.at >= at - FENCE_LIFE_MS || (one.committed && key !== '' && one.key === key);
             });
         };
         const forServer = (id: string) => ({
@@ -2359,51 +2377,56 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 if (latency.ms > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.ms));
                 const others = othersLatest(id, jobId, turn);
                 if (others !== null && others >= from - 2000) return false;
-                fences.push(at ?? 0);
-                fenceKeys.set(at ?? 0, keyOf(turn));
-                fenceJobs.set(at ?? 0, jobId);
+                held.push({ at: at ?? 0, job: jobId, key: keyOf(turn), committed: false });
                 counts.commits += 1;
                 return true;
             },
             // as the store does it: only the fence that holds exactly that moment goes (a committed one only when asked, for a commit that was never confirmed)
-            retractFence: async (_jobId: string, _turn: unknown, at: number, committedToo = false) => {
+            retractFence: async (jobId: string, turn: unknown, at: number, committedToo = false) => {
                 log.push('retract');
                 if (latency.retractMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.retractMs));
-                const index = fences.indexOf(at);
-                if (index >= 0 && (!committed.includes(at) || committedToo)) {
-                    fences.splice(index, 1);
-                    const was = committed.indexOf(at);
-                    if (was >= 0) committed.splice(was, 1);
-                }
+                const index = held.findIndex((one) => same(one, jobId, keyOf(turn), at));
+                if (index >= 0 && (!held[index].committed || committedToo)) held.splice(index, 1);
                 counts.retracts += 1;
             },
-            // as the store does it, in one step: only the fence that holds exactly that moment becomes committed, and not over a call another server took up since the close counted from
+            // as the store does it, in one step: only the fence that holds exactly that moment (of that job and turn) becomes committed, and not over a call another server took up since the close counted from
             commitFence: async (jobId: string, turn: unknown, at: number, from: number) => {
                 latency.commitBegan?.();
                 log.push('commit');
                 if (latency.commitMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, latency.commitMs));
                 counts.commitFences += 1;
-                if (commitSays.gone || !fences.includes(at)) return false;
-                if (!committed.includes(at)) {
+                const mine = held.find((one) => same(one, jobId, keyOf(turn), at));
+                if (commitSays.gone || !mine) return false;
+                if (!mine.committed) {
                     const others = othersLatest(id, jobId, turn);
                     if (others !== null && others >= from - 2000) return false;
-                    committed.push(at);
+                    mine.committed = true;
                 }
                 return true;
             },
-            // as the store does it: only the COMMITTED fence of that moment goes
-            releaseFence: async (_jobId: string, _turn: unknown, at: number) => {
+            // as the store does it: only the COMMITTED fence of that moment (of that job and turn) goes
+            releaseFence: async (jobId: string, turn: unknown, at: number) => {
                 log.push('release');
                 counts.releases += 1;
-                const index = committed.indexOf(at);
-                if (index < 0) return;
-                committed.splice(index, 1);
-                const at2 = fences.indexOf(at);
-                if (at2 >= 0) fences.splice(at2, 1);
+                const index = held.findIndex((one) => same(one, jobId, keyOf(turn), at) && one.committed);
+                if (index >= 0) held.splice(index, 1);
             },
             lastAcceptedByOthers: async (jobId: string, turn?: unknown) => othersLatest(id, jobId, turn),
         });
-        return { forServer, accepted, latency, fences, counts, committed, log, commitSays };
+        return {
+            forServer,
+            accepted,
+            latency,
+            get fences() {
+                return held.map((one) => one.at);
+            },
+            counts,
+            get committed() {
+                return held.filter((one) => one.committed).map((one) => one.at);
+            },
+            log,
+            commitSays,
+        };
     };
 
     it('does not give up on a turn when the pool took up a call of the job on ANOTHER bot server: only a call taken up nowhere is a pool with no room', async () => {
@@ -2525,19 +2548,45 @@ describe('a pool with no room: the machine is given up, not waited for', () => {
                 const { record, notes, orbit } = rigGiveUp();
                 retryingTurn(orbit, (at) => at(0, () => notes.record(JOB.botId, JOB.jobId, poolRefusal)), 6 * 60_000);
                 let seenFence = false;
+                // what the other server's relay was told, captured here and asserted below (an expectation that fails inside the cancel would only be caught by the runner)
+                const accepted: boolean[] = [];
                 const cancel = orbit.cancel;
                 orbit.cancel = async (jobId) => {
                     // the give-up of job-1 holds its fence now: a relay of another server asks for the same turn and run of ANOTHER job, and for job-1's own
                     seenFence = record.fences.length > 0;
-                    expect(await record.forServer('B').noteAccepted!('another-job', Date.now(), { turn: 1, run: 'run1' })).toBe(true);
-                    expect(await record.forServer('B').noteAccepted!(jobId, Date.now(), { turn: 1, run: 'run1' })).toBe(false);
+                    accepted.push(await record.forServer('B').noteAccepted!('another-job', Date.now(), { turn: 1, run: 'run1' }));
+                    accepted.push(await record.forServer('B').noteAccepted!(jobId, Date.now(), { turn: 1, run: 'run1' }));
                     return cancel(jobId);
                 };
                 const running = runJob(orbit, JOB, RELAY, notes, () => 'run1');
                 await vi.advanceTimersByTimeAsync(130_000);
                 await running;
                 expect(seenFence).toBe(true);
+                expect(accepted).toEqual([true, false]);
             });
+        });
+
+        it('CodeRabbit: two jobs that close a turn in the same millisecond each hold their own fence: each refuses its own calls, and taking one back leaves the other', async () => {
+            const record = sharedRecord();
+            const server = record.forServer('A');
+            const other = record.forServer('B');
+            const at = 1_000_000;
+            const turn = { turn: 1, run: 'run1' };
+            expect(await server.closeTurn!('job-a', turn, at - 1000, at)).toBe(true);
+            expect(await server.closeTurn!('job-b', turn, at - 1000, at)).toBe(true);
+            expect(record.fences).toEqual([at, at]);
+            expect(await server.commitFence!('job-a', turn, at, at - 1000)).toBe(true);
+            expect(await server.commitFence!('job-b', turn, at, at - 1000)).toBe(true);
+            expect(record.committed).toEqual([at, at]);
+            // both refuse their own calls, long after the fence's own life (committed)
+            const later = at + FENCE_LIFE_MS * 3;
+            expect(await other.noteAccepted!('job-a', later, turn)).toBe(false);
+            expect(await other.noteAccepted!('job-b', later, turn)).toBe(false);
+            // job-a's fence is released: job-b's stays, and job-a takes calls again
+            await server.releaseFence!('job-a', turn, at);
+            expect(record.fences).toEqual([at]);
+            expect(await other.noteAccepted!('job-a', later, turn)).toBe(true);
+            expect(await other.noteAccepted!('job-b', later, turn)).toBe(false);
         });
 
         it('holds the committed fence for as long as the cancel and the finish take (well beyond a fence\'s own life): while Orbit is slow ANOTHER server\'s relay still refuses the exact turn after FENCE_LIFE_MS, and after the release it takes it up', async () => {

@@ -61,7 +61,7 @@ const http = (status: number, data: unknown) => Object.assign(new Error(`Request
 /** How a turn goes: `done`/`failed`/`silent`/`handover` end by themselves; `hang` runs until Orbit cancels it (then ends the way `cut` says) or the runner lets go of it. */
 type Script =
     | { kind: 'done' | 'failed-words' | 'silent' | 'handover' | 'broken'; words?: string }
-    | { kind: 'hang'; cut?: 'completed' | 'failed'; words?: string; onOpen?: () => void };
+    | { kind: 'hang'; cut?: 'completed' | 'failed'; words?: string; onOpen?: () => void; /** The turn ends BY ITSELF when this settles, and Orbit's cancel (a note, a pause) does not end it: a turn that finishes on its own while a note is pending. */ gate?: Promise<void> };
 
 interface Request {
     kind: string;
@@ -71,7 +71,7 @@ interface Request {
 }
 
 /** Orbit, as pieces 1 and 2 froze it, for one job. */
-function controlsOrbit(options: { afterListing?: () => void; noEpochs?: boolean; laggingReads?: boolean; renew?: (n: number) => Record<string, unknown>; notesSent?: (n: number) => 'ok' | 'lost' | 'down'; claim?: (n: number) => Record<string, unknown> | null; turnOpen?: (n: number) => 'ok' | 'failed' | 'busy' } = {}) {
+function controlsOrbit(options: { afterListing?: () => void; noEpochs?: boolean; laggingReads?: boolean; renew?: (n: number) => Record<string, unknown>; notesSent?: (n: number) => 'ok' | 'lost' | 'down' | 'conflict'; claim?: (n: number) => Record<string, unknown> | null; turnOpen?: (n: number) => 'ok' | 'failed' | 'busy' } = {}) {
     const state = {
         status: 'running' as 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'stopped',
         queuedFor: null as null | 'paused' | 'turn',
@@ -122,10 +122,12 @@ function controlsOrbit(options: { afterListing?: () => void; noEpochs?: boolean;
             // A hanging turn: it ends when Orbit cancels it (a pause, a note) or when the runner lets go of it
             let cut!: () => void;
             const cancelled = new Promise<'cut'>((resolve) => (cut = () => resolve('cut')));
-            live.set(id, cut);
+            // A gated turn is ended by its gate alone: Orbit's cancel finds nothing to cut
+            if (!script.gate) live.set(id, cut);
             script.onOpen?.();
-            const letGo = new Promise<'gone'>((resolve) => signal.addEventListener('abort', () => resolve('gone'), { once: true }));
-            const how = await Promise.race([cancelled, letGo]);
+            // (a stream that is opened on a signal that has already fired ends at once, as a real one does)
+            const letGo = new Promise<'gone'>((resolve) => (signal.aborted ? resolve('gone') : signal.addEventListener('abort', () => resolve('gone'), { once: true })));
+            const how = await Promise.race([script.gate ? script.gate.then(() => 'cut' as const) : cancelled, letGo]);
             live.delete(id);
             if (how === 'gone') throw Object.assign(new Error('aborted'), { name: 'AbortError' });
             if (script.cut === 'failed') yield { type: 'failed', code: 'cancelled', message: 'The turn was cancelled' };
@@ -198,6 +200,11 @@ function controlsOrbit(options: { afterListing?: () => void; noEpochs?: boolean;
                 if (mode === 'down') {
                     log(kind, 'down', epoch, body);
                     throw http(503, {});
+                }
+                // Orbit's answer is a 409 whose body says another run holds the job
+                if (mode === 'conflict') {
+                    log(kind, 'superseded', epoch, body);
+                    throw http(409, superseded);
                 }
                 let sent = 0;
                 for (const note of state.notes) {
@@ -594,13 +601,22 @@ describe.runIf(!!REAL_REDIS)('the runner and the computer job controls (piece 6)
 
         it('a note that arrives as a turn ends with "[[done]]": the job is not ended on words the person just changed, the note is given, and the agent ends it again', async () => {
             const { orbit, state, scripts, person } = controlsOrbit();
-            scripts.push({ kind: 'hang', cut: 'completed', words: 'Sent it. [[done]]' }, { kind: 'done' });
+            let finishNaturally!: () => void;
+            const gate = new Promise<void>((resolve) => (finishNaturally = resolve));
+            scripts.push({ kind: 'hang', cut: 'completed', words: 'Sent it. [[done]]', gate }, { kind: 'done' });
             const runner = runnerOf(orbit);
             await runner.tick();
             await until(() => state.inputs.length === 1);
-            // The note is kept while the turn ends by itself (Orbit's cancel finds a turn already over)
+            // The note is kept pending while the first turn is still going: Orbit's cancel did not end it (it ends by itself, below)
             person.note('Also add my wife');
+            await pause(100);
+            expect(state.inputs).toHaveLength(1);
+            expect(state.finishes).toEqual([]);
+            expect(state.notes[0].state).toBe('pending');
+            // the turn then ends by itself with its [[done]]: the note it never saw is not lost, and the job is not ended on those words
+            finishNaturally();
             await idleWithin(runner);
+            expect(state.inputs).toHaveLength(2);
             expect(state.inputs[1]).toContain('> Also add my wife');
             expect(state.finishes).toHaveLength(1);
         });
@@ -767,11 +783,110 @@ describe.runIf(!!REAL_REDIS)('the runner and the computer job controls (piece 6)
             person.note('Use 12 March');
             await until(() => (state.counts['notes-sent'] ?? 0) >= 1);
             expect(state.requests.filter((one) => one.kind === 'notes-sent').map((one) => one.answer)).toEqual(['superseded']);
-            // The replaced run stops at its next look: its live turn is let go of when the next renew or report says superseded, or its read shows the new owner
-            state.responseId && made.live.get(state.responseId)?.();
+            // N10: the answer itself stops the reader of the open turn (nothing here closes the stream): the run ends, and nothing is ended or cancelled
             await idleWithin(runner);
             expect(state.finishes).toEqual([]);
             expect(state.runnerCancels).toEqual([]);
+            expect(kinds(state).filter((kind) => kind === 'cancel')).toEqual([]);
+        });
+
+        it('N9: notes-sent answered superseded: what is owed stays owed, and the worker that owns the job next tells Orbit under its own epoch', async () => {
+            const box: { state?: ReturnType<typeof controlsOrbit>['state']; moved?: boolean } = {};
+            const made = controlsOrbit({
+                notesSent: () => {
+                    // the first acknowledgement is answered superseded (another worker claimed the job just before it)
+                    if (!box.moved && box.state) {
+                        box.moved = true;
+                        box.state.ownerEpoch += 1;
+                    }
+                    return 'ok';
+                },
+            });
+            box.state = made.state;
+            const { orbit, state, scripts, person } = made;
+            scripts.push({ kind: 'hang', cut: 'completed' }, { kind: 'hang', cut: 'completed' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await until(() => state.inputs.length === 1);
+            person.note('Use 12 March');
+            await until(() => (state.counts['notes-sent'] ?? 0) >= 1);
+            // the superseded answer recorded nothing at Orbit: the note is still pending, so what is owed is still owed
+            const first = state.requests.filter((one) => one.kind === 'notes-sent')[0];
+            expect(first.answer).toBe('superseded');
+            expect(state.notes[0].state).toBe('pending');
+            await idleWithin(runner);
+            // the next worker of this process (a fresh claim on the epoch the job is on now) tells Orbit, under its own epoch, and knows the agent already had the note
+            scripts.push({ kind: 'done' });
+            await runner.tick();
+            await until(() => state.notes[0].state === 'sent');
+            const told = state.requests.filter((one) => one.kind === 'notes-sent');
+            expect(told.map((one) => one.body?.through)).toEqual(told.map(() => 1));
+            const accepted = told.filter((one) => one.answer === 'ok');
+            expect(accepted).toHaveLength(1);
+            expect(accepted[0].epoch).toBe(state.ownerEpoch);
+            expect(accepted[0].epoch).not.toBe(first.epoch);
+            expect(state.inputs.filter((one) => one.includes('Use 12 March'))).toHaveLength(1);
+        });
+
+        it('N10: a 409 whose body says another run holds the job (the answer to notes-sent) stops the reader of the open turn the same way, and cancels nothing', async () => {
+            const { orbit, state, scripts, person } = controlsOrbit({ notesSent: () => 'conflict' });
+            scripts.push({ kind: 'hang', cut: 'completed' }, { kind: 'hang', cut: 'completed' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await until(() => state.inputs.length === 1);
+            person.note('Use 12 March');
+            await until(() => (state.counts['notes-sent'] ?? 0) >= 1);
+            await idleWithin(runner);
+            expect(state.requests.filter((one) => one.kind === 'notes-sent').map((one) => one.answer)).toEqual(['superseded']);
+            expect(state.finishes).toEqual([]);
+            expect(state.runnerCancels).toEqual([]);
+        });
+
+        it('N10: a note acknowledgement Orbit accepts leaves the reader of the open turn running (the turn goes on to its own end)', async () => {
+            const made = controlsOrbit();
+            const { orbit, state, scripts, person } = made;
+            scripts.push({ kind: 'hang', cut: 'completed' }, { kind: 'hang', cut: 'completed', words: 'All fine. [[done]]' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await until(() => state.inputs.length === 1);
+            person.note('Use 12 March');
+            await until(() => (state.counts['notes-sent'] ?? 0) >= 1);
+            await pause(150);
+            // still reading the second turn: not ended, nothing finished
+            expect(made.live.has('resp-2')).toBe(true);
+            expect(state.finishes).toEqual([]);
+            made.live.get('resp-2')?.();
+            await idleWithin(runner);
+            expect(state.finishes).toEqual([expect.objectContaining({ outcome: 'done' })]);
+        });
+
+        it('N9: notes-sent that failed, then a pause and a resume: the next worker tells Orbit about the note under its own epoch, and the agent is not given the note again', async () => {
+            const { orbit, state, scripts, person } = controlsOrbit({ notesSent: (n) => (n === 1 ? 'down' : 'ok') });
+            scripts.push({ kind: 'hang', cut: 'completed' }, { kind: 'hang', cut: 'completed' });
+            const runner = runnerOf(orbit);
+            await runner.tick();
+            await until(() => state.inputs.length === 1);
+            person.note('Use 12 March');
+            // the second turn took the note, and the acknowledgement failed (down); the person pauses the job while that turn goes on
+            await until(() => state.inputs.length === 2 && (state.counts['notes-sent'] ?? 0) >= 1);
+            expect(state.notes[0].state).toBe('pending');
+            person.pause();
+            await idleWithin(runner);
+            person.resume();
+            scripts.push({ kind: 'done' });
+            await runner.tick();
+            await idleWithin(runner);
+            const told = state.requests.filter((one) => one.kind === 'notes-sent');
+            expect(told.map((one) => [one.answer, one.body?.through])).toEqual([
+                ['down', 1],
+                ['ok', 1],
+            ]);
+            // under the new owner's epoch, and Orbit now has it
+            expect(told[1].epoch).toBe(state.ownerEpoch);
+            expect(told[1].epoch).not.toBe(told[0].epoch);
+            expect(state.notes[0].state).toBe('sent');
+            // the text reached the agent once (the resumed words carry none of it)
+            expect(state.inputs.filter((one) => one.includes('Use 12 March'))).toHaveLength(1);
         });
     });
 
@@ -824,7 +939,6 @@ describe.runIf(!!REAL_REDIS)('the runner and the computer job controls (piece 6)
             person.note('Use 12 March');
             await until(() => (state.counts['notes-sent'] ?? 0) >= 1);
             const told = state.requests.length;
-            made.live.get('resp-2')?.();
             await idleWithin(runner);
             // After the superseded answer: at most the turn's own last progress report (answered superseded too), and nothing that prepares, opens, hands over or ends
             expect(kinds(state, told).filter((kind) => !['progress', 'renew'].includes(kind))).toEqual([]);

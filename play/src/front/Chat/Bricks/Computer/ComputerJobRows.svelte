@@ -17,6 +17,8 @@
     export let onCancel: (job: ComputerJob) => void;
     /** Watch is offered on the working job's row; the Watch screen itself leaves it out. */
     export let withWatch = true;
+    /** Heard once Watch has opened the computer screen, so a host that sits above it (the jobs sheet) can step aside. */
+    export let onWatch: (() => void) | undefined = undefined;
 
     $: pending = $pendingJobCalls.get(brick.id) ?? new Set<string>();
 
@@ -64,7 +66,10 @@
                             type="button"
                             class="cj-btn go"
                             data-testid="computerJobWatch"
-                            on:click={() => openBrickScreen(brick)}
+                            on:click={() => {
+                                openBrickScreen(brick);
+                                onWatch?.();
+                            }}
                             >{job.status === "waiting"
                                 ? $LL.chat.brick.computer.takeOver()
                                 : $LL.chat.brick.computer.watch()}</button

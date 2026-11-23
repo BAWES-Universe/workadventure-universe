@@ -291,3 +291,28 @@ describe('the runner starts the new try in the same conversation', () => {
         expect(continuePrompt({ ...job, writes: false })).not.toContain(outputFolderOf(OLD));
     });
 });
+
+describe('CodeRabbit N7: another chat of the same person starts with none of the active chat\'s turn state', () => {
+    it('a cloned memory keeps the conversation but not the controls, the retry choice or the confirmations', async () => {
+        const { PersistentMemory } = await import('../memory/PersistentMemory');
+        const { newControlState } = await import('../ai/ComputerControlTools');
+        // typed loosely on purpose: the clone is the private step `setUserUuid` takes when the same person opens another chat
+        const memory: any = new PersistentMemory({});
+        memory.addMessage('brick-1', 7, 'cancel the visa one', 'person', 'dm');
+        const live = memory.getMemory('brick-1', 7);
+        const controls = newControlState();
+        controls.asks.set('cancel|job-visa', { kind: 'cancel', jobIds: ['job-visa'], told: true, answerable: true });
+        live.computerControls = controls;
+        live.computerRetry = { id: 'job-old', title: 'Visa form' };
+        live.computerConfirmations = new ConfirmationQueue();
+        const copy = memory.cloneMemory(live);
+        // what the person said is there; the turn's own state is not, and the controls object is never shared
+        expect(copy.conversationHistory.map((one: { message: string }) => one.message)).toEqual(live.conversationHistory.map((one: { message: string }) => one.message));
+        expect(copy.conversationHistory).not.toBe(live.conversationHistory);
+        expect(copy.computerControls).toBeUndefined();
+        expect(copy.computerRetry).toBeUndefined();
+        expect(copy.computerConfirmations).toBeUndefined();
+        // the question in the active chat is untouched by anything the copy does
+        expect(live.computerControls.asks.size).toBe(1);
+    });
+});

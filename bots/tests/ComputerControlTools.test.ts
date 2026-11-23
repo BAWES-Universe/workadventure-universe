@@ -24,6 +24,7 @@ import {
     TELL_JOB_TOOL,
     computerControlToolDefinitions,
     findJob,
+    isClearYes,
     newControlState,
     runComputerControlTool,
     startControlTurn,
@@ -72,10 +73,10 @@ function chat(admin: ReturnType<typeof door>['admin'], state: ControlState = new
         },
         /** The reply never reached them (it failed, or a newer message replaced it). */
         drop: () => queue.drop(),
-        /** The person writes again: a new reply, with its own queue. */
-        nextMessage: () => {
+        /** The person writes again (a clear yes unless they say otherwise): a new reply, with its own queue. */
+        nextMessage: (said = 'Yes') => {
             queue = new ConfirmationQueue();
-            startControlTurn(state);
+            startControlTurn(state, said);
         },
         /** The same reply asked again (a retry): a new queue, and nothing about the turn changes. */
         retry: () => {
@@ -613,5 +614,380 @@ describe('in the chat (AIService)', () => {
         await ai.runComputerControlCall(CANCEL_JOB_TOOL, {}, { botId: BRICK, playerId: 1 });
         expect(cancels()).toHaveLength(1);
         expect(controlComputerJobs.mock.calls[0].slice(0, 2)).toEqual([BRICK, 'uuid-alice']);
+    });
+});
+
+describe('CodeRabbit N1/N12: only a clear yes, decided in code, ends a job', () => {
+    const YES = ['Yes', 'yes please', 'Yeah, cancel it', 'ok', 'Sure, go ahead', 'do it', 'yes, cancel the visa one', 'Yes!', '  YES  ', 'Yes, stop all of them', 'نعم', 'ايوه الغيه', 'تمام', 'أكيد', 'نعم الغيه'];
+    const NOT_YES = [
+        'No',
+        'No, keep it running',
+        "no don't",
+        "Don't cancel it",
+        'keep it',
+        'leave it running',
+        'wait, not yet',
+        'never mind',
+        'yes but keep the visa one',
+        'actually, no',
+        'what is the visa job doing?',
+        '',
+        '   ',
+        'Book me a taxi for Friday',
+        'yes yes yes yes yes yes yes yes yes yes yes yes yes',
+        'لا',
+        'لا خليه',
+        'استنى شوي',
+        'خله يكمل',
+        'لا تلغي',
+        'ما ابي',
+        'ما أبغى',
+        'مو الحين',
+        'مش دلوقتي',
+        'انتظر',
+        'بعدين',
+        'yes but wait',
+        'maybe',
+        'cancel',
+    ];
+    it('is a yes only for a short message that starts with a yes and has no word of refusing, keeping or waiting', () => {
+        for (const said of YES) expect(isClearYes(said), said).toBe(true);
+        for (const said of NOT_YES) expect(isClearYes(said), said).toBe(false);
+        expect(isClearYes(undefined)).toBe(false);
+    });
+
+    for (const [name, tool, args] of [['cancel', CANCEL_JOB_TOOL, { job: 'visa' }], ['stop', STOP_COMPUTER_TOOL, {}]] as const) {
+        it(`${name}: a reply of "No, keep it running" never runs it, whatever the model calls; the question is asked again and a yes to THAT one runs it once`, async () => {
+            const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { cancel: viewOf(null), stop: viewOf(null) });
+            const c = chat(orbit.admin);
+            await c.run(tool, args);
+            await c.deliver();
+            c.nextMessage('No, keep it running');
+            // the model calls the tool anyway, more than once
+            await c.run(tool, args);
+            await c.run(tool, args);
+            expect(orbit.acted()).toEqual([]);
+            expect(await c.deliver()).toHaveLength(1);
+            // a yes to the question as it was asked again
+            c.nextMessage('Yes');
+            await c.run(tool, args);
+            expect(orbit.acted()).toHaveLength(1);
+            expect(orbit.acted()[0]).toMatchObject({ action: name });
+        });
+
+        it(`${name}: a message that is not a yes (another subject, a longer sentence, a "but") ends the question too`, async () => {
+            for (const said of ['Book me a taxi', 'yes but keep it', 'I am not sure', 'what jobs do you have?']) {
+                const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { cancel: viewOf(null), stop: viewOf(null) });
+                const c = chat(orbit.admin);
+                await c.run(tool, args);
+                await c.deliver();
+                c.nextMessage(said);
+                await c.run(tool, args);
+                expect(orbit.acted(), said).toEqual([]);
+            }
+        });
+    }
+
+    it('CONTROL: the same call after a clear yes does cancel, exactly once, the named job', async () => {
+        const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.deliver();
+        c.nextMessage('Yes please');
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
+    });
+
+    it('a yes does not carry from the question of one job to another: a yes to "Cancel visa?" does not cancel the taxi', async () => {
+        const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking', { pausedBefore: true })]), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.deliver();
+        c.nextMessage('yes');
+        await c.run(CANCEL_JOB_TOOL, { job: 'taxi' });
+        expect(orbit.acted()).toEqual([]);
+    });
+});
+
+describe('CodeRabbit N4: a control that began on an older message changes nothing', () => {
+    it('a message that comes in while the list is being read: the older cancel is abandoned (nothing sent, nothing said), and the question stays asked for the new message to answer', async () => {
+        const answers: Array<() => void> = [];
+        const asks: ComputerControlAsk[] = [];
+        const view = viewOf(working(), [inLine('job-taxi', 'Taxi booking')]);
+        const slow = {
+            controlComputerJobs: vi.fn(async (_b: string, _u: string, ask: ComputerControlAsk) => {
+                asks.push(ask);
+                if (ask.action === 'list') await new Promise<void>((resolve) => answers.push(resolve));
+                return controlAnswerOf(ask.action === 'list' ? view : viewOf(null));
+            }),
+        };
+        const c = chat(slow);
+        // first message: the question, delivered (its list read answers at once)
+        const asked = c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        answers.shift()!();
+        await asked;
+        await c.deliver();
+        // the second message is a clear yes, and the model cancels; its list read is slow
+        c.nextMessage('Yes');
+        const old = c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        // a THIRD message arrives while that list is being read ("no, keep it"): the second turn is over
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        c.nextMessage('No, keep it running');
+        answers.shift()!();
+        const result = await old;
+        expect(result).toMatchObject({ done: false, stale: true });
+        expect(asks.filter((ask) => ask.action === 'cancel')).toEqual([]);
+        expect(await c.deliver()).toEqual([]);
+    });
+
+    it('Opus (A4): a stale call neither sends nor uses up the question the NEWER message answers: that message\'s own cancel then goes through, once', async () => {
+        const answers: Array<() => void> = [];
+        const asks: ComputerControlAsk[] = [];
+        const view = viewOf(working(), [inLine('job-taxi', 'Taxi booking')]);
+        let slowList = false;
+        const slow = {
+            controlComputerJobs: vi.fn(async (_b: string, _u: string, ask: ComputerControlAsk) => {
+                asks.push(ask);
+                if (ask.action === 'list' && slowList) await new Promise<void>((resolve) => answers.push(resolve));
+                return controlAnswerOf(ask.action === 'list' ? view : viewOf(null));
+            }),
+        };
+        const c = chat(slow);
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.deliver();
+        // still in that first turn, the model calls cancel again, and its list read is slow
+        slowList = true;
+        const old = c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        // the person's yes comes in while it reads: the old call is stale
+        c.nextMessage('Yes');
+        answers.shift()!();
+        expect(await old).toMatchObject({ done: false, stale: true });
+        expect(asks.filter((ask) => ask.action === 'cancel')).toEqual([]);
+        // the yes still answers the question: this turn's own cancel goes, once
+        slowList = false;
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        expect(asks.filter((ask) => ask.action === 'cancel').map((ask) => ask.jobId)).toEqual(['job-visa']);
+    });
+
+    it('CONTROL: with no newer message the same slow cancel goes through once', async () => {
+        const answers: Array<() => void> = [];
+        const asks: ComputerControlAsk[] = [];
+        const view = viewOf(working(), [inLine('job-taxi', 'Taxi booking')]);
+        const slow = {
+            controlComputerJobs: vi.fn(async (_b: string, _u: string, ask: ComputerControlAsk) => {
+                asks.push(ask);
+                if (ask.action === 'list') await new Promise<void>((resolve) => answers.push(resolve));
+                return controlAnswerOf(ask.action === 'list' ? view : viewOf(null));
+            }),
+        };
+        const c = chat(slow);
+        const asked = c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        answers.shift()!();
+        await asked;
+        await c.deliver();
+        c.nextMessage('Yes');
+        const sent = c.run(CANCEL_JOB_TOOL, { job: 'visa' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        answers.shift()!();
+        await sent;
+        expect(asks.filter((ask) => ask.action === 'cancel')).toHaveLength(1);
+    });
+
+    it('every mutating control is abandoned the same way (pause, resume, first, a note), a read is not', async () => {
+        for (const [tool, args, view] of [
+            [PAUSE_JOB_TOOL, {}, viewOf(working())],
+            [RESUME_JOB_TOOL, { job: 'taxi' }, viewOf(working(), [paused('job-taxi', 'Taxi booking')])],
+            [JOB_FIRST_TOOL, { job: 'taxi' }, viewOf(working(), [inLine('job-taxi', 'Taxi booking')])],
+            [TELL_JOB_TOOL, { message: 'use 12 March' }, viewOf(working())],
+        ] as const) {
+            const answers: Array<() => void> = [];
+            const asks: ComputerControlAsk[] = [];
+            const slow = {
+                controlComputerJobs: vi.fn(async (_b: string, _u: string, ask: ComputerControlAsk) => {
+                    asks.push(ask);
+                    if (ask.action === 'list') await new Promise<void>((resolve) => answers.push(resolve));
+                    return controlAnswerOf(view);
+                }),
+            };
+            const c = chat(slow);
+            const call = c.run(tool, args as Record<string, unknown>);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            c.nextMessage('hello');
+            answers.shift()!();
+            expect(await call, tool).toMatchObject({ stale: true });
+            expect(asks.filter((ask) => ask.action !== 'list'), tool).toEqual([]);
+        }
+        // a read goes on
+        const orbit = door(viewOf(working()));
+        const c = chat(orbit.admin);
+        const reading = c.run(COMPUTER_JOBS_TOOL);
+        c.nextMessage('hello');
+        expect(await reading).toMatchObject({ jobs: [expect.objectContaining({ id: 'job-visa' })] });
+    });
+});
+
+describe('CodeRabbit N2/N3: which jobs started, and which job a selector names', () => {
+    it('a job that ran and was put back in line (queued for its turn, paused before, or with steps behind it) is asked about before cancelling; one that never ran goes at once', async () => {
+        for (const over of [{ pausedBefore: true }, { stepDone: 3 }]) {
+            const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking', over)]), { cancel: viewOf(working()) });
+            const c = chat(orbit.admin);
+            await c.run(CANCEL_JOB_TOOL, { job: 'taxi' });
+            expect(orbit.acted(), JSON.stringify(over)).toEqual([]);
+            expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Taxi booking')]);
+        }
+        const never = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { cancel: viewOf(working()) });
+        const c = chat(never.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'taxi' });
+        expect(never.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi' }]);
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking')]);
+    });
+
+    it('reads pausedBefore from Orbit (the flag, or a pause count above 0)', () => {
+        const job = { id: 'a', status: 'queued', title: 'T' };
+        expect(controlAnswerOf({ ok: true, view: { job: null, queued: [{ ...job, pausedBefore: true }] } })).toMatchObject({ view: { queued: [{ pausedBefore: true }] } });
+        expect(controlAnswerOf({ ok: true, view: { job: null, queued: [{ ...job, pauses: 2 }] } })).toMatchObject({ view: { queued: [{ pausedBefore: true }] } });
+        expect(controlAnswerOf({ ok: true, view: { job: null, queued: [{ ...job }] } })).toMatchObject({ view: { queued: [{ pausedBefore: false }] } });
+    });
+
+    it('a selector that is nothing once cleaned ("???") names no job: nothing is cancelled, whatever is in line', async () => {
+        expect(findJob('???', [inLine('job-visa', 'Visa form')] as never)).toEqual({ none: true });
+        expect(findJob('!!', [inLine('job-visa', 'Visa form')] as never)).toEqual({ none: true });
+        const orbit = door(viewOf(null, [inLine('job-visa', 'Visa form')]), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        const answer = await c.run(CANCEL_JOB_TOOL, { job: '???' });
+        expect(answer).toMatchObject({ done: false });
+        expect(orbit.acted()).toEqual([]);
+        // control: no selector at all keeps the single-job fallback
+        expect(findJob('', [inLine('job-visa', 'Visa form')] as never)).toMatchObject({ job: { id: 'job-visa' } });
+    });
+});
+
+describe('CodeRabbit: a reply asked again replays what the control did, and claims no more than Orbit said', () => {
+    it('pause, resume and first: the reply asked again (the list now shows the new state) says the same line, sends once', async () => {
+        const cases = [
+            { tool: PAUSE_JOB_TOOL, args: {}, before: viewOf(working()), after: viewOf(null, [paused('job-visa', 'Visa form')]), action: 'pause', line: lineOf(CONTROL_WORDS.paused, 'Visa form') },
+            { tool: RESUME_JOB_TOOL, args: {}, before: viewOf(null, [paused('job-visa', 'Visa form')]), after: viewOf(working()), action: 'resume', line: lineOf(CONTROL_WORDS.resumedNow, 'Visa form') },
+        ];
+        for (const one of cases) {
+            let state = one.before;
+            const asks: ComputerControlAsk[] = [];
+            const admin = {
+                controlComputerJobs: vi.fn(async (_b: string, _u: string, ask: ComputerControlAsk) => {
+                    asks.push(ask);
+                    if (ask.action === 'list') return controlAnswerOf(state);
+                    state = one.after;
+                    return controlAnswerOf(one.after);
+                }),
+            };
+            const c = chat(admin);
+            await c.run(one.tool, one.args);
+            expect(await c.deliver()).toEqual([one.line]);
+            c.retry();
+            await c.run(one.tool, one.args);
+            expect(await c.deliver(), one.action).toEqual([one.line]);
+            expect(asks.filter((ask) => ask.action === one.action), one.action).toHaveLength(1);
+        }
+    });
+
+    it('pause and resume: the reply asked again NAMING the job (other words than the first call, so it is found afresh in the new state) still replays the line and sends nothing more', async () => {
+        const cases = [
+            { tool: PAUSE_JOB_TOOL, before: viewOf(working()), after: viewOf(null, [paused('job-visa', 'Visa form')]), action: 'pause', line: lineOf(CONTROL_WORDS.paused, 'Visa form') },
+            { tool: RESUME_JOB_TOOL, before: viewOf(null, [paused('job-visa', 'Visa form')]), after: viewOf(working()), action: 'resume', line: lineOf(CONTROL_WORDS.resumedNow, 'Visa form') },
+        ];
+        for (const one of cases) {
+            let state = one.before;
+            const asks: ComputerControlAsk[] = [];
+            const admin = {
+                controlComputerJobs: vi.fn(async (_b: string, _u: string, ask: ComputerControlAsk) => {
+                    asks.push(ask);
+                    if (ask.action === 'list') return controlAnswerOf(state);
+                    state = one.after;
+                    return controlAnswerOf(one.after);
+                }),
+            };
+            const c = chat(admin);
+            await c.run(one.tool, {});
+            expect(await c.deliver()).toEqual([one.line]);
+            c.retry();
+            // the same reply written again names the job this time: it is found in the list as it stands now (paused, or working again), so only the call already sent can say what happened
+            await c.run(one.tool, { job: 'visa' });
+            expect(await c.deliver(), one.action).toEqual([one.line]);
+            expect(asks.filter((ask) => ask.action === one.action), one.action).toHaveLength(1);
+        }
+    });
+
+    it('cancel and stop: the reply asked again, after the job is gone from the list, says what was done and sends nothing more', async () => {
+        for (const [tool, args, action] of [[CANCEL_JOB_TOOL, { job: 'visa' }, 'cancel'], [STOP_COMPUTER_TOOL, {}, 'stop']] as const) {
+            let state = viewOf(working());
+            const asks: ComputerControlAsk[] = [];
+            const admin = {
+                controlComputerJobs: vi.fn(async (_b: string, _u: string, ask: ComputerControlAsk) => {
+                    asks.push(ask);
+                    if (ask.action === 'list') return controlAnswerOf(state);
+                    state = viewOf(null);
+                    return controlAnswerOf(state);
+                }),
+            };
+            const c = chat(admin);
+            await c.run(tool, args);
+            await c.deliver();
+            c.nextMessage('Yes');
+            await c.run(tool, args);
+            const first = await c.deliver();
+            expect(first).toHaveLength(1);
+            expect(first[0]).toMatch(/cancelled|stopped/i);
+            c.retry();
+            await c.run(tool, args);
+            expect(await c.deliver(), action).toEqual(first);
+            expect(asks.filter((ask) => ask.action === action), action).toHaveLength(1);
+        }
+    });
+
+    it('a resume Orbit acknowledged with no view (or a view without the job) says it was asked to carry on, and claims nothing of where the job is; a view with the job holding the computer keeps the approved line', async () => {
+        for (const answer of [{ ok: true }, { ok: true, view: { job: null, queued: [] } }]) {
+            const orbit = door(viewOf(null, [paused('job-visa', 'Visa form')]), { resume: answer });
+            const c = chat(orbit.admin);
+            await c.run(RESUME_JOB_TOOL, {});
+            expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.resumeAsked, 'Visa form')]);
+        }
+        const holding = door(viewOf(null, [paused('job-visa', 'Visa form')]), { resume: viewOf(working()) });
+        const c = chat(holding.admin);
+        await c.run(RESUME_JOB_TOOL, {});
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.resumedNow, 'Visa form')]);
+    });
+
+    it('a way of delivering words that this server does not know says Orbit took them, and nothing of when the job uses them; `now` keeps the approved line', async () => {
+        const unknown = door(viewOf(working()), { note: { ok: true, view: { job: working(), queued: [] }, note: { delivery: 'deferred' } } });
+        const c = chat(unknown.admin);
+        await c.run(TELL_JOB_TOOL, { message: 'use 12 March' });
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.toldAccepted, 'Visa form')]);
+        expect(lineOf(CONTROL_WORDS.toldAccepted, 'Visa form')).not.toMatch(/next step|when it/);
+        const known = door(viewOf(working()), { note: { ok: true, note: { delivery: 'now' } } });
+        const d = chat(known.admin);
+        await d.run(TELL_JOB_TOOL, { message: 'use 12 March' });
+        expect(await d.deliver()).toEqual([lineOf(CONTROL_WORDS.toldRunning, 'Visa form')]);
+    });
+});
+
+describe('CodeRabbit N8: an ambiguous HTTP failure is never read as Orbit\'s refusal', () => {
+    const asked = async (status: number, data: unknown) => {
+        const orbit = new AdminApiService('http://orbit.test', 'admin-token');
+        (orbit as unknown as { brickCall: unknown }).brickCall = vi.fn(async () => {
+            throw Object.assign(new Error(`status ${status}`), { response: { status, data } });
+        });
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        return orbit.controlComputerJobs(BRICK, 'uuid-alice', { action: 'note', jobId: 'job-visa', text: 'use 12 March' });
+    };
+    it('a 502, 500, 504 or 408 whose body looks like a refusal is `unknown` (it may have been committed)', async () => {
+        for (const status of [500, 502, 504, 408]) expect(await asked(status, { ok: false, reason: 'bad_gateway' }), String(status)).toEqual({ ok: false, reason: 'unknown' });
+    });
+    it('Orbit\'s own refusals on 404 and 409 are still read as refusals, and a 503 that says retry is still asked again', async () => {
+        expect(await asked(409, { ok: false, reason: 'ending' })).toEqual({ ok: false, reason: 'ending' });
+        expect(await asked(404, { ok: false, reason: 'not_found' })).toEqual({ ok: false, reason: 'not_found' });
     });
 });

@@ -590,8 +590,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 { roomId, note: true }
             );
             if (reply?.text && !reply.failed) {
-                if (!(await this.say(botId, () => this.client.sendText(botUserId, roomId, reply.text!)))) return;
-                reply.keep?.();
+                const sent = await this.say(botId, () => this.client.sendText(botUserId, roomId, reply.text!));
+                if (!sent) return;
+                // The id Matrix gave the event: the job this reply names is confirmed (and a control question counted as asked) by that event, as in an ordinary reply
+                reply.keep?.(typeof sent === 'string' ? sent : undefined);
             }
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not say how an approved action ended in ${roomId}:`, error?.message ?? error);

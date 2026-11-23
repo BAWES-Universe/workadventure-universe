@@ -116,7 +116,8 @@ describe('the model is not told to say what the line says (it would be said twic
     const asked = async (admin: Record<string, unknown>, lined: boolean, job = 'Fill in my visa form') => {
         const queue = new ConfirmationQueue();
         const answer = (await runComputerTool({ job }, { admin: admin as never, botId: 'brick-1', userId: 'uuid-1', ...(lined ? { confirmations: queue } : {}) })) as Record<string, unknown>;
-        return { answer, note: String(answer.note) };
+        // what the reply carries under its words (the fixed lines): a refused start must put none there
+        return { answer, note: String(answer.note), lines: queue.tell() };
     };
     const made = (status: string, queuedFor: string | null = null) => ({ startComputerJob: async () => ({ ok: true, job: { id: 'job-1', status, queuedFor }, restoredFrom: null }) });
 
@@ -167,6 +168,8 @@ describe('the model is not told to say what the line says (it would be said twic
             const lined = await asked({ startComputerJob: async () => ({ ok: false, reason }) }, true);
             expect(lined.note).toMatch(/Say so/);
             expect(lined.note).not.toContain('do not say that yourself');
+            // and no fixed line is queued: nothing says "I've started" for a start that did not go
+            expect(lined.lines, reason).toEqual([]);
         }
     });
 });

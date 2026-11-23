@@ -1479,6 +1479,9 @@ export class PersistentMemory extends ConversationMemory {
             instantCalls: undefined,
             computerStarts: undefined,
             computerConfirmations: undefined,
+            // the turn's own state (the retry choice, and what a Stop or cancel question is answerable by) is the active chat's: another chat of the person starts with none, and never shares the object
+            computerControls: undefined,
+            computerRetry: undefined,
             sharedUncertain: undefined,
             sharedInFlight: undefined,
             instantTurn: undefined,

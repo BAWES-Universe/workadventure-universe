@@ -41,7 +41,8 @@
     $: view = $brickComputers.get(brick.id);
     $: jobs = allJobs(view);
     // Every job has gone (stopped, finished or cancelled): the list has nothing left to show
-    $: if (view && face.face === "list" && jobs.length === 0) close();
+    // (only while this sheet is the open one: with another modal above it, closing would take that one away)
+    $: if (isOpen && view && face.face === "list" && jobs.length === 0) close();
 
     // Cancel of a job that has run names it back first; one that never started goes at once
     function askCancel(job: ComputerJob) {
@@ -107,6 +108,7 @@
                     {jobs}
                     onOpen={(job) => (face = { face: "activity", job })}
                     onCancel={askCancel}
+                    onWatch={close}
                 />
                 <p class="js-note">{$LL.chat.brick.computer.jobsNote()}</p>
             {/if}

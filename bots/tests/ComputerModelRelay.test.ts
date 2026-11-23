@@ -819,19 +819,23 @@ describe('how a call ended, for the runner', () => {
         notes.turn(job, 6, 'run-y');
         let release: () => void = () => undefined;
         const gate = new Promise<void>((resolve) => (release = resolve));
-        orbit.authorize.mockReset().mockImplementationOnce(async () => {
+        orbit.authorize.mockReset().mockResolvedValue({ ok: true });
+        // Orbit is held while it says who the caller is, which is BEFORE the authorization payload is built: the turn must already be the arrival's when that is built
+        orbit.identify.mockReset().mockImplementationOnce(async () => {
             await gate;
-            return { ok: true };
+            return { ok: true, jobId: job, botId: BOT };
         });
         upstreamHandler = (_req, res) => res.status(500).json({ error: { message: 'The model broke' } });
         const asked = askAndSettle(agent);
-        await vi.waitFor(() => expect(orbit.authorize).toHaveBeenCalledTimes(1), { timeout: 3000 });
-        // the runner moves on while Orbit is being asked: the call is still turn 6's
+        await vi.waitFor(() => expect(orbit.identify).toHaveBeenCalledTimes(1), { timeout: 3000 });
+        expect(orbit.authorize).not.toHaveBeenCalled();
+        // the runner moves on while Orbit is being asked who this is: the call is still turn 6's
         notes.turn(job, 7, 'run-y');
         release();
         await asked;
         expect(orbit.authorize.mock.calls[0][0]).toMatchObject({ turn: 6, run: 'run-y' });
         // a call of the next turn carries its own
+        orbit.identify.mockReset().mockResolvedValue({ ok: true, jobId: job, botId: BOT });
         orbit.authorize.mockReset().mockResolvedValue({ ok: true });
         await askAndSettle(agent, 2);
         expect(orbit.authorize.mock.calls[0][0]).toMatchObject({ turn: 7, run: 'run-y' });

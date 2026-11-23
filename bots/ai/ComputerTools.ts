@@ -162,7 +162,8 @@ export class ConfirmationQueue {
                 /* never in the way of a reply */
             }
         }
-        for (const { send, told } of this.items.values()) {
+        // The entries of THIS event are taken first: a newer answer can drop the queue while a send is awaited, and every job this accepted event named is still confirmed once
+        for (const { send, told } of [...this.items.values()]) {
             if (!told) continue;
             try {
                 await send();
@@ -455,7 +456,15 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     // Open until the answer says otherwise: a start in flight that a new message of the person cleared would be sent again under another key (a second job)
     const current: StoredStartPayload = { title: job, ...(brief ? { brief } : {}), ...(args.reads_only === true ? { writes: false } : {}), ...(plan ? { plan } : {}), ...(context.origin ? { origin: context.origin } : {}), ...(carryOn ? { continues: carryOn.id } : {}) };
     // A new start of THIS inbound event has the key its event, chat and ordinal make (the same event again, the same key); a start the chat did not come from has a random one
-    const newKey = () => (context.inbound && context.confirmations ? startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart()) : randomUUID());
+    const newKey = (): string => {
+        if (!context.inbound || !context.confirmations) return randomUUID();
+        // A reply written again has a new queue that counts from 0, but the starts the first one made are kept (their entries stay for the turn): a new start never takes the key of a kept one
+        const kept = new Set<string>();
+        for (const one of context.startKeys?.values() ?? []) if (one.key) kept.add(one.key);
+        let key = startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart());
+        while (kept.has(key)) key = startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart());
+        return key;
+    };
     const entry: StartKeyEntry = earlier ?? { key: newKey(), at: now, open: true, unchecked: true, payload: current };
     // The entry is put where the next call finds it BEFORE anything is awaited
     if (entry.open) context.startKeys?.set(OPEN_START_SLOT, entry);
@@ -530,7 +539,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         let sent: StartAnswer | undefined;
         if (!looked) {
             // A key whose words nobody holds (a record that had none) cannot be sent: whatever the person asks now is not what that key stands for. It stays open and is looked up on every ask.
-            const said = entry.payload;
+            let said = entry.payload;
             if (!said) return { started: false, unknown: true, note: COULD_NOT_CHECK_NOTE };
             entry.sent = true;
             try {
@@ -545,7 +554,23 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                     entry.key = startKey;
                     entry.at = Date.now();
                     await context.startKeyStore?.delete(scope, old).catch(() => undefined);
-                    await context.startKeyStore?.claim(scope, { key: startKey, at: entry.at, payload: said }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
+                    const held = await context.startKeyStore?.claim(scope, { key: startKey, at: entry.at, payload: said }, OPEN_START_KEEP_MS, OPEN_START_KEEP_MS).catch(() => undefined);
+                    // Another server already holds a key of this ask: that is the one to send (the store's contract), so it is looked up first, and what it said is what goes with it. Two keys must never reach Orbit
+                    if (held && held.key !== startKey) {
+                        startKey = held.key;
+                        entry.key = held.key;
+                        entry.at = held.at;
+                        const seen = context.admin.lookUpComputerStart ? await context.admin.lookUpComputerStart(context.botId, context.userId, { ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}), startKey }) : 'none';
+                        if (seen !== 'none') {
+                            looked = seen as unknown as StartAnswer;
+                            sent = undefined;
+                            break;
+                        }
+                        // A key that holds no words cannot be sent: it is only looked up, on every ask
+                        if (!held.payload) return { started: false, unknown: true, note: COULD_NOT_CHECK_NOTE };
+                        entry.payload = held.payload;
+                        said = held.payload;
+                    }
                     sent = await sendIt();
                 }
             } catch (error) {

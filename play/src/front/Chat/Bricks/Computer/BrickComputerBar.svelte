@@ -94,10 +94,14 @@
                 busy = false;
             });
     }
-    // Stop ends every job on the computer: it asks first when that is several jobs, and ends a single job at once
+    // Stop ends every job on the computer: it asks first when that is several jobs, and ends a single job at once. Off from the tap until its request is over, so a second tap sends no second Stop
+    let stopping = false;
     function stop() {
-        if (busy) return;
-        askToEnd(brick, { stop: true });
+        if (busy || stopping) return;
+        stopping = true;
+        void askToEnd(brick, { stop: true }).finally(() => {
+            stopping = false;
+        });
     }
 
     $: resuming = !!pausedJob && ($pendingJobCalls.get(brick.id)?.has(pausedJob.id) ?? false);
@@ -128,7 +132,7 @@
                 /></span
             ><span class="cb-l">{fullLine}</span></button
         >
-        <button type="button" class="cb-quiet" disabled={busy} data-testid="brickComputerBarStop" on:click={stop}
+        <button type="button" class="cb-quiet" disabled={busy || stopping} data-testid="brickComputerBarStop" on:click={stop}
             >{$LL.chat.brick.computer.stop()}</button
         >
         {#if state === "paused" && pausedJob}

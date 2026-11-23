@@ -578,7 +578,10 @@ export function readComputerJobState(status: string): 'live' | 'done' | 'ended' 
 }
 
 /** What is true of a job that was made, by its state: live is `starting` (it exists; nothing is said of the machine), finished is `done`, failed or stopped is `ended`; a state this server does not know says nothing. */
-function computerJobTold(status: string): { ok: false; reason: string; queued?: true } {
+/** A start (or the look-up of one) that made no new job for the caller to say yet: what is true of the job by its state. `queued` is set when that job has not started (it waits). */
+export type ComputerJobToldResult = { ok: false; reason: string; queued?: true };
+
+function computerJobTold(status: string): ComputerJobToldResult {
     const state = readComputerJobState(status);
     // A queued job has not started: the person is never told it is being worked on
     return { ok: false, reason: state === 'live' ? 'starting' : state === 'unknown' ? 'unknown' : state, ...(status === 'queued' ? { queued: true as const } : {}) };
@@ -665,6 +668,8 @@ export interface ComputerControlJob {
     waitingFor: string | null;
     /** `person` while they hold the screen. */
     control: 'brick' | 'person';
+    /** The job has been paused before (Orbit's `pausedBefore`, or a pause count above 0): a job put back in line after it ran is `queued` with `queuedFor` `turn` and has this set. */
+    pausedBefore: boolean;
 }
 
 export interface ComputerControlView {
@@ -706,6 +711,7 @@ export function controlJobOf(value: unknown): ComputerControlJob | null {
         stepTotal: countOrNull(value.stepTotal),
         waitingFor: textOrNull(value.waitingFor),
         control: value.control === 'person' ? 'person' : 'brick',
+        pausedBefore: value.pausedBefore === true || (countOrNull(value.pauses) ?? 0) > 0,
     };
 }
 
@@ -2001,13 +2007,13 @@ export class AdminApiService {
         viaBotId: string,
         userId: string,
         ask: { title: string; isGuest?: boolean; brief?: string; writes?: boolean; origin?: { kind: 'dm'; ref: string }; plan?: { app: string; steps?: number; appCannot?: string }; startKey?: string; /** "Try again" (piece 8): the ended job to carry on. */ continuesJobId?: string }
-    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; continued?: true } | { ok: false; reason: string; app?: string; earlier?: EarlierStart }> {
+    ): Promise<{ ok: true; job: { id: string; status: string; queuedFor: string | null }; restoredFrom: string | null; continued?: true } | ({ ok: false; reason: string; queued?: true; app?: string; earlier?: EarlierStart })> {
         // The key of this start. A caller that asks for the same thing again (a reply written again, a tool call retried) sends the key of the first ask, so Orbit answers with
         // the job that ask made and never makes a second; a deliberate second job is a new ask and has a key of its own
         const startKey = typeof ask.startKey === 'string' && START_KEY_SHAPE.test(ask.startKey) ? ask.startKey : randomUUID();
         // Asks Orbit which job THIS start made (by its key), and says what is true of it: the same for a start whose answer was lost and for one whose answer came but
         // did not say what happened
-        const lookUp = async (): Promise<{ ok: false; reason: string }> => {
+        const lookUp = async (): Promise<ComputerJobToldResult> => {
             const made = await this.lookUpComputerStart(viaBotId, userId, { ...(typeof ask.isGuest === 'boolean' ? { isGuest: ask.isGuest } : {}), startKey });
             // No job found by this one read is no proof that none will be made: a POST that Orbit still processes can commit after it
             return made === 'none' ? { ok: false, reason: 'unknown' } : made;
@@ -2015,7 +2021,7 @@ export class AdminApiService {
         // What is true of a job that was made, by its state (the same reading for every way an answer about it comes): live is `starting` (it exists; nothing is
         // said of the machine), one that finished is `done`, one that failed or was stopped is `ended`: it WAS made and is over, which is no connection failure of
         // the start (nothing was unreachable); a state this server does not know says nothing
-        const told = (status: string): { ok: false; reason: string; queued?: true } => computerJobTold(status);
+        const told = (status: string): ComputerJobToldResult => computerJobTold(status);
         let answer: Awaited<ReturnType<AdminApiService['sendComputerJob']>>;
         try {
             answer = await this.sendComputerJob(viaBotId, userId, ask, startKey);
@@ -2125,6 +2131,11 @@ export class AdminApiService {
             const response = (error as { response?: { status?: unknown; data?: unknown } } | null)?.response;
             const status = typeof response?.status === 'number' ? response.status : 0;
             if (status === 503 && isPlainObject(response?.data) && response.data.retry === true) return 'retry';
+            // A 5xx (or a 408) in front of Orbit, whatever its body says, is not Orbit's decision: the request may have been committed behind it. It is never read as a refusal (that would tell the person nothing changed)
+            if (status === 408 || status >= 500) {
+                console.warn('[AdminApiService] A computer job control got no whole answer:', status);
+                return { ok: false, reason: 'unknown' };
+            }
             // Orbit's own no comes with its status (404 not_found, 409 for the others): read the same as a 200 that says no
             if (response && isOrbitRefusal(response.data)) return { ok: false, reason: response.data.reason };
             if (!response && !mayHaveStarted(error)) return { ok: false, reason: 'unreachable' };

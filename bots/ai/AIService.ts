@@ -1400,8 +1400,8 @@ export class AIService {
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
             forgetSettledStarts(memory?.computerStarts);
-            // A question Brick asked before cancelling or stopping a job is answered by this message only; this turn's controls start clean
-            startControlTurn(memory?.computerControls);
+            // A question Brick asked before cancelling or stopping a job is answered by this message only, and only when it is a clear yes (checked in code); this turn's controls start clean
+            startControlTurn(memory?.computerControls, message);
             memory?.sharedUncertain?.clear();
             memory?.sharedInFlight?.clear();
             memory?.sentAgain?.clear();

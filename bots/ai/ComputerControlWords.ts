@@ -43,6 +43,16 @@ export const CONTROL_WORDS = {
         titled: (title) => `I've added that to ${title}. It uses it when it carries on.`,
         plain: "I've added that to your job. It uses it when it carries on.",
     } as ControlLine,
+    /** DRAFT (not in the approved set, to be confirmed): Orbit took the words in a way of delivering this server does not know; nothing is said of when the job uses them. */
+    toldAccepted: {
+        titled: (title) => `I've passed that on to ${title}.`,
+        plain: "I've passed that on to your job.",
+    } as ControlLine,
+    /** DRAFT (not in the approved set, to be confirmed): Orbit took the carry on but gave no view of where the job is, so nothing is claimed of it. */
+    resumeAsked: {
+        titled: (title) => `I've asked ${title} to carry on.`,
+        plain: "I've asked your job to carry on.",
+    } as ControlLine,
     /** MOCK "Paused". */
     paused: {
         titled: (title) => `I've paused ${title}. Its progress is kept, and it isn't using computer time.`,

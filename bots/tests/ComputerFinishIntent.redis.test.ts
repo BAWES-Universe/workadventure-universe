@@ -788,17 +788,19 @@ describe.skipIf(!REAL_REDIS)('a committed give-up survives the runner that made 
         });
 
         it('MIXED VERSIONS: an Orbit from before the run fence ignores the run it is told and answers as it did: a plain stale (an old control generation) does NOT end a run, which reads the job again', async () => {
-            const { fake, notesOf, runnerOn, work } = rig({ noRunFence: true });
+            // the person took the machine and gave it back while the first finish was on its way: the generation moves when that finish arrives (not before it is sent)
+            const box: { fake?: ReturnType<typeof rig>['fake'] } = {};
+            const made = rig({ noRunFence: true, onFinish: (n) => (n === 1 && box.fake ? (box.fake.state.generation = 2) : undefined) });
+            const { fake, notesOf, runnerOn, work } = made;
+            box.fake = fake;
             fake.state.turnScript.push(async function* () {
                 yield { type: 'created', id: 'r', sessionId: 's' };
-                // the person took the machine and gave it back while the turn went on: the generation moved
-                fake.state.generation = 2;
                 yield { type: 'completed', outputText: 'Filed. [[done]]', usage: null };
             });
             await work(runnerOn(notesOf('A'), 'run1'));
-            // the first finish named generation 1 (an older one) and was answered stale (no run marker): the run read the job again and went on
-            expect(fake.state.finishes.length).toBeGreaterThanOrEqual(1);
-            expect(fake.state.ledger.length).toBe(1);
+            // the first finish named generation 1 (an older one) and was answered stale (no run marker): the run read the job again and sent the next on generation 2
+            expect(fake.state.finishes.map((one) => one.generation)).toEqual([1, 2]);
+            expect(fake.state.ledger).toHaveLength(1);
             expect(fake.state.runStale).toEqual([]);
             expect(fake.state.ledger[0]).toMatchObject({ outcome: 'done', run: 'run1' });
         });

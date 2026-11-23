@@ -55,7 +55,10 @@
     function end() {
         if (!asked) return;
         if (stopping) run(() => brickComputerAction(brick.id, "stop"), true);
-        else if (asked.kind === "one") run(() => cancel(asked.job.id), true);
+        else if (asked.kind === "one") {
+            const jobId = asked.job.id;
+            run(() => cancel(jobId), true);
+        }
     }
 </script>
 

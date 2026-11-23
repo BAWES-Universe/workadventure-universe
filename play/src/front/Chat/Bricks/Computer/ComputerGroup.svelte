@@ -111,11 +111,16 @@
             });
     }
 
+    // Off from the tap until the Stop request is over, so a second tap sends no second Stop
+    let stopping = false;
     function act(action: "give" | "turn-off" | "stop") {
-        if (busy) return;
+        if (busy || stopping) return;
         // Stop ends every job on the computer: it asks first when that is several jobs, and ends a single job at once
         if (action === "stop") {
-            askToEnd(brick, { stop: true });
+            stopping = true;
+            void askToEnd(brick, { stop: true }).finally(() => {
+                stopping = false;
+            });
             return;
         }
         busy = true;
@@ -221,7 +226,7 @@
                         >
                     </div>
                     {#if working}
-                        <PageButton tall disabled={busy} testId="brickComputerStop" on:click={() => act("stop")}
+                        <PageButton tall disabled={busy || stopping} testId="brickComputerStop" on:click={() => act("stop")}
                             >{$LL.chat.brick.computer.stop()}</PageButton
                         >
                         {#if canWatch(view)}

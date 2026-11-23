@@ -54,7 +54,7 @@
         // Stop ends every job on the computer (asking first when that is several): the screen closes once something has ended
         if (action === "stop") {
             const brickAtTap = brick.id;
-            askToEnd(brick, { stop: true }, () => {
+            void askToEnd(brick, { stop: true }, () => {
                 if (!gone && brick.id === brickAtTap) onClose();
             });
             return;

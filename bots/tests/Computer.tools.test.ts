@@ -1069,7 +1069,8 @@ describe('who has the computer in a chat (#2000)', () => {
         // a new answer being begun (a newer message, or this one asked again) drops the confirmations the earlier answer queued, and has a queue of its own
         const oldQueue = new ConfirmationQueue();
         const confirmedOld: string[] = [];
-        oldQueue.add('old-key-0001', async () => void confirmedOld.push('old'));
+        // a job it names (a note), so it would be told and confirmed by the delivery if the queue were not dropped
+        oldQueue.add('old-key-0001', async () => void confirmedOld.push('old'), { state: 'started', title: 'Taxi booking' });
         memory.computerConfirmations = oldQueue;
         const replaced = chat.generateBotResponseStream(BRICK, 1, 'a replacing message', '', 'none', 'matrix-dm', '');
         await replaced.next();
@@ -1166,5 +1167,26 @@ describe('who has the computer in a chat (#2000)', () => {
             await ai.runComputerToolCall({ job: 'Taxi booking' }, { botId: BRICK, playerId: 1 });
             expect(startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', { title: 'Taxi booking', isGuest, writes: undefined, startKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/) });
         }
+    });
+});
+
+describe('CodeRabbit: the confirmations of an accepted event are sent once each, whatever a newer answer does meanwhile', () => {
+    it('a newer answer drops the queue while the first confirmation is being sent: the second job this event named is still confirmed', async () => {
+        const queue = new ConfirmationQueue();
+        const sent: string[] = [];
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        queue.add('key-one-0001', async () => {
+            await gate;
+            sent.push('one');
+        }, { state: 'started', title: 'Visa form' });
+        queue.add('key-two-0002', async () => void sent.push('two'), { state: 'started', title: 'Taxi booking' });
+        queue.tell();
+        const delivering = queue.deliver('$event');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        queue.drop();
+        release();
+        await delivering;
+        expect(sent).toEqual(['one', 'two']);
     });
 });

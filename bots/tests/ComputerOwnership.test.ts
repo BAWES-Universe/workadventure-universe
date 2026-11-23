@@ -808,6 +808,8 @@ describe('GPT fifth note, E4: a handover and a cancel are bound to the turn they
         }
         // the renewal was answered superseded, so the runner cancelled nothing at all; and whatever cancel an old worker might send is refused or names its own turn
         expect(fake.state.cancelled).toEqual([]);
+        // and no cancel request was sent at all (a refused one would leave the marker intact too: that is a separate check)
+        expect(fake.of('cancel')).toEqual([]);
         expect(fake.markerIntact()).toBe(true);
     });
 });
@@ -860,9 +862,12 @@ describe('GPT fifth note: the runner\'s view of Orbit carries the ownership epoc
 });
 
 describe('GPT fifth note: the bot server\'s calls to Orbit carry the epoch on the wire', () => {
+    // the token the environment had before this suite (set or not) is put back
+    const tokenBefore = process.env.BOT_SERVICE_TOKEN;
     afterEach(() => {
         vi.unstubAllGlobals();
-        delete process.env.BOT_SERVICE_TOKEN;
+        if (tokenBefore === undefined) delete process.env.BOT_SERVICE_TOKEN;
+        else process.env.BOT_SERVICE_TOKEN = tokenBefore;
     });
     const admin = () => {
         const one = new AdminApiService('http://orbit.test');

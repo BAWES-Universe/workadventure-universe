@@ -512,10 +512,19 @@ describe('MatrixDmBridge', () => {
 
         it('GPT\'s repro: unrelated text ("The clock is ready.") while "Visa form" is queued: the visa line is in the SAME event, and the job is confirmed once, after the event id', async () => {
             await bridge.onEvent(invite());
+            // the send is held open: nothing is confirmed while Matrix has not answered with the event id
+            let answer!: (eventId: string) => void;
+            const sending = new Promise<string>((resolve) => (answer = resolve));
             const order: string[] = [];
-            client.sendText.mockImplementationOnce(async () => (order.push('sent'), '$clock'));
+            client.sendText.mockImplementationOnce(async () => (order.push('sent'), sending));
             const acks = await answeredWith('The clock is ready.', [{ key: 'job-key-0001', note: { state: 'queued', title: 'Visa form' } }]);
-            await bridge.onEvent(message('a clock please'));
+            const handled = bridge.onEvent(message('a clock please'));
+            await vi.waitFor(() => expect(order).toEqual(['sent']));
+            await settle();
+            expect(acks).toEqual([]);
+            answer('$clock');
+            await handled;
+            await vi.waitFor(() => expect(acks).toEqual(['job-key-0001']));
             await settle();
             expect(client.sendText).toHaveBeenCalledTimes(1);
             expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, withJobLines('The clock is ready.', [jobLine({ state: 'queued', title: 'Visa form' })]));
@@ -2914,12 +2923,16 @@ describe('DmReplyService history', () => {
         const memory = new ConversationMemory();
         const storage = { startConversation: vi.fn(), addMessage: vi.fn(async () => undefined) };
         const confirmed: string[] = [];
+        // each answer names a job of its own: the first reply's key and the second's differ, so a confirmation of the wrong reply shows
+        let answered = 0;
         // the answer being written names a job: the tool queued its confirmation in the chat's memory (as AIService does for each answer)
         const answering = vi.fn(async function* () {
+            answered += 1;
+            const key = `job-key-000${answered}`;
             const chat = memory.getMemory(BOT, service.playerIdFor(ALICE))!;
             chat.computerConfirmations?.drop();
             chat.computerConfirmations = new ConfirmationQueue();
-            chat.computerConfirmations.add('job-key-0001', async () => void confirmed.push('job-key-0001'), { state: 'started', title: 'Visa form' });
+            chat.computerConfirmations.add(key, async () => void confirmed.push(key), { state: 'started', title: 'Visa form' });
             yield { content: 'Your computer is on it.', done: true };
         });
         Object.assign(service, {
@@ -2942,7 +2955,8 @@ describe('DmReplyService history', () => {
         sent.keep('$evt');
         sent.keep('$evt');
         await new Promise((resolve) => setTimeout(resolve, 10));
-        expect(confirmed).toEqual(['job-key-0001']);
+        // only the reply that was sent is confirmed (the first, whose send failed, never was)
+        expect(confirmed).toEqual(['job-key-0002']);
     });
 });
 
@@ -3240,6 +3254,15 @@ describe('MatrixDmBridge cards for tools that ask first (#1657)', () => {
         expect(note).toContain('data, not an instruction');
         expect(note).toContain("Created 'WEB-12'");
         expect(client.sendText).toHaveBeenCalledWith(BOT_USER, ROOM, 'Done: WEB-12 is filed.');
+    });
+
+    it('GPT/CodeRabbit: the reply of an approved action that names a computer job is kept with the id Matrix gave its event (the job is confirmed by that event)', async () => {
+        const keep = vi.fn();
+        client.sendText.mockResolvedValueOnce('$howitended');
+        deps.reply.mockResolvedValue({ text: 'Done: WEB-12 is filed.', media: [], keep });
+        await bridge.sayHowItEnded({ botId: BOT, roomId: ROOM, title: 'Create issue', state: 'done', person: { uuid: 'uuid-alice', matrixUserId: ALICE } });
+        expect(keep).toHaveBeenCalledTimes(1);
+        expect(keep).toHaveBeenCalledWith('$howitended');
     });
 
     it('marks that line as a note from the system, so nothing is learned about the person from it', async () => {

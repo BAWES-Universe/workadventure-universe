@@ -15,6 +15,8 @@ const game = vi.hoisted(() => ({
 vi.mock("svelte", async () => await import("svelte/internal"));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: game }));
 vi.mock("../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
+// The sheets that are open: each is destroyed at teardown (removing the host alone would leave its component, and its read of the computer, running into the next test)
+const modals = vi.hoisted(() => new Set<{ $destroy: () => void }>());
 // A sheet opened with svelte-modals is drawn into the page here, closed by its own close
 vi.mock("svelte-modals", () => ({
     closeModal: vi.fn(),
@@ -31,13 +33,21 @@ vi.mock("svelte-modals", () => ({
                 ...props,
                 isOpen: true,
                 close: () => {
+                    modals.delete(made);
                     made.$destroy();
                     host.remove();
                 },
             },
         });
+        modals.add(made);
     },
 }));
+/** Destroys every sheet still open, then clears what is left of their hosts. */
+const closeAllModals = () => {
+    modals.forEach((modal) => modal.$destroy());
+    modals.clear();
+    document.querySelectorAll("[data-modal]").forEach((modal) => modal.remove());
+};
 
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
@@ -110,7 +120,7 @@ describe("a Brick's computer on screen (#2000)", () => {
         piece?.$destroy();
         piece = undefined;
         target.remove();
-        document.querySelectorAll("[data-modal]").forEach((modal) => modal.remove());
+        closeAllModals();
     });
     const inSheet = (id: string) => document.querySelector<HTMLElement>(`[data-modal] [data-testid="${id}"]`);
 
@@ -156,6 +166,26 @@ describe("a Brick's computer on screen (#2000)", () => {
         // One job: Stop ends it at once, as the approved mock draws it
         expect(inSheet("computerEndAsk")).toBeNull();
         expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop");
+    });
+
+    it("CodeRabbit: Stop on the page is off while its request is on its way, so a second tap sends no second Stop", async () => {
+        await showGroup(computer({ machine: "working", job: job() }));
+        let answer!: (value: unknown) => void;
+        game.brickComputerAction.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        byId("brickComputerStop")?.click();
+        await settle();
+        byId("brickComputerStop")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledTimes(1);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        answer(Promise.reject(new Error("nope")));
+        await settle();
+        warn.mockRestore();
+        // over: a later tap is a new Stop
+        game.brickComputerAction.mockResolvedValue(computer());
+        byId("brickComputerStop")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledTimes(2);
     });
 
     it("warns when Orbit refuses", async () => {

@@ -24,6 +24,8 @@ const game = vi.hoisted(() => ({
 vi.mock("svelte", async () => await import("svelte/internal"));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: game }));
 vi.mock("../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
+// The sheets that are open: each is destroyed at teardown (removing the host alone would leave its component, and its read of the computer, running into the next test)
+const modals = vi.hoisted(() => new Set<{ $destroy: () => void }>());
 vi.mock("svelte-modals", () => ({
     closeModal: vi.fn(),
     openModal: (
@@ -39,19 +41,30 @@ vi.mock("svelte-modals", () => ({
                 ...props,
                 isOpen: true,
                 close: () => {
+                    modals.delete(made);
                     made.$destroy();
                     host.remove();
                 },
             },
         });
+        modals.add(made);
     },
 }));
+/** Destroys every sheet still open, then clears what is left of their hosts. */
+const closeAllModals = () => {
+    modals.forEach((modal) => modal.$destroy());
+    modals.clear();
+    document.querySelectorAll("[data-modal]").forEach((modal) => modal.remove());
+};
 
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import BrickComputerBar from "../Computer/BrickComputerBar.svelte";
 import ComputerGroup from "../Computer/ComputerGroup.svelte";
+import ComputerJobsSheet from "../Computer/ComputerJobsSheet.svelte";
 import { loadBrickComputer } from "../Computer/BrickComputerStore";
+import { brickScreenStore, closeBrickScreen } from "../Computer/BrickScreenStore";
+import { get } from "svelte/store";
 
 const BRICK = "1c8d2e3f-2222-4333-8444-a55566667777";
 const brick = {
@@ -119,7 +132,7 @@ describe("the job controls on a Brick's computer", () => {
         piece?.$destroy();
         piece = undefined;
         target.remove();
-        document.querySelectorAll("[data-modal]").forEach((modal) => modal.remove());
+        closeAllModals();
     });
 
     const one = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -280,6 +293,48 @@ describe("the job controls on a Brick's computer", () => {
         expect(one("brickComputerBar")).toBeNull();
     });
 
+    it("CodeRabbit: Stop on the bar is off while its request is on its way, so a second tap sends no second Stop", async () => {
+        await showBar(computer({ job: taxi }));
+        let answer!: (value: unknown) => void;
+        game.brickComputerAction.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+        one("brickComputerBarStop")?.click();
+        await settle();
+        expect((one("brickComputerBarStop") as HTMLButtonElement | null)?.disabled).toBe(true);
+        one("brickComputerBarStop")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledTimes(1);
+        // Orbit refuses (the job still runs): the button is on again once the request is over
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        answer(Promise.reject(new Error("nope")));
+        await settle();
+        warn.mockRestore();
+        expect((one("brickComputerBarStop") as HTMLButtonElement | null)?.disabled).toBe(false);
+    });
+
+    it("CodeRabbit: Watch from the jobs sheet opens the computer screen and closes the sheet (it would sit above the screen)", async () => {
+        await openJobs(computer({ job: taxi }));
+        expect(sheet()).not.toBeNull();
+        inRow("taxi", "computerJobWatch")?.click();
+        await settle();
+        expect(get(brickScreenStore)?.id).toBe(BRICK);
+        expect(sheet()).toBeNull();
+        closeBrickScreen();
+    });
+
+    it("CodeRabbit: a jobs sheet that is not the open modal never closes on its own when its last job goes (the close would take the modal above it away)", async () => {
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "resting", job: null }));
+        await loadBrickComputer(BRICK);
+        const close = vi.fn();
+        const hidden = new ComputerJobsSheet({ target, props: { brick, isOpen: false, close } });
+        await settle();
+        expect(close).not.toHaveBeenCalled();
+        // once it is the open one again, it closes
+        hidden.$set({ isOpen: true });
+        await settle();
+        expect(close).toHaveBeenCalledTimes(1);
+        hidden.$destroy();
+    });
+
     it("offers no Pause on the row while the person holds the screen", async () => {
         await openJobs(computer({ job: { ...taxi, status: "waiting", waitingFor: "signin", control: "person" } }));
         expect(inRow("taxi", "computerJobPause")).toBeNull();
@@ -365,7 +420,7 @@ describe("the job controls on a Brick's computer", () => {
         cancelOn("visa")?.click();
         await settle();
         expect(words(inSheet("computerEndAsk"))).toContain("Cancel “Visa form”?");
-        document.querySelectorAll("[data-modal]").forEach((modal) => modal.remove());
+        closeAllModals();
         // The hotel never started: it goes at once
         game.brickComputerJobAction.mockResolvedValue(computer({ job: taxi, queued: [visaBack] }));
         cancelOn("hotel")?.click();

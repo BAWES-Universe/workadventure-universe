@@ -1,6 +1,7 @@
 import express, { type Request, type Response, type NextFunction, type Router } from 'express';
 import { timingSafeEqual } from 'crypto';
 import type { MatrixAppServiceConfig } from './MatrixConfig';
+import type { EventClaim } from './MatrixEventDedupe';
 
 /** A Matrix event as Synapse pushes it to an application service. */
 export interface MatrixEvent {
@@ -46,8 +47,12 @@ export function createMatrixAppServiceRouter(
     config: MatrixAppServiceConfig,
     handler: MatrixEventHandler,
     options: {
-        /** True the first time any bot server takes in this event, false when it was taken in before (here, at another server, or before a restart): it is then handled no more. */
-        firstSeen?: (eventId: string) => Promise<boolean>;
+        /**
+         * Takes the event in the shared store: a claim when this server may handle it (finished once the handler is over, whether it finished or threw), `false` when it is being handled
+         * or was handled before (here, at another server, or before a restart): it is then handled no more. A claim that is never finished runs out by itself, so an event whose handler
+         * died with its server is handled when a copy of it comes later.
+         */
+        firstSeen?: (eventId: string) => Promise<false | EventClaim>;
     } = {}
 ): MatrixAppServiceRouter {
     const router = express.Router();
@@ -91,8 +96,17 @@ export function createMatrixAppServiceRouter(
             const previous = roomChains.get(event.room_id) ?? Promise.resolve();
             const next = previous.then(async () => {
                 // An event Matrix delivered again (a transaction sent again, to this server or another, or after a restart) is handled once: its id is kept in the shared store
-                if (options.firstSeen && event.event_id && !(await options.firstSeen(event.event_id).catch(() => true))) return;
-                await handler.onEvent(event).catch((error) => console.error('[MatrixAppService] Event handling failed:', error));
+                let claim: EventClaim | undefined;
+                if (options.firstSeen && event.event_id) {
+                    const taken = await options.firstSeen(event.event_id).catch(() => undefined);
+                    if (taken === false) return;
+                    claim = taken;
+                }
+                try {
+                    await handler.onEvent(event).catch((error) => console.error('[MatrixAppService] Event handling failed:', error));
+                } finally {
+                    await claim?.finish().catch(() => undefined);
+                }
             });
             roomChains.set(event.room_id, next);
             void next.then(() => {

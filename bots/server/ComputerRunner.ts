@@ -483,6 +483,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * was lost, and a worker after a pause carries on from it (the agent's conversation is the same one). Forgotten when the job is over.
      */
     const notesGiven = new Map<string, number>();
+    /**
+     * The highest note number the agent of a job has had and Orbit was not told (its answer was lost, or it was never asked): kept with `notesGiven`, by job, so a worker after a pause
+     * or a replacement tells Orbit under its own epoch, and never gives the agent the text again. Forgotten when the job is over.
+     */
+    const notesUntold = new Map<string, number>();
     // Counts each start and stop, so a poll that was asked before a stop can tell it was
     let generation = 0;
     // Whether a 400 for the finish intent has been reported to Sentry by this runner (once)
@@ -648,6 +653,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         joined?: boolean;
         /** Called once when the agent took THIS turn's own input (a turn it started with these words, not one it was already on): what was in the words reached it. */
         onSent?: () => void;
+        /** Set by `turnOf` while it reads a turn: ends the reading (the run was found superseded by an answer to something else than the turn's own requests) and cancels nothing. */
+        stop?: () => void;
     }
 
     /** Sends one turn (or reconnects to the one going) and reads it to its end, renewing the job's room as Orbit says while it does. */
@@ -666,6 +673,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         signal.addEventListener('abort', onStop, { once: true });
         let renewTimer: ReturnType<typeof setTimeout> | undefined;
         let lost = false;
+        // A superseded answer to a request outside this turn's own (the note acknowledgement) stops the reader the same way one to a renew does: the provider turn is the replacement's
+        accepted.stop = () => {
+            lost = true;
+            turnController.abort();
+        };
         // The provider turn (response id) this runner saw the agent on: what a cancel and a handover name, so Orbit acts on exactly this turn and never on whichever turn the job is on when
         // the request arrives (a delayed request of an old worker never reaches the replacement's turn)
         let responseId: string | undefined;
@@ -926,11 +938,15 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             }
 
             accepted.turn = true;
+            // The run was found superseded (by the note acknowledgement) while this turn was being opened: there is nothing to read, and nothing is cancelled
+            if (lost) return { kind: 'look', cancelled: true };
             let reconnects = 0;
             for (;;) {
                 let terminal: { failed: boolean; fenced: boolean; code: string } | null = null;
                 try {
                     for await (const event of opened.events) {
+                        // A reader that was stopped reads no more (the stream is let go of: the provider turn is the replacement's, and nothing is cancelled)
+                        if (lost) break;
                         if (event.type === 'created') {
                             if (event.id) responseId = event.id;
                         } else if (event.type === 'text') words = (words + event.text).slice(-RUNNER_GUARDS.maxWords);
@@ -983,6 +999,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             if (poolTimer) clearTimeout(poolTimer);
             if (poolWatch) clearTimeout(poolWatch);
             signal.removeEventListener('abort', onStop);
+            accepted.stop = undefined;
             turnController.abort();
             // A close that was being written when the turn ended (a stop of the worker, the turn's own end) is taken back by the give-up itself, which sees the
             // turn over: the end of the turn waits for that (bounded), so a worker that reports it is idle has not left a fence in the store that makes the relays
@@ -1224,20 +1241,40 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const given = (): number => notesGiven.get(job.jobId) ?? 0;
         let offered = 0;
         // Orbit not told yet that the agent had the notes up to this number (its answer was lost): told again before the next turn, never given to the agent again
-        let untold: number | null = null;
-        const forget = () => notesGiven.delete(job.jobId);
+        const untoldOf = (): number | null => notesUntold.get(job.jobId) ?? null;
+        const setUntold = (through: number | null): void => {
+            if (through === null) notesUntold.delete(job.jobId);
+            else {
+                notesUntold.set(job.jobId, through);
+                if (notesUntold.size > NOTES_KEPT) notesUntold.delete(notesUntold.keys().next().value as string);
+            }
+        };
+        const forget = () => {
+            notesGiven.delete(job.jobId);
+            notesUntold.delete(job.jobId);
+        };
         /** Tells Orbit the agent has had every note up to `through`, as the job's owner. A replaced worker is told so (its run ends); a lost answer is told again later. */
         const tellNotesSent = async (through: number): Promise<void> => {
             try {
                 const answer = await orbit.action(job.botId, job.jobId, { action: 'notes-sent', through, ...held() });
-                if (answer.ok === false && runStaleOf(answer)) superseded.add(run);
-                if (answer.ok === true || answer.ok === false) untold = untold !== null && untold > through ? untold : null;
-                else untold = Math.max(untold ?? 0, through);
+                if (answer.ok === false && runStaleOf(answer)) {
+                    // Another run holds the job: this run is over, and the reader of its turn (the acknowledgement can come while the turn is open) stops, nothing is cancelled
+                    superseded.add(run);
+                    accepted.stop?.();
+                }
+                const untold = untoldOf();
+                // A superseded answer recorded nothing: the acknowledgement is still owed (to the owner that comes next, under its epoch)
+                if (answer.ok === false && runStaleOf(answer)) setUntold(Math.max(untold ?? 0, through));
+                else if (answer.ok === true || answer.ok === false) setUntold(untold !== null && untold > through ? untold : null);
+                else setUntold(Math.max(untold ?? 0, through));
             } catch (error) {
-                if (staleForOrbit(error) && runStaleOf(error)) superseded.add(run);
-                else if (statusOf(error) === 404) untold = null;
+                if (staleForOrbit(error) && runStaleOf(error)) {
+                    superseded.add(run);
+                    setUntold(Math.max(untoldOf() ?? 0, through));
+                    accepted.stop?.();
+                } else if (statusOf(error) === 404) setUntold(null);
                 else {
-                    untold = Math.max(untold ?? 0, through);
+                    setUntold(Math.max(untoldOf() ?? 0, through));
                     say('Could not tell Orbit a job had its notes:', error);
                 }
             }
@@ -1330,6 +1367,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 }
             }
             // Orbit was not told the agent had its notes (the answer was lost): told now, before anything else of the turn
+            const untold = untoldOf();
             if (untold !== null) await tellNotesSent(untold);
             if (superseded.has(run)) return;
             // The control generation this turn starts on: every action it takes for the job carries it, so one from an older turn changes nothing
@@ -1560,6 +1598,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 for (let attempt = 0; attempt < RUNNER_GUARDS.maxBadTurns && !handed && !stale; attempt++) {
                     if (signal.aborted) return;
                     if (attempt > 0) await sleep(timing.waitMs, signal);
+                    // The wait ends when the worker is stopped: a handover is never sent after that (Orbit would put the job in waiting for a worker that was stopped)
+                    if (signal.aborted) return;
                     handed = await orbit
                         .action(
                             job.botId,
