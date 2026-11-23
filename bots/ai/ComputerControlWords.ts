@@ -131,7 +131,9 @@ export const CONTROL_WORDS = {
     stoppedNothingLeft: (stopped: number | null, asked: number, title?: string | null): string => {
         if (stopped === null) return asked >= 2 ? 'The jobs I asked you about have all ended now. Their files are kept.' : 'The job I asked you about has ended now. Its files are kept.';
         if (stopped === 0) return asked >= 2 ? 'Those jobs had already ended.' : title ? `${quotedTitle(title)} had already ended.` : 'That job had already ended.';
-        if (stopped >= asked) return `I've stopped all ${stopped} jobs on my computer. Their files are kept.`;
+        // "all" only when Orbit's number equals the number asked about; more than that (an Orbit that counts differently) is said as Orbit's number alone
+        if (stopped === asked) return `I've stopped all ${stopped} jobs on my computer. Their files are kept.`;
+        if (stopped > asked) return `I've stopped ${stopped} jobs on my computer. Their files are kept.`;
         return stopped === 1 ? "I've stopped 1 job on my computer. The rest had already ended. Their files are kept." : `I've stopped ${stopped} jobs on my computer. The rest had already ended. Their files are kept.`;
     },
     /**

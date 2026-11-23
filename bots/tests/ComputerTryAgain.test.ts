@@ -13,7 +13,7 @@ import axios from 'axios';
 import { AdminApiService, COMPUTER_CONTINUES_HEADER, cannotContinueOf } from '../server/AdminApiService';
 import { CANNOT_CONTINUE_NOTE, START_NEW_JOB_LABEL, START_REFUSAL_WORDS, TRY_AGAIN_WORDS, cannotContinue } from '../ai/ComputerTryAgainWords';
 import { AIService } from '../ai/AIService';
-import { ConfirmationQueue, computerToolDefinitions, forgetSettledStarts, runComputerTool, TRY_AGAIN_PENDING_SLOT, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
+import { ConfirmationQueue, computerToolDefinitions, forgetSettledStarts, runComputerTool, TRY_AGAIN_ASKED_SLOT, TRY_AGAIN_PENDING_SLOT, startKeyFor, type ComputerToolContext } from '../ai/ComputerTools';
 import { asksToTryAgain, offersTryAgain, retryJobOf, tryAgainNote, type RetryJob } from '../ai/ComputerTryAgain';
 import { jobLine, quotedTitle } from '../ai/JobStatusLine';
 import { CONTROL_WORDS } from '../ai/ComputerControlWords';
@@ -642,6 +642,54 @@ describe('try_again with no job named for this turn', () => {
             expect(admin.startComputerJob).not.toHaveBeenCalled();
         });
 
+        // CodeRabbit on ea88b4c1, 3: a start already sent in this turn is never followed by "NOTHING was started"
+        it('a fresh start that was ALREADY sent in this turn, then a try_again: nothing is asked, nothing says that nothing was started, and the ended jobs are not read', async () => {
+            const sending = deferred<unknown>();
+            const admin = { startComputerJob: vi.fn().mockReturnValue(sending.promise), computerEndedJobs: vi.fn().mockResolvedValue([VISA, TAXI]) };
+            const queue = new ConfirmationQueue();
+            const over = { startKeys: new Map(), confirmations: queue };
+            const fresh = runComputerTool({ job: 'Something new' }, ctx(admin as never, over));
+            expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+            const retry = await runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, over));
+            expect(retry).toMatchObject({ started: false });
+            expect(String(retry.note)).not.toMatch(/NOTHING was started/);
+            expect(String(retry.note)).toMatch(/already sent/);
+            expect(admin.computerEndedJobs).not.toHaveBeenCalled();
+            expect(queue.tell()).toEqual([]);
+            sending.resolve(started);
+            expect(await fresh).toMatchObject({ started: true });
+            expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+            // the person's next message clears it: a try_again then asks as usual
+            forgetSettledStarts(over.startKeys);
+            expect(await runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, over))).toMatchObject({ asked: 'which' });
+        });
+
+        // CodeRabbit on ea88b4c1, 4: the question of an earlier turn never stops a newer turn's start
+        it('the person writes again while the try_again lookup is pending: when it answers, its question does not stop the newer message\'s start', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const memory = new Map();
+            const first = runComputerTool({ job: 'x', try_again: true }, ctx(admin as never, { startKeys: memory, confirmations: new ConfirmationQueue() }));
+            // their next message: the turn's marks go
+            forgetSettledStarts(memory);
+            hold.resolve([VISA, TAXI]);
+            expect(await first).toMatchObject({ started: false });
+            expect(memory.has(TRY_AGAIN_ASKED_SLOT)).toBe(false);
+            expect(await runDelivered({ job: 'Something new' }, ctx(admin as never, { startKeys: memory }))).toMatchObject({ started: true });
+            expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+        });
+
+        it('the same, when the old lookup names an ended job exactly: it carries nothing on for a turn that is over', async () => {
+            const hold = deferred<unknown>();
+            const admin = heldWorld(hold.promise);
+            const memory = new Map();
+            const first = runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin as never, { startKeys: memory }));
+            forgetSettledStarts(memory);
+            hold.resolve([VISA, TAXI]);
+            expect(await first).toMatchObject({ started: false });
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+        });
+
         it('two try_agains in one round, one of which asks: neither starts (the one naming an ended job exactly waits, then finds the question)', async () => {
             const hold = deferred<unknown>();
             const admin = heldWorld(hold.promise);
@@ -672,6 +720,19 @@ describe('try_again with no job named for this turn', () => {
     });
 
     // CodeRabbit on the round 8 head, 2: a title longer than a start carries is still compared whole
+    // CodeRabbit on ea88b4c1, 2: the cut of the words must not take the last accent before they are compared
+    it('a 200-letter title ending in an accented letter, selected with the accent written as a combining mark, is the same job: it carries on, no question', async () => {
+        const stored = { id: OLD, title: `${'a'.repeat(199)}\u00e9` };
+        expect(stored.title.length).toBe(200);
+        const selected = `${'a'.repeat(199)}e\u0301`;
+        expect(selected.length).toBe(201);
+        const admin = world([stored]);
+        const queue = new ConfirmationQueue();
+        const answer = await runDelivered({ job: selected, try_again: true }, ctx(admin, { startKeys: new Map(), confirmations: queue }));
+        expect(answer).toMatchObject({ started: true });
+        expect((admin.startComputerJob.mock.calls[0][2] as { continuesJobId?: string }).continuesJobId).toBe(OLD);
+    });
+
     it('a title of more than 120 letters that names an ended job EXACTLY carries it on (compared whole, cut only when it becomes a start)', async () => {
         const long = { id: OLD, title: `Fill in the visa form for ${'a'.repeat(100)} and send it to the embassy by the end of the week` };
         expect(long.title.length).toBeGreaterThan(120);
