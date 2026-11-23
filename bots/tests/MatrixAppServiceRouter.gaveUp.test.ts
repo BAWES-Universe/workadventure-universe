@@ -168,3 +168,62 @@ describe('a give-back that is still being retried is part of the shutdown drain'
         expect(await router.settle(100)).toBe(false);
     });
 });
+
+// CodeRabbit on 8f22995a (old thread r4666780280): the answer to Matrix is the commit of the intake
+describe('a transaction is answered as kept only once every event is admitted', () => {
+    const put = async (inbox: EventInbox, handled: string[]) => {
+        const router = createMatrixAppServiceRouter(config, { onEvent: async (one) => void handled.push(one.event_id), userExists: async () => true }, { inbox });
+        const app = express();
+        app.use(router);
+        const server = await new Promise<import('node:http').Server>((resolve) => {
+            const one = app.listen(0, () => resolve(one));
+        });
+        try {
+            const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+            const res = await fetch(`${base}/_matrix/app/v1/transactions/t1`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer hs-secret' }, body: JSON.stringify({ events: [event('$one'), event('$two')] }) });
+            await router.settle(1000);
+            return res.status;
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    };
+    const entryOf = (calls: string[], id: string, admit: () => Promise<void>): InboxEntry =>
+        ({ paid: async () => undefined, done: async () => void calls.push(`done ${id}`), undo: async () => void calls.push(`undo ${id}`), release: async () => 'again', admit: async () => (calls.push(`admit ${id}`), admit()) }) as unknown as InboxEntry;
+
+    it('every event is admitted before the answer, and an event another intake still holds open answers 500 and takes back what this transaction took', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const calls: string[] = [];
+        const handled: string[] = [];
+        const ok = await put({ owner: 'one', recover: async () => [] as unknown as Recovered, take: async (id) => entryOf(calls, id, async () => undefined) }, handled);
+        expect(ok).toBe(200);
+        expect(calls.filter((line) => line.startsWith('admit'))).toEqual(['admit $one', 'admit $two']);
+
+        const busyCalls: string[] = [];
+        const busyHandled: string[] = [];
+        const busy = await put({ owner: 'one', recover: async () => [] as unknown as Recovered, take: async (id) => (id === '$two' ? ('busy' as const) : entryOf(busyCalls, id, async () => undefined)) }, busyHandled);
+        expect(busy).toBe(500);
+        expect(busyCalls).toEqual(['undo $one']);
+        expect(busyHandled).toEqual([]);
+    });
+
+    it('an admit the store did not confirm: 500, everything taken back, nothing handled', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const calls: string[] = [];
+        const handled: string[] = [];
+        const status = await put(
+            {
+                owner: 'one',
+                recover: async () => [] as unknown as Recovered,
+                take: async (id) =>
+                    entryOf(calls, id, async () => {
+                        if (id === '$two') throw new Error('store down');
+                    }),
+            },
+            handled
+        );
+        expect(status).toBe(500);
+        expect(calls.filter((line) => line.startsWith('undo')).sort()).toEqual(['undo $one', 'undo $two']);
+        expect(handled).toEqual([]);
+    });
+});

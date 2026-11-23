@@ -246,6 +246,7 @@ describe('MatrixDmBridge', () => {
         const states = new Map<string, 'held' | 'done' | 'released'>();
         const events = new Map<string, unknown>();
         const entryOf = (id: string) => ({
+            admit: async () => undefined,
             done: async () => void states.set(id, 'done'),
             release: async () => void states.set(id, 'released'),
             undo: async () => void states.delete(id),

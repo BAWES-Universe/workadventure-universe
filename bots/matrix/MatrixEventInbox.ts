@@ -21,6 +21,8 @@ export const EVENT_SEEN_SECONDS = 24 * 60 * 60;
 export const EVENT_SEEN_PREFIX = 'matrix:event:';
 export const INBOX_KEY = 'matrix:inbox';
 export const INBOX_EVENT_PREFIX = 'matrix:inbox:';
+/** The mark that the transaction an event came in is still being taken in (see `TAKE`). */
+export const INBOX_OPEN_PREFIX = 'matrix:inbox-open:';
 /** How often the owner says it is still working, and how long after its last beat another server may take the entry. */
 export const BEAT_EVERY_MS = 30 * 1000;
 export const BEAT_STALE_MS = 2 * 60 * 1000;
@@ -45,14 +47,31 @@ export const RECOVER_BATCH = 50;
  * Every script that changes an entry names the TOKEN of one acquisition (a new one each time a server takes an event in or takes it over, never the server's own name): a handle whose
  * entry was recovered (even by the same server) can neither beat it, mark it paid, finish it, give it back nor undo it. The token is matched whole, up to the bar that ends it.
  */
-/** Takes the event into the inbox: `1` when this server holds it now, `0` when it is already held or was handled. */
+/**
+ * Takes the event into the inbox: `1` when this server holds it now, `0` when it is already held (and admitted) or was handled, `2` when another server holds it and the transaction it came in is
+ * still being taken in (the entry carries an OPEN mark, KEYS[4]): that intake can still fail and take it back out, so a duplicate must not be answered as if the event were kept. The mark lives
+ * ARGV[6] seconds and is renewed by the beat, so it outlives an intake that is alive and lapses with one that died.
+ */
 const TAKE = `
 if redis.call('EXISTS', KEYS[1]) == 1 then
+  if redis.call('GET', KEYS[1]) ~= 'd' and redis.call('EXISTS', KEYS[4]) == 1 then
+    return 2
+  end
   return 0
 end
 redis.call('SET', KEYS[1], 'p|' .. ARGV[1] .. '|1', 'EX', tonumber(ARGV[2]))
 redis.call('SET', KEYS[3], ARGV[4], 'EX', tonumber(ARGV[2]))
+redis.call('SET', KEYS[4], '1', 'EX', tonumber(ARGV[6]))
 redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[5])
+return 1
+`;
+/** The transaction this event came in has kept all its events: the open mark goes, only while the entry is still this acquisition's, and a duplicate of the event is skipped from now on. */
+const ADMIT = `
+local held = redis.call('GET', KEYS[1])
+if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .. '|' then
+  return 0
+end
+redis.call('DEL', KEYS[4])
 return 1
 `;
 /** Still working: the entry's score moves to now, only while it is still this server's. */
@@ -64,6 +83,10 @@ end
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
 redis.call('EXPIRE', KEYS[3], tonumber(ARGV[2]))
 redis.call('ZADD', KEYS[2], tonumber(ARGV[3]), ARGV[4])
+-- an intake that is still going keeps its open mark
+if redis.call('EXISTS', KEYS[4]) == 1 then
+  redis.call('EXPIRE', KEYS[4], tonumber(ARGV[5]))
+end
 return 1
 `;
 /**
@@ -90,6 +113,7 @@ end
 redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
 redis.call('ZREM', KEYS[2], ARGV[3])
 redis.call('DEL', KEYS[3])
+redis.call('DEL', KEYS[4])
 return 1
 `;
 /**
@@ -107,6 +131,7 @@ if not held or string.sub(held, 1, 3 + string.len(ARGV[1])) ~= 'p|' .. ARGV[1] .
   return 0
 end
 local tries = tonumber(string.match(held, '|(%d+)$')) or tonumber(string.match(held, '|(%d+)|%$$')) or 1
+redis.call('DEL', KEYS[4])
 if tries >= tonumber(ARGV[3]) then
   redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
   redis.call('ZREM', KEYS[2], ARGV[4])
@@ -130,6 +155,7 @@ end
 redis.call('DEL', KEYS[1])
 redis.call('ZREM', KEYS[2], ARGV[2])
 redis.call('DEL', KEYS[3])
+redis.call('DEL', KEYS[4])
 return 1
 `;
 /**
@@ -156,6 +182,7 @@ local score = tonumber(redis.call('ZSCORE', KEYS[2], ARGV[4]) or 0)
 if owner ~= '-' and score > tonumber(ARGV[5]) then
   return nil
 end
+redis.call('DEL', KEYS[4])
 -- Something was paid for before its owner went away: it is closed, never handed out again (no second charge, no second answer). The caller is told it was closed, and with what event, so the loss is not silent
 if paid then
   local gone = redis.call('GET', KEYS[3])
@@ -203,6 +230,8 @@ export interface InboxEntry {
     givingBack?(): Promise<void> | undefined;
     /** False for the entry that holds nothing (the store is not connected): there is no durable copy and no other try. Absent: durable. */
     readonly durable?: boolean;
+    /** The transaction this event came in has kept all its events: from now on a duplicate of the event is skipped, where before it was told `busy`. Throws when the store did not confirm it. */
+    admit(): Promise<void>;
     /** The transaction this event came in was refused, so it is taken back out as if never taken and the resend takes it in afresh (a failed step leaves it to be recovered instead). */
     undo(): Promise<void>;
     /** Something the person pays for is about to begin: written down BEFORE it does, so a server that dies in the middle never has it handled again by another. Throws `PaidFenceError` when it could not be written down (the event is another server's now, or the store did not answer): nothing paid for may begin then. */
@@ -218,8 +247,8 @@ export interface ClosedEvent {
 }
 export type Recovered = Array<{ event: unknown; entry: InboxEntry; arrived?: number }> & { readonly closed?: ClosedEvent[] };
 
-/** What the inbox answers when an event arrives: an entry when this server is to handle it, `false` when it is already held or was handled. */
-export type Taken = false | InboxEntry;
+/** What the inbox answers when an event arrives: an entry when this server is to handle it, `false` when it is already held (and admitted) or was handled, `busy` when another server holds it and its transaction is still being taken in (it can still be taken back out: the duplicate must not be answered as kept). */
+export type Taken = false | 'busy' | InboxEntry;
 
 export interface EventInbox {
     /** Takes the event in before Matrix is answered. Throws only when the store could not be reached (the router then answers Matrix that it must send it again). */
@@ -252,14 +281,16 @@ export function createEventInbox(
     const ttlSeconds = options.ttlSeconds ?? EVENT_SEEN_SECONDS;
     const beatEveryMs = options.beatEveryMs ?? BEAT_EVERY_MS;
     const staleMs = options.staleMs ?? BEAT_STALE_MS;
+    /** How long the open mark of an intake lives without a beat: as long as an entry may be quiet before another server takes it over. */
+    const openSeconds = Math.max(1, Math.ceil(staleMs / 1000));
     const deadlineMs = options.deadlineMs ?? INBOX_DEADLINE_MS;
     const maxTries = options.maxTries ?? MAX_TRIES;
     const batch = options.batch ?? RECOVER_BATCH;
     const say = options.log ?? ((message: string, detail?: unknown) => console.warn(`[MatrixInbox] ${message}`, detail instanceof Error ? detail.message : detail));
     /** An entry that holds nothing: the store is not connected, so the event is handled and nothing is remembered. */
-    const nothing: InboxEntry = { durable: false, done: async () => undefined, release: async () => 'closed', undo: async () => undefined, paid: async () => undefined };
+    const nothing: InboxEntry = { durable: false, admit: async () => undefined, done: async () => undefined, release: async () => 'closed', undo: async () => undefined, paid: async () => undefined };
 
-    const keysOf = (eventId: string) => [`${EVENT_SEEN_PREFIX}${eventId}`, INBOX_KEY, `${INBOX_EVENT_PREFIX}${eventId}`];
+    const keysOf = (eventId: string) => [`${EVENT_SEEN_PREFIX}${eventId}`, INBOX_KEY, `${INBOX_EVENT_PREFIX}${eventId}`, `${INBOX_OPEN_PREFIX}${eventId}`];
     /** Any single call to the store against the same deadline. */
     const within = async <T>(call: Promise<T>): Promise<T> => {
         let timer: NodeJS.Timeout | undefined;
@@ -290,7 +321,7 @@ export function createEventInbox(
     /** An entry this server holds: it beats while it is held, and the beat stops when it ends. */
     const entryOf = (redis: Client, eventId: string, token: string): InboxEntry => {
         const beat = setInterval(() => {
-            void step(redis, BEAT, eventId, [token, String(ttlSeconds), String(Date.now()), eventId]).catch((error) => say('Could not say an event is still being handled:', error));
+            void step(redis, BEAT, eventId, [token, String(ttlSeconds), String(Date.now()), eventId, String(openSeconds)]).catch((error) => say('Could not say an event is still being handled:', error));
         }, beatEveryMs);
         beat.unref?.();
         let over = false;
@@ -362,6 +393,12 @@ export function createEventInbox(
             release: (onClosed) => giveBack(onClosed),
             givingBack: () => retrying,
             undo: () => end(UNDO, [token, eventId], 'taken back'),
+            // The transaction this event came in kept all its events: duplicates of it are skipped from now on. Throws when the store did not confirm it (the router then takes the transaction back)
+            admit: async () => {
+                if (over) return;
+                const answer = await step(redis, ADMIT, eventId, [token]);
+                if (answer !== 1 && answer !== '1') say('An entry could not be admitted: it is not this server\'s any more:', eventId);
+            },
             // Awaited before the first paid call, and it must SUCCEED: when it does not (another server holds the event now, or the store did not answer) it throws, and nothing paid for
             // begins. The event then goes back for another try, as one that nothing was paid for
             paid: async () => {
@@ -392,8 +429,9 @@ export function createEventInbox(
             const token = tokenOf();
             // What is written to the store holds no key: a key typed into the chat never reaches Redis, and the entry says only that one was there (the Brick refuses it as it would live)
             const kept = JSON.stringify({ arrived: arrivalOf(), event: withoutKeys(event) });
-            const took = await step(redis, TAKE, eventId, [token, String(ttlSeconds), String(Date.now()), kept, eventId]);
+            const took = await step(redis, TAKE, eventId, [token, String(ttlSeconds), String(Date.now()), kept, eventId, String(openSeconds)]);
             if (took === 0 || took === '0') return false;
+            if (took === 2 || took === '2') return 'busy';
             return entryOf(redis, eventId, token);
         },
         recover: async () => {

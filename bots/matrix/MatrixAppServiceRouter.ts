@@ -60,6 +60,14 @@ function tokenMatches(presented: string | undefined, expected: string): boolean 
     return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** An event of a transaction is held by another server's intake that has not finished: the transaction is not answered as kept. */
+class IntakeBusy extends Error {
+    constructor(readonly eventId: string) {
+        super('Another server is still taking this event in');
+        this.name = 'IntakeBusy';
+    }
+}
+
 /**
  * The application service API Synapse calls (spec: /_matrix/app/v1). Mount it before the bot API's own body parser:
  * a transaction can be larger than the default 100 kB limit.
@@ -155,10 +163,16 @@ export function createMatrixAppServiceRouter(
                 // eslint-disable-next-line no-await-in-loop
                 const taken = await options.inbox.take(event.event_id, event);
                 if (taken === false) continue;
+                // Another server holds this event and the transaction it came in is still being taken in there: that intake can still fail and take it back out, and a duplicate answered as
+                // kept would then leave Matrix believing an event was kept that is gone. Synapse is asked to send the transaction again, by when that intake is over (admitted: skipped; taken back: taken in here)
+                if (taken === 'busy') throw new IntakeBusy(event.event_id);
                 mine.push({ event, entry: taken });
             }
+            // The transaction is kept whole: from now on a duplicate of its events (at any server) is skipped. Not answered before this
+            await Promise.all(mine.map((one) => one.entry?.admit?.()));
         } catch (error) {
-            console.error('[MatrixAppService] Could not keep a transaction in the shared store; Synapse is asked to send it again:', error instanceof Error ? error.message : error);
+            if (error instanceof IntakeBusy) console.warn(`[MatrixAppService] Another server is still taking ${error.eventId} in; Synapse is asked to send the transaction again`);
+            else console.error('[MatrixAppService] Could not keep a transaction in the shared store; Synapse is asked to send it again:', error instanceof Error ? error.message : error);
             // What was already kept is taken back out as if never taken: the transaction that comes again holds those events too, and takes them in afresh in their order
             await Promise.all(mine.map((one) => one.entry?.undo().catch(() => undefined)));
             if (!res.headersSent) res.status(500).json({ errcode: 'M_UNKNOWN', error: 'Could not take the transaction in' });

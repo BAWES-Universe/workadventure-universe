@@ -28,7 +28,7 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
         giveTurnBack = await takeTurnOnInbox(client as never);
     }, 330_000);
     afterEach(async () => {
-        if (used.length > 0) await client.del([...used.map((id) => `matrix:event:${id}`), ...used.map((id) => `matrix:inbox:${id}`)]);
+        if (used.length > 0) await client.del([...used.map((id) => `matrix:event:${id}`), ...used.map((id) => `matrix:inbox:${id}`), ...used.map((id) => `matrix:inbox-open:${id}`)]);
         for (const id of used) await client.zRem(INBOX_KEY, id);
         used.length = 0;
     });
@@ -319,6 +319,92 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
         });
 
         // CodeRabbit on 27ab3385: the first give-back closes the entry (its last try) and the answer is lost; the retry finds `d` and must still report the closure
+        // CodeRabbit on 8f22995a (old thread r4666780280): one process serializing its intakes does not cover a second server; Synapse resends a transaction after its own timeout, without a 500
+        it('two routers on one inbox: a retry of a transaction whose first intake (at the other server) can still fail is NOT answered as kept, and the event is handled once, by whoever takes it in afterwards', async () => {
+            const [e1, e2] = [fresh('two-routers-a'), fresh('two-routers-b')];
+            const real = inboxOn({ owner: 'server-a' });
+            let open!: () => void;
+            const gate = new Promise<void>((resolve) => (open = resolve));
+            // server A takes e1 in and its intake then fails on e2 (after the retry has arrived at B)
+            const aInbox: EventInbox = {
+                owner: real.owner,
+                recover: () => real.recover(),
+                take: async (id, event) => {
+                    if (id === e2) {
+                        await gate;
+                        throw new Error('store down');
+                    }
+                    return real.take(id, event);
+                },
+            };
+            const handledA: string[] = [];
+            const handledB: string[] = [];
+            vi.spyOn(console, 'error').mockImplementation(() => undefined);
+            vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+            const A = await serve(aInbox, async (event) => void handledA.push(event.event_id));
+            const B = await serve(inboxOn({ owner: 'server-b' }), async (event) => void handledB.push(event.event_id));
+            const first = A.put('t1', message(e1), message(e2));
+            await new Promise((resolve) => setTimeout(resolve, 80));
+            // Synapse's retry of the same transaction reaches B while A's intake is still going: e1 is held by an intake that can still take it back
+            const retry = await B.put('t1', message(e1), message(e2));
+            expect(retry.status).toBe(500);
+            expect(handledB).toEqual([]);
+            open();
+            expect((await first).status).toBe(500);
+            // A took e1 back out; the retry after that finds nothing held and takes both in, in order, once
+            const again = await B.put('t1', message(e1), message(e2));
+            expect(again.status).toBe(200);
+            await vi.waitFor(() => expect(handledB).toEqual([e1, e2]));
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            expect(handledB).toEqual([e1, e2]);
+            expect(handledA).toEqual([]);
+        });
+
+        it('two routers on one inbox: once the first intake has kept the transaction, the duplicate at the other server is answered at once and handles nothing', async () => {
+            const id = fresh('two-routers-kept');
+            const handledA: string[] = [];
+            const handledB: string[] = [];
+            // A is still handling the event when the duplicate arrives (the entry is held, not done): admitted, so skipped
+            let finish!: () => void;
+            const slow = new Promise<void>((resolve) => (finish = resolve));
+            const A = await serve(inboxOn({ owner: 'server-a' }), async (event) => {
+                handledA.push(event.event_id);
+                await slow;
+            });
+            const B = await serve(inboxOn({ owner: 'server-b' }), async (event) => void handledB.push(event.event_id));
+            expect((await A.put('t2', message(id))).status).toBe(200);
+            await vi.waitFor(() => expect(handledA).toEqual([id]));
+            expect((await B.put('t2', message(id))).status).toBe(200);
+            finish();
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            expect(handledA).toEqual([id]);
+            expect(handledB).toEqual([]);
+        });
+
+        it('the open mark: a duplicate is told `busy` until the entry is admitted or taken back; a mark whose intake died lapses, and the entry is then an ordinary held one', async () => {
+            const id = fresh('open-mark');
+            const inbox = inboxOn({ owner: 'one' });
+            const other = inboxOn({ owner: 'two' });
+            const entry = (await inbox.take(id, message(id))) as InboxEntry;
+            expect(await other.take(id, message(id))).toBe('busy');
+            await entry.undo();
+            expect(await client.get(`matrix:inbox-open:${id}`)).toBeNull();
+            const again = (await other.take(id, message(id))) as InboxEntry;
+            expect(await inbox.take(id, message(id))).toBe('busy');
+            await again.admit();
+            expect(await inbox.take(id, message(id))).toBe(false);
+            await again.done();
+            expect(await client.get(`matrix:inbox-open:${id}`)).toBeNull();
+
+            // an intake that died (no beat) leaves a mark that lapses with the stale time
+            const dead = fresh('open-mark-dead');
+            const quick = inboxOn({ owner: 'three', beatEveryMs: 60_000, staleMs: 1000 });
+            await quick.take(dead, message(dead));
+            expect(await other.take(dead, message(dead))).toBe('busy');
+            await new Promise((resolve) => setTimeout(resolve, 1300));
+            expect(await other.take(dead, message(dead))).toBe(false);
+        });
+
         it('a give-back that closed the entry (its last try) with its answer lost is reported as closed when it is tried again, once', async () => {
             const id = fresh('lost-close');
             let lost = 0;

@@ -2150,6 +2150,9 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 // well past the stale time, while the owner beats: nobody else may have it
                 await new Promise((resolve) => setTimeout(resolve, 300));
                 expect(await other.recover()).toEqual([]);
+                // its transaction is still being taken in (not admitted): a duplicate is told so, never that the event is kept
+                expect(await inbox.take(id, event(id))).toBe('busy');
+                await entry.admit();
                 expect(await inbox.take(id, event(id))).toBe(false);
                 await entry.done();
                 expect(await stateOf(id)).toBe('d');
