@@ -888,6 +888,29 @@ describe('CodeRabbit N1/N12: only a clear yes, decided in code, ends a job', () 
     });
 
     // CodeRabbit on the round 8 head, 1: words that happen to be in the job's title are not a condition-free yes
+    // CodeRabbit on ea88b4c1, 11: a title that begins with a condition word is a name only when the message calls it one
+    it('"Yes, cancel when ready" to a question about a job called "When ready" is a condition, not a yes; naming it ("called ...") is, and so is a bare yes', async () => {
+        const title = ['When ready'];
+        expect(isClearYes('Yes, cancel when ready', title)).toBe(false);
+        expect(isClearYes('Yes, cancel the job When ready', title)).toBe(false);
+        expect(isClearYes('Yes, cancel the job called When ready', title)).toBe(true);
+        expect(isClearYes('Yes, cancel the job named When ready', title)).toBe(true);
+        expect(isClearYes('Yes', title)).toBe(true);
+        expect(isClearYes('Yes, cancel if needed', ['If needed'])).toBe(false);
+        const orbit = door(viewOf(working({ title: 'When ready' })), { cancel: viewOf(null) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'when' });
+        await c.deliver();
+        c.nextMessage('Yes, cancel when ready');
+        await c.run(CANCEL_JOB_TOOL, { job: 'when' });
+        expect(orbit.acted()).toEqual([]);
+        // the question ends and is asked again; a yes that names the job as a name then is one
+        await c.deliver();
+        c.nextMessage('Yes, cancel the job called When ready');
+        await c.run(CANCEL_JOB_TOOL, { job: 'when' });
+        expect(orbit.acted()).toHaveLength(1);
+    });
+
     it('a condition made of the title\'s own words is not a yes: "Yes, after review" to a question about "Upload after review"; a bare yes and "Yes, cancel Upload after review" are', async () => {
         const title = ['Upload after review'];
         expect(isClearYes('Yes, after review', title)).toBe(false);
