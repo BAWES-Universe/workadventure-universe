@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deliverTold } from './helpers/deliveredComputerTool';
 import { createClient } from 'redis';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@sentry/node', () => ({ captureException: vi.fn(), captureMessage: vi.fn() }));
 
@@ -1790,12 +1790,29 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
             }, 330_000);
             afterAll(async () => {
                 await Promise.all(servers.map((one) => new Promise<void>((resolve) => one.close(() => resolve()))));
-                if (client.isOpen && ids_.length > 0) await client.del([...ids_.map((id) => `matrix:event:${id}`), ...ids_.map((id) => `matrix:inbox:${id}`), INBOX_KEY]);
+                if (client.isOpen && ids_.length > 0)
+                    await client.del([
+                        ...ids_.map((id) => `matrix:event:${id}`),
+                        ...ids_.map((id) => `matrix:inbox:${id}`),
+                        ...ids_.map((id) => `matrix:inbox-admitted:${id}`),
+                        ...ids_.map((id) => `matrix:inbox-answer:${id}`),
+                        ...ids_.map((id) => `matrix:inbox-resend:${id}`),
+                        ...ids_.map((id) => `matrix:inbox-open:${id}`),
+                        ...rooms_.map((one) => `matrix:room-order:${one}`),
+                        INBOX_KEY,
+                    ]);
                 await giveTurnBack?.();
+            });
+            // Each case has its own chat: the events of one room wait behind an unfinished earlier one (GPT's seventh note G1), and a case may leave one unfinished on purpose
+            const rooms_: string[] = [];
+            let room = '!dm:matrix.test';
+            beforeEach(() => {
+                room = `!dm-${randomUUID()}:matrix.test`;
+                rooms_.push(room);
             });
             const event = (id: string, body = 'Hi', at?: number) => {
                 ids_.push(id);
-                return { type: 'm.room.message', room_id: '!dm:matrix.test', sender: '@alice:matrix.test', event_id: id, ...(at === undefined ? {} : { origin_server_ts: at }), content: { msgtype: 'm.text', body } };
+                return { type: 'm.room.message', room_id: room, sender: '@alice:matrix.test', event_id: id, ...(at === undefined ? {} : { origin_server_ts: at }), content: { msgtype: 'm.text', body } };
             };
             const fresh = (what = 'ev') => `$${what}-${randomUUID()}`;
             const quiet = () => new Promise((resolve) => setTimeout(resolve, 150));
@@ -1835,7 +1852,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                     userExists: async () => true,
                 };
                 const inbox = over.inbox === false ? undefined : (over.inbox ?? createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000 }));
-                const router = createMatrixAppServiceRouter(config, handler, inbox ? { inbox } : {});
+                const router = createMatrixAppServiceRouter(config, handler, inbox ? { inbox, waitCheckMs: 50 } : {});
                 const app = express();
                 app.use(router);
                 const server = await new Promise<Server>((resolve) => {
@@ -1890,9 +1907,16 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 const one = await instance(orbit, who, { fail: 2, answers });
                 const two = await instance(orbit, who, { answers });
                 await one.put('t1', event(a, 'first'), event(b, 'second'));
+                // the second waits (held by the first server) behind the first, which failed and went back (GPT's seventh note G1)
+                await vi.waitFor(() => expect(one.handled).toEqual([a]));
+                await quiet();
+                expect(one.handled).toEqual([a]);
+                expect(await two.recover()).toBe(1);
+                await vi.waitFor(() => expect(answers).toEqual([a]));
+                // then the second runs where it waited (its first try fails too) and comes back at the other server: answered after the first
                 await vi.waitFor(() => expect(one.handled).toEqual([a, b]));
                 await quiet();
-                expect(await two.recover()).toBe(2);
+                expect(await two.recover()).toBe(1);
                 await vi.waitFor(() => expect(answers).toHaveLength(2));
                 expect(answers).toEqual([a, b]);
             });
@@ -1906,9 +1930,13 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 const one = await instance(orbit, who, { fail: 2, answers });
                 const two = await instance(orbit, who, { answers });
                 await one.put('t1', event(early, 'first', 1_000), event(late, 'second', 2_000));
+                await vi.waitFor(() => expect(one.handled).toEqual([early]));
+                await quiet();
+                expect(await two.recover()).toBe(1);
+                await vi.waitFor(() => expect(answers).toEqual([early]));
                 await vi.waitFor(() => expect(one.handled).toEqual([early, late]));
                 await quiet();
-                expect(await two.recover()).toBe(2);
+                expect(await two.recover()).toBe(1);
                 await vi.waitFor(() => expect(answers).toHaveLength(2));
                 expect(answers).toEqual([early, late]);
             });
@@ -1981,7 +2009,8 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 await client.zAdd(INBOX_KEY, { score: 1, value: id });
                 expect(await two.recover()).toBe(0);
                 expect(two.handled).toEqual([]);
-                expect(await stateOf(id)).toBe('d');
+                // closed as UNANSWERED (no reply naming it was kept): never handed out again (GPT's seventh note G2)
+                expect(await stateOf(id)).toBe('u');
                 expect(await inInbox(id)).toBe(false);
                 expect(answers).toEqual([]);
                 expect(orbit.jobs.size).toBe(0);
@@ -2018,8 +2047,11 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 expect(await two.recover()).toBe(0);
                 expect(await stateOf(id)).toMatch(/\|\$$/);
                 // the paid step failing: the turn does NOT begin (nothing is paid for without the mark written), and the event goes back for another try
-                const broken = createEventInbox(() => ({ eval: async (script: string, options: unknown) => (/\$/.test(script) && /'\|\$'/.test(script) ? Promise.reject(new Error('down')) : (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, options)) }), { ttlSeconds: 60, beatEveryMs: 60_000, log: () => undefined });
+                const broken = createEventInbox(() => ({ eval: async (script: string, options: unknown) => (script.includes("held .. '|$'") ? Promise.reject(new Error('down')) : (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, options)) }), { ttlSeconds: 60, beatEveryMs: 60_000, log: () => undefined });
                 const ok = fresh('paidfail');
+                // in a chat of its own: in the first one it would wait behind the paid event above, whose owner is alive (GPT's seventh note G1)
+                room = `!dm-${randomUUID()}:matrix.test`;
+                rooms_.push(room);
                 const answers: string[] = [];
                 const three = await instance(orbit, who, { inbox: broken, answers });
                 await three.put('t3', event(ok));
@@ -2045,7 +2077,7 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 const slow = createEventInbox(
                     () => ({
                         eval: async (script: string, options: unknown) => {
-                            if (script.includes("'|$'")) await new Promise((resolve) => setTimeout(resolve, 200));
+                            if (script.includes("held .. '|$'")) await new Promise((resolve) => setTimeout(resolve, 200));
                             return (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, options);
                         },
                     }),
@@ -2162,7 +2194,8 @@ describe.skipIf(!REAL_REDIS)('one open start per Brick and person, on a real Red
                 const id = fresh('gone');
                 const dead = createEventInbox(() => client as never, { ttlSeconds: 60, beatEveryMs: 60_000, staleMs: 80 });
                 const alive = createEventInbox(() => client as never, { ttlSeconds: 60, staleMs: 80 });
-                await dead.take(id, event(id, 'Hi there'));
+                // kept whole (admitted): only such an entry is handed out again
+                await ((await dead.take(id, event(id, 'Hi there'))) as InboxEntry).admit();
                 await new Promise((resolve) => setTimeout(resolve, 200));
                 const left = await alive.recover();
                 expect(left).toHaveLength(1);

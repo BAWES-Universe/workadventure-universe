@@ -28,7 +28,14 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
         giveTurnBack = await takeTurnOnInbox(client as never);
     }, 330_000);
     afterEach(async () => {
-        if (used.length > 0) await client.del([...used.map((id) => `matrix:event:${id}`), ...used.map((id) => `matrix:inbox:${id}`), ...used.map((id) => `matrix:inbox-open:${id}`)]);
+        if (used.length > 0)
+            await client.del([
+                ...used.map((id) => `matrix:event:${id}`),
+                ...used.map((id) => `matrix:inbox:${id}`),
+                ...used.map((id) => `matrix:inbox-open:${id}`),
+                ...used.map((id) => `matrix:inbox-answer:${id}`),
+                ...used.map((id) => `matrix:room-order:!room-${id}:matrix.test`),
+            ]);
         for (const id of used) await client.zRem(INBOX_KEY, id);
         used.length = 0;
     });
@@ -79,7 +86,8 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             const id = fresh('key-recover');
             const dead = inboxOn({ staleMs: 60 });
             const alive = inboxOn({ staleMs: 60 });
-            await dead.take(id, message(id, `Authorization: Bearer ${'a'.repeat(40)}`));
+            // kept whole (admitted): only an admitted entry is ever handed out by recovery
+            await ((await dead.take(id, message(id, `Authorization: Bearer ${'a'.repeat(40)}`))) as InboxEntry).admit();
             await new Promise((resolve) => setTimeout(resolve, 150));
             const [left] = await alive.recover();
             const content = (left.event as MatrixEvent).content;
@@ -103,6 +111,7 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             const id = fresh('token');
             const inbox = inboxOn({ staleMs: 60, owner: 'same-server' });
             const first = (await inbox.take(id, message(id))) as InboxEntry;
+            await first.admit();
             await new Promise((resolve) => setTimeout(resolve, 150));
             const [again] = await inbox.recover();
             expect(again).toBeDefined();
@@ -130,7 +139,7 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             expect(await stateOf(id)).toBe('p|two:abc|2');
             // a store that does not answer
             const id2 = fresh('fence2');
-            const down = createEventInbox(() => ({ eval: async (script: string, o: unknown) => (script.includes("'|$'") ? Promise.reject(new Error('down')) : (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, o)) }) as never, { ttlSeconds: 60, beatEveryMs: 60_000, log: () => undefined });
+            const down = createEventInbox(() => ({ eval: async (script: string, o: unknown) => (script.includes("held .. '|$'") ? Promise.reject(new Error('down')) : (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, o)) }) as never, { ttlSeconds: 60, beatEveryMs: 60_000, log: () => undefined });
             const held = (await down.take(id2, message(id2))) as InboxEntry;
             await expect(held.paid()).rejects.toThrow(PaidFenceError);
             expect(await stateOf(id2)).toMatch(/^p\|/);
@@ -139,7 +148,7 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
 
         it('through the router: a handler whose fence fails starts nothing and the event is given back, never closed', async () => {
             const id = fresh('route');
-            const noFence = createEventInbox(() => ({ eval: async (script: string, o: unknown) => (script.includes("'|$'") ? Promise.reject(new Error('down')) : (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, o)) }) as never, { ttlSeconds: 60, beatEveryMs: 60_000, log: () => undefined });
+            const noFence = createEventInbox(() => ({ eval: async (script: string, o: unknown) => (script.includes("held .. '|$'") ? Promise.reject(new Error('down')) : (client as never as { eval: (s: string, o: unknown) => Promise<unknown> }).eval(script, o)) }) as never, { ttlSeconds: 60, beatEveryMs: 60_000, log: () => undefined });
             let began = 0;
             const { put } = await serve(noFence, async (_event, hooks) => {
                 await hooks?.paid();
@@ -159,8 +168,8 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             used.push(later, earlier);
             const dead = inboxOn({ staleMs: 60 });
             // the id that sorts LAST arrived first
-            await dead.take(later, { ...message(later, 'first'), room_id: room, origin_server_ts: 1_700_000_000_000 });
-            await dead.take(earlier, { ...message(earlier, 'second'), room_id: room, origin_server_ts: 1_700_000_000_000 });
+            await ((await dead.take(later, { ...message(later, 'first'), room_id: room, origin_server_ts: 1_700_000_000_000 })) as InboxEntry).admit();
+            await ((await dead.take(earlier, { ...message(earlier, 'second'), room_id: room, origin_server_ts: 1_700_000_000_000 })) as InboxEntry).admit();
             await new Promise((resolve) => setTimeout(resolve, 150));
             const order: string[] = [];
             const alive = inboxOn({ staleMs: 60 });
@@ -381,7 +390,7 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             expect(handledB).toEqual([]);
         });
 
-        it('the open mark: a duplicate is told `busy` until the entry is admitted or taken back; a mark whose intake died lapses, and the entry is then an ordinary held one', async () => {
+        it('a duplicate is told `busy` until the entry is admitted or taken back; an intake that went quiet before admitting is taken afresh by the retry, and can then neither admit nor undo it', async () => {
             const id = fresh('open-mark');
             const inbox = inboxOn({ owner: 'one' });
             const other = inboxOn({ owner: 'two' });
@@ -396,13 +405,24 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             await again.done();
             expect(await client.get(`matrix:inbox-open:${id}`)).toBeNull();
 
-            // an intake that died (no beat) leaves a mark that lapses with the stale time
+            // an intake that went quiet (no beat) before it admitted: never answered as kept (CodeRabbit on 24dea75c, findings 1 and 2: no lapse makes it look admitted)
             const dead = fresh('open-mark-dead');
             const quick = inboxOn({ owner: 'three', beatEveryMs: 60_000, staleMs: 1000 });
-            await quick.take(dead, message(dead));
-            expect(await other.take(dead, message(dead))).toBe('busy');
+            const stalled = (await quick.take(dead, message(dead))) as InboxEntry;
+            const retrying = inboxOn({ owner: 'four', staleMs: 1000 });
+            expect(await retrying.take(dead, message(dead))).toBe('busy');
             await new Promise((resolve) => setTimeout(resolve, 1300));
-            expect(await other.take(dead, message(dead))).toBe(false);
+            // the retry takes it afresh (Synapse never had a 200 for it)
+            const retaken = (await retrying.take(dead, message(dead))) as InboxEntry;
+            expect(retaken).toBeTruthy();
+            expect(await stateOf(dead)).toMatch(/^p\|four:/);
+            // the intake that went quiet: its admit throws (finding 3), and its undo deletes nothing of the new holder's
+            await expect(stalled.admit()).rejects.toThrow();
+            expect(await stalled.undo()).toBe('gone');
+            expect(await stateOf(dead)).toMatch(/^p\|four:/);
+            await retaken.admit();
+            expect(await retrying.take(dead, message(dead))).toBe(false);
+            await retaken.done();
         });
 
         // CodeRabbit on 8f22995a (old thread r4666780321): the give-back never gives up while the process lives, and the entry keeps beating so no other server closes it as paid work
@@ -670,8 +690,9 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
                 vi.spyOn(console, 'error').mockImplementation(() => undefined);
                 const dead = inboxOn({ staleMs: 60, maxTries: 1 });
                 const gone = (await dead.take(paidId, message(paidId))) as InboxEntry;
+                await gone.admit();
                 await gone.paid();
-                await dead.take(triesId, message(triesId));
+                await ((await dead.take(triesId, message(triesId))) as InboxEntry).admit();
                 await new Promise((resolve) => setTimeout(resolve, 150));
                 const told: Array<[string, string]> = [];
                 const handled: string[] = [];
@@ -683,8 +704,9 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
                 expect(await router.recover()).toBe(0);
                 await vi.waitFor(() => expect(told.sort()).toEqual([[paidId, 'paid'], [triesId, 'tries']].sort()));
                 expect(handled).toEqual([]);
-                expect(await stateOf(paidId)).toBe('d');
-                expect(await stateOf(triesId)).toBe('d');
+                // closed as UNANSWERED (GPT's seventh note G2): a terminal state kept with its event, which a redelivery does not handle again
+                expect(await stateOf(paidId)).toBe('u');
+                expect(await stateOf(triesId)).toBe('u');
                 // said once: a later scan finds both closed and tells nobody again
                 expect(await router.recover()).toBe(0);
                 await new Promise((resolve) => setTimeout(resolve, 100));
@@ -694,7 +716,9 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
             it('the closed list is not an element of what a scan returns, so a scan that took nothing is an empty list', async () => {
                 const id = fresh('plain-empty');
                 const dead = inboxOn({ staleMs: 60 });
-                await (await dead.take(id, message(id)) as InboxEntry).paid();
+                const kept = (await dead.take(id, message(id))) as InboxEntry;
+                await kept.admit();
+                await kept.paid();
                 await new Promise((resolve) => setTimeout(resolve, 150));
                 const found = await inboxOn({ staleMs: 60 }).recover();
                 expect(found).toEqual([]);

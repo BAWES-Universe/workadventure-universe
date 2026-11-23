@@ -29,6 +29,14 @@ describe("readBotStatusNote", () => {
         );
     });
 
+    it("reads the 'Cut off' note of an answer whose server went away after paid work began (a note about one message, like trouble)", () => {
+        const cut = { state: "unsure", title: "Cut off", text: "Guide was cut off while answering." };
+        expect(readBotStatusNote(BOT_CHAT_ID, { msgtype: "m.notice", body: "x", "universe.bot_status": cut })).toEqual(
+            cut
+        );
+        expect(availabilityFromNote("unsure")).toBeUndefined();
+    });
+
     it("ignores the same content from a person, as text, or with an unknown state", () => {
         expect(
             readBotStatusNote("@alice:matrix.bawes.net", { msgtype: "m.notice", "universe.bot_status": note })

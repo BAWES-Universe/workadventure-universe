@@ -18,7 +18,7 @@ import {
     type NoteLanguage,
 } from './BotStatusNotes';
 import { KEY_REDACTED_FIELD, holdsAKey, holdsAKeyAnywhere, keyInChatReply } from './KeyInChat';
-import { PaidFenceError } from './MatrixEventInbox';
+import { PaidFenceError, type ClosedWhy } from './MatrixEventInbox';
 import { ACCESS_CACHE_TTL_MS } from '../server/BotAccessGate';
 import { BotWokaAvatar } from './BotWokaAvatar';
 import { ARTIFACT_KEY, artifactDirectMessage } from '../ai/ArtifactTools';
@@ -568,7 +568,21 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 };
                 // Said by the bridge, outside the message's own content: a person's message can hold any content at all
                 this.connectedNotes.set(carried, connected);
-                await this.onMessage(carried, undefined, tracked ? { paid: async () => { await tracked.paid(); paid = true; }, ...(tracked.durable === undefined ? {} : { durable: tracked.durable }) } : undefined);
+                await this.onMessage(
+                    carried,
+                    undefined,
+                    tracked
+                        ? {
+                              paid: async () => {
+                                  await tracked.paid();
+                                  paid = true;
+                              },
+                              ...(tracked.durable === undefined ? {} : { durable: tracked.durable }),
+                              // The answer to the continuation answers the original event: the link is kept on ITS entry
+                              ...(tracked.answered ? { answered: tracked.answered } : {}),
+                          }
+                        : undefined
+                );
             } catch (error: any) {
                 // A fence that was not confirmed, or a failure before anything was paid for, goes back to the inbox; a lost answer after that costs nothing, since the card already said what happened
                 if (error instanceof PaidFenceError || (tracked && !paid)) throw error;
@@ -1816,6 +1830,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                       paid = true;
                   },
                   ...(hooks.durable === undefined ? {} : { durable: hooks.durable }),
+                  ...(hooks.answered ? { answered: hooks.answered } : {}),
               }
             : undefined;
         try {
@@ -2146,8 +2161,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             // A reply limit (#1159): the fixed card instead of an answer, and the message is not tried again
             if (reply?.replyLimit) {
-                await out.sendMessage(botUserId, event.room_id, replyLimitContent(reply.replyLimit, await this.botName(botId, config)));
+                const limitEvent = await out.sendMessage(botUserId, event.room_id, replyLimitContent(reply.replyLimit, await this.botName(botId, config)));
                 answered = true;
+                // The card is their answer: the link to it is the proof a server that takes this event over reads (G2)
+                if (typeof limitEvent === 'string' && limitEvent) await hooks?.answered?.(limitEvent);
                 return;
             }
             // No reply at all means the bot couldn't be set up to answer (no AI service here), and an empty one leaves the
@@ -2184,6 +2201,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // of that. A send that was suppressed (the chat was cleared meanwhile), or that gave no id, keeps and confirms nothing: the person was told nothing, so no line of that reply (a job's
             // status, say) is in the history as something they were told. The words of every job the reply names are in this one event
             if (reply.text && wordsEvent) reply.keep?.(wordsEvent);
+            // The proof that the person was answered (GPT's seventh note G2): the link from this event to the reply Matrix took, kept on the durable entry. A server that takes the event over
+            // after paid work began closes it quietly only with this link; without it (the answer never got out, or the link was not kept) the person is told once that it was not answered
+            if (wordsEvent) await hooks?.answered?.(wordsEvent);
             // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
             // the card goes out: once per person and topic on every device, so a second device racing it sends none.
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;
@@ -2382,23 +2402,30 @@ export class MatrixDmBridge implements MatrixEventHandler {
 
     /**
      * An event that will not be handled again (see `MatrixEventHandler.onGaveUp`): reported to Sentry as a warning (nothing of what the person wrote is in it), and when it was a message of a
-     * person and the chat can be resolved, the person gets the same "couldn't answer" line as for any failed answer, never silence: for work that had begun too (its server went away), where
-     * they may have been answered and the line is then only a little more than they needed.
+     * person and the chat can be resolved, the person gets the same "couldn't answer" line as for any failed answer, never silence. The one exception is work that had begun whose answer is
+     * PROVED (`answered`: the link from the event to the reply Matrix took): it is only reported. Anything unsure counts as not answered, so the person gets the line.
      */
-    async onGaveUp(event: MatrixEvent, why: 'tries' | 'paid'): Promise<void> {
+    async onGaveUp(event: MatrixEvent, why: ClosedWhy): Promise<void> {
         try {
             Sentry.captureMessage('A Matrix event will not be handled again', { level: 'warning', tags: { area: 'matrix-inbox', why } });
         } catch {
             /* a report is never in the way */
         }
-        // Both ways the person is told, never left in silence: an event that ran out of tries was not answered; one whose server went away after paid work had begun MAY have been (the inbox
-        // cannot tell a turn that never started from one that ran and was cut off), so the same line, which asks them to send it again, is the safe one
+        // Work had begun and the person's answer is PROVED (the link to the reply was kept): reported, and nothing more is said to them
+        if (why === 'answered') return;
+        // Every other way the person is told, never left in silence:
+        // - an event that ran out of tries, waited more than a day or whose entry lapsed was not answered and nothing paid for ran: "Couldn't answer, send it again" (sending it again is the
+        //   fresh consent; nothing of it runs again by itself);
+        // - one whose server went away after paid work had BEGUN has no proved answer (an unsure look counts as none), and a resent message would be a second paid turn: the person is asked to
+        //   look first ("not sure it answered"), never told to send it again. It is never run again by itself either
         if (event.type !== 'm.room.message' || botIdFromMatrixId(this.config.domain, event.sender)) return;
         try {
             const botId = await this.botForRoom(event.room_id, true);
             if (!botId || this.purgedBots.has(botId)) return;
             const config = await this.deps.getBotConfig(botId).catch(() => null);
-            await this.sendNote(botId, event.room_id, 'trouble', detectLanguage(String(event.content?.body ?? '')), config);
+            const language = detectLanguage(String(event.content?.body ?? ''));
+            // `lost`: the entry's state lapsed, so whether paid work began is not known: the careful line
+            await this.sendNote(botId, event.room_id, why === 'paid' || why === 'lost' ? 'unsure' : 'trouble', language, config);
         } catch (error: any) {
             console.warn(`[MatrixDmBridge] Could not tell the person in ${event.room_id} that their message was not answered:`, error?.message ?? error);
         }

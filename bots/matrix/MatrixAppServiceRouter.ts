@@ -1,7 +1,7 @@
 import express, { type Request, type Response, type NextFunction, type Router } from 'express';
 import { timingSafeEqual } from 'crypto';
 import type { MatrixAppServiceConfig } from './MatrixConfig';
-import type { EventInbox, InboxEntry } from './MatrixEventInbox';
+import { BEAT_EVERY_MS, type ClosedWhy, type EventInbox, type InboxEntry } from './MatrixEventInbox';
 
 /** A Matrix event as Synapse pushes it to an application service. */
 export interface MatrixEvent {
@@ -24,6 +24,11 @@ export interface EventHooks {
      * keeps it itself (in its own memory) rather than holding the room's chain for it. Absent or true: a durable entry holds it, which another try or another server takes up.
      */
     durable?: boolean;
+    /**
+     * The person's answer to this event is out, and Matrix gave it `replyId`: kept beside the durable entry as the proof that the person was answered, read by a server that takes the
+     * event over after paid work began (GPT's seventh note G2). Never throws; absent when nothing keeps the event.
+     */
+    answered?: (replyId: string) => Promise<void>;
 }
 
 export interface MatrixEventHandler {
@@ -33,10 +38,11 @@ export interface MatrixEventHandler {
      */
     onEvent(event: MatrixEvent, hooks?: EventHooks): Promise<void>;
     /**
-     * An event nothing will handle any more: it ran out of tries (`tries`), or work had begun when its owner went away and it is never handed out again (`paid`). Told so it is not silent: the
-     * handler reports it and, for `tries`, lets the person know. Never throws.
+     * An event nothing will handle any more (see `ClosedWhy`): it ran out of tries, it waited more than a day (`stale`), its entry lapsed (`lost`), or work had begun when its owner went
+     * away and it is never handed out again (`paid`: no answer is proved; `answered`: the answer is proved). Told so it is not silent: the handler reports it and lets the person know,
+     * except for `answered`. Never throws.
      */
-    onGaveUp?(event: MatrixEvent, why: 'tries' | 'paid'): Promise<void>;
+    onGaveUp?(event: MatrixEvent, why: ClosedWhy): Promise<void>;
     /** Synapse asks whether a Matrix ID in our namespace exists before someone can invite it. */
     userExists(userId: string): Promise<boolean>;
 }
@@ -81,6 +87,8 @@ export function createMatrixAppServiceRouter(
          * one (`recover`) instead of being lost behind a marker. Without one, events are handled as they arrive and nothing is remembered.
          */
         inbox?: EventInbox;
+        /** How soon an event waiting behind an earlier one of its room asks again (for the tests): `BEAT_EVERY_MS / 6`, and at once when this server ends an event of that room. */
+        waitCheckMs?: number;
     } = {}
 ): MatrixAppServiceRouter {
     const router = express.Router();
@@ -97,6 +105,13 @@ export function createMatrixAppServiceRouter(
     /** The look for events another server left, while one is going on (one at a time). */
     let recovering: Promise<number> | null = null;
     let closing = false;
+    const waitCheckMs = options.waitCheckMs ?? BEAT_EVERY_MS / 6;
+    /**
+     * The events waiting behind an earlier unfinished event of their room (GPT's seventh note G1), in the order they came, by room. They are OFF the room's chain while they wait: the earlier
+     * event, when this server takes it up again, runs on that chain and is not stuck behind them. Every later event of the room meets the same gate, so none runs ahead of them.
+     */
+    const waiting = new Map<string, Array<{ event: MatrixEvent; entry: InboxEntry }>>();
+    const waitTimers = new Map<string, NodeJS.Timeout>();
 
     const requireHomeserver = (req: Request, res: Response, next: NextFunction) => {
         const header = req.headers.authorization;
@@ -168,14 +183,22 @@ export function createMatrixAppServiceRouter(
                 if (taken === 'busy') throw new IntakeBusy(event.event_id);
                 mine.push({ event, entry: taken });
             }
-            // The transaction is kept whole: from now on a duplicate of its events (at any server) is skipped. Not answered before this
-            await Promise.all(mine.map((one) => one.entry?.admit?.()));
+            // The transaction is kept whole: from now on a duplicate of its events (at any server) is skipped. Not answered before this. Every admit is over before anything is decided, so
+            // none still lands after the events are taken back out
+            const admits = await Promise.allSettled(mine.map((one) => one.entry?.admit?.()));
+            const refused = admits.find((one): one is PromiseRejectedResult => one.status === 'rejected');
+            if (refused) throw refused.reason;
         } catch (error) {
             if (error instanceof IntakeBusy) console.warn(`[MatrixAppService] Another server is still taking ${error.eventId} in; Synapse is asked to send the transaction again`);
             else console.error('[MatrixAppService] Could not keep a transaction in the shared store; Synapse is asked to send it again:', error instanceof Error ? error.message : error);
-            // What was already kept is taken back out as if never taken: the transaction that comes again holds those events too, and takes them in afresh in their order
-            await Promise.all(mine.map((one) => one.entry?.undo().catch(() => undefined)));
+            // What was already kept is taken back out as if never taken: the transaction that comes again holds those events too, and takes them in afresh in their order. An entry that
+            // turns out ADMITTED (its admit committed and only the answer was lost) is never taken out (CodeRabbit on 24dea75c, finding 1): a duplicate of it is already skipped, so it is
+            // handled HERE, in its order, and the resend skips it
+            const undone = await Promise.all(mine.map((one) => (one.entry ? one.entry.undo().catch(() => 'unsure' as const) : Promise.resolve('undone' as const))));
             if (!res.headersSent) res.status(500).json({ errcode: 'M_UNKNOWN', error: 'Could not take the transaction in' });
+            mine.forEach((one, index) => {
+                if (undone[index] === 'admitted') work(one.event, one.entry);
+            });
             return false;
         }
         // Remembered BEFORE Matrix is answered: a copy that comes after the answer is a duplicate of events that are kept
@@ -189,9 +212,18 @@ export function createMatrixAppServiceRouter(
     /** The reports of events that will not be handled, while they are being made: shutdown waits for them (within its own limit), so a notice is not lost to an exit. */
     const reporting = new Set<Promise<void>>();
     /** An event that will not be handled: logged loudly and handed to the handler to report and to tell the person. */
-    const gaveUp = (event: MatrixEvent, why: 'tries' | 'paid'): Promise<void> => {
+    const reasons: Record<ClosedWhy, string> = {
+        tries: 'it ran out of tries',
+        paid: 'work had begun when its server went away, and no answer to the person is proved',
+        answered: 'work had begun when its server went away; the person was answered',
+        stale: 'it was taken in more than a day ago and is not run late',
+        lost: 'its entry lapsed in the shared store',
+    };
+    const gaveUp = (event: MatrixEvent, why: ClosedWhy): Promise<void> => {
         const run = (async () => {
-            console.error(`[MatrixAppService] An event will not be handled again (${why === 'tries' ? 'it ran out of tries' : 'work had begun when its server went away'}): ${event?.event_id ?? 'unknown'} in ${event?.room_id ?? 'unknown'}`);
+            const line = `[MatrixAppService] An event will not be handled again (${reasons[why]}): ${event?.event_id ?? 'unknown'} in ${event?.room_id ?? 'unknown'}`;
+            if (why === 'answered') console.warn(line);
+            else console.error(line);
             try {
                 await handler.onGaveUp?.(event, why);
             } catch (error) {
@@ -203,11 +235,67 @@ export function createMatrixAppServiceRouter(
         return run;
     };
 
+    /** The events of a room that wait are asked again: at once (`now`, this server just ended an event of the room) or after the wait. */
+    const askAgain = (room: string, now = false): void => {
+        if (!waiting.has(room)) return;
+        const timer = waitTimers.get(room);
+        if (timer && !now) return;
+        if (timer) clearTimeout(timer);
+        const again = setTimeout(
+            () => {
+                waitTimers.delete(room);
+                const queued = waiting.get(room);
+                waiting.delete(room);
+                // In the order they came: each meets the gate again on the room's chain
+                for (const one of queued ?? []) work(one.event, one.entry);
+            },
+            now ? 0 : waitCheckMs
+        );
+        again.unref?.();
+        waitTimers.set(room, again);
+    };
+    /** Waits behind an earlier event of its room: held (its entry beats), off the chain, asked again soon. At shutdown it is given back instead (it never ran: not a try). */
+    const wait = (event: MatrixEvent, entry: InboxEntry): void => {
+        if (closing) {
+            void entry.yieldBack?.();
+            return;
+        }
+        const queued = waiting.get(event.room_id) ?? [];
+        queued.push({ event, entry });
+        waiting.set(event.room_id, queued);
+        askAgain(event.room_id);
+    };
+
     /** Handles one event (its own room in order), and ends its inbox entry: done, or back for another try when nothing of it was paid for. */
     const work = (event: MatrixEvent, entry?: InboxEntry): void => {
         // Events in one room run in order; different rooms run side by side, so one slow reply holds up no one else.
         const previous = roomChains.get(event.room_id) ?? Promise.resolve();
         const next = previous.then(async () => {
+            // The gate of the room (G1): an earlier event of this room still unfinished anywhere (given back for another try, or held by a server that went away) runs first. This one waits,
+            // still held; a store that does not answer is not a yes
+            if (entry?.turn) {
+                const turn = await entry.turn().catch(() => 'wait' as const);
+                if (turn === 'gone') return;
+                if (turn === 'wait') {
+                    wait(event, entry);
+                    return;
+                }
+            }
+            // Whatever comes of it, the events of the room that wait are asked again at once once it ended
+            try {
+                await handle(event, entry);
+            } finally {
+                askAgain(event.room_id, true);
+            }
+        });
+        roomChains.set(event.room_id, next);
+        void next.then(() => {
+            if (roomChains.get(event.room_id) === next) roomChains.delete(event.room_id);
+        });
+    };
+
+    const handle = async (event: MatrixEvent, entry?: InboxEntry): Promise<void> => {
+        {
             let paid = false;
             try {
                 await handler.onEvent(event, {
@@ -219,6 +307,7 @@ export function createMatrixAppServiceRouter(
                         paid = true;
                     },
                     durable: entry !== undefined && entry.durable !== false,
+                    ...(entry?.answered ? { answered: (replyId: string) => entry.answered!(replyId) } : {}),
                 });
             } catch (error) {
                 console.error('[MatrixAppService] Event handling failed:', error);
@@ -238,11 +327,7 @@ export function createMatrixAppServiceRouter(
                 }
             }
             await entry?.done().catch(() => undefined);
-        });
-        roomChains.set(event.room_id, next);
-        void next.then(() => {
-            if (roomChains.get(event.room_id) === next) roomChains.delete(event.room_id);
-        });
+        }
     };
 
     /**
@@ -310,6 +395,12 @@ export function createMatrixAppServiceRouter(
 
     const settle = async (timeoutMs: number): Promise<boolean> => {
         closing = true;
+        // What waits behind an earlier event never ran: given back now (not a try), so the next scan anywhere takes it up in its room's order
+        const givingBack = [...waiting.values()].flat().map((one) => one.entry.yieldBack?.().catch(() => undefined));
+        waiting.clear();
+        for (const timer of waitTimers.values()) clearTimeout(timer);
+        waitTimers.clear();
+        await Promise.all(givingBack);
         let timer: NodeJS.Timeout | undefined;
         const timedOut = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), timeoutMs)));
         // Nothing new is admitted now, but what already was can still add work: a transaction being taken in, and a look for left-behind events, hand their events to the room chains when they
