@@ -1,0 +1,36 @@
+name: Test Sentry token for source maps (temporary)
+
+# Temporary: checks that the SENTRY_AUTH_TOKEN secret can upload source maps for universe-play.
+# Uses a throw-away release and deletes it afterwards.
+on:
+  push:
+    branches: [claude/project-thread-yhfwg0]
+    paths:
+      - '.github/workflows/test-sentry-token.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: bawes-co
+    steps:
+      - name: Token present?
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then echo "SENTRY_AUTH_TOKEN is empty here"; exit 1; fi
+          echo "token length: ${#SENTRY_AUTH_TOKEN}"
+      - name: Who is this token
+        run: npx -y @sentry/cli@3.4.3 info || true
+      - name: Upload a tiny source map to a throw-away release
+        run: |
+          mkdir -p /tmp/maps && cd /tmp/maps
+          printf 'console.log(1);\n//# sourceMappingURL=t.js.map\n' > t.js
+          printf '{"version":3,"file":"t.js","sources":["t.ts"],"sourcesContent":["console.log(1);"],"names":[],"mappings":"AAAA"}' > t.js.map
+          npx -y @sentry/cli@3.4.3 sourcemaps inject /tmp/maps
+          npx -y @sentry/cli@3.4.3 sourcemaps upload --project universe-play --release ci-token-check /tmp/maps
+      - name: Delete the throw-away release
+        if: always()
+        run: npx -y @sentry/cli@3.4.3 releases delete ci-token-check --project universe-play || true
