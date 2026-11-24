@@ -629,6 +629,22 @@ const chat: DeepPartial<Translation["chat"]> = {
         peopleOnline: "{count} شخصًا متصلًا في هذا العالم",
         unreadChats: "رسائل غير مقروءة",
     },
+    artifacts: {
+        openPublic: "عام",
+        openPublicHelp: "كل من لديه الرابط يرى فقط ما تنشره",
+        notPublished: "لم يُنشر بعد",
+        publishHelp: "يرى الناس النسخة التي تنشرها. تبقى التغييرات بعد ذلك خاصة حتى تنشر مرة أخرى.",
+        publishVersion: "نشر النسخة {version}",
+        publishedStatus: "تم النشر · النسخة {version} · {time}",
+        unpublishedChanges: "النسخة {version} لم تُنشر بعد",
+        linkFollows: "يعرض الرابط دائمًا أحدث نسخة لديك.",
+        publishBar: "تم النشر: النسخة {version}. النسخة {latest} لم تُنشر بعد.",
+        publish: "نشر",
+        publishing: "جارٍ النشر…",
+        publishFailed: "تعذّر النشر. حاول مرة أخرى.",
+        publicUnavailable: "النسخة العامة غير متاحة",
+        publicUnavailableHelp: 'يرى الناس "غير متاح" إلى أن تنشر نسخة.',
+    },
 };
 
 export default chat;

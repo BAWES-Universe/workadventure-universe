@@ -506,6 +506,22 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "지금 있는 곳",
         inThisRoom: "이 방에 있어요",
     },
+    artifacts: {
+        openPublic: "공개",
+        openPublicHelp: "링크가 있는 사람은 게시한 내용만 볼 수 있습니다",
+        notPublished: "아직 게시되지 않음",
+        publishHelp: "사람들은 게시한 버전을 봅니다. 그 이후의 변경 사항은 다시 게시할 때까지 비공개로 유지됩니다.",
+        publishVersion: "버전 {version} 게시",
+        publishedStatus: "게시됨 · 버전 {version} · {time}",
+        unpublishedChanges: "버전 {version}은(는) 아직 게시되지 않았습니다",
+        linkFollows: "링크에는 항상 최신 버전이 표시됩니다.",
+        publishBar: "게시됨: 버전 {version}. 버전 {latest}은(는) 아직 게시되지 않았습니다.",
+        publish: "게시",
+        publishing: "게시 중…",
+        publishFailed: "게시하지 못했습니다. 다시 시도하세요.",
+        publicUnavailable: "공개 버전을 사용할 수 없음",
+        publicUnavailableHelp: '버전을 게시하기 전까지 사람들에게는 "사용할 수 없음"이 표시됩니다.',
+    },
 };
 
 export default chat;

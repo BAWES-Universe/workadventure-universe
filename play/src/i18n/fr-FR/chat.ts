@@ -655,6 +655,23 @@ const chat: DeepPartial<Translation["chat"]> = {
         peopleOnline: "{count} personnes en ligne dans ce monde",
         unreadChats: "Messages non lus",
     },
+    artifacts: {
+        openPublic: "Public",
+        openPublicHelp: "Toute personne ayant le lien ne voit que ce que vous publiez",
+        notPublished: "Pas encore publié",
+        publishHelp:
+            "Les gens voient la version que vous publiez. Les modifications suivantes restent privées jusqu'à une nouvelle publication.",
+        publishVersion: "Publier la version {version}",
+        publishedStatus: "Publié · Version {version} · {time}",
+        unpublishedChanges: "La version {version} n'est pas encore publiée",
+        linkFollows: "Le lien affiche toujours votre dernière version.",
+        publishBar: "Publié : version {version}. La version {latest} n'est pas encore publiée.",
+        publish: "Publier",
+        publishing: "Publication…",
+        publishFailed: "Publication impossible. Réessayez.",
+        publicUnavailable: "Version publique indisponible",
+        publicUnavailableHelp: "Les gens voient « Non disponible » tant que vous n'avez pas publié une version.",
+    },
 };
 
 export default chat;

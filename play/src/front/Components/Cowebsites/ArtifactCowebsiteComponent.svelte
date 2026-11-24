@@ -124,10 +124,12 @@
     /** Counts the times the version on show was opened again: only the answer to the last one is used. */
     let renewal = 0;
     /**
-     * Counts the owner's own choices (who can open it, what was published) that came back. An answer to opening that was
-     * on its way when one came back may be older than it, so it does not write it over (`withNewerChoices`).
+     * Count the owner's own choices that came back: who can open it, and what was published, each on its own. An answer to
+     * opening that was on its way when one came back may be older than it, so it does not write that choice over
+     * (`withNewerChoices`); a choice of the other kind is left as the answer says.
      */
-    let choices = 0;
+    let sharedChoices = 0;
+    let publishedChoices = 0;
     /** A renewal was asked for while another opening was on its way, and is still wanted if that one does not come on show. */
     let renewWhenFree = false;
     /** An opening started while a version was on show, and dropped its renewal: set when it starts, cleared when it comes on show. */
@@ -245,7 +247,8 @@
     $: sharedByLink = opened?.artifact.openScope === "link" || opened?.artifact.openScope === "public";
     // The window says so, with Publish right there, once the latest version is newer than the one people see
     $: unpublishedChanges = published !== undefined && !publishedGone && published.version < latest;
-    $: showPublishBar = phase === "ready" && !!opened?.you.owner && sharedByLink && unpublishedChanges && !shareOpen;
+    $: showPublishBar =
+        phase === "ready" && !!opened?.you.owner && sharedByLink && unpublishedChanges && isLatest && !shareOpen;
     // "People in this chat" only while the owner is in the nearby chat it was made in, naming who is in it now;
     // otherwise the same choice reads "Just you", the only one who can open it then
     $: inItsChat =
@@ -286,7 +289,7 @@
 
     async function load(version: number | undefined) {
         const mine = ++request;
-        const choicesBefore = choices;
+        const choicesBefore = choicesNow();
         // A renewal of the version on show that is still on its way is out of date from the moment another opening starts:
         // if it answers "kept private" while this opening is still loading, it must not put away the opening that is coming.
         // One that is only waiting for its time is cancelled too, and renewAddress does nothing until this opening ends.
@@ -442,7 +445,7 @@
             return;
         }
         const turn = ++renewal;
-        const choicesBefore = choices;
+        const choicesBefore = choicesNow();
         const number = shownNumber;
         // Dropped when another version came on show meanwhile, it was put away, or it was asked for again
         const stale = () => destroyed || turn !== renewal || shownNumber !== number;
@@ -467,17 +470,22 @@
      * An answer to opening that was asked for before one of the owner's choices came back keeps that choice as it now is:
      * the answer may have been made before it.
      */
-    function withNewerChoices(answer: OpenedArtifact, choicesBefore: number): OpenedArtifact {
-        if (!opened || choices === choicesBefore) return answer;
+    function withNewerChoices(answer: OpenedArtifact, before: { shared: number; published: number }): OpenedArtifact {
+        if (!opened) return answer;
+        const sharedSince = sharedChoices !== before.shared;
+        const publishedSince = publishedChoices !== before.published;
+        if (!sharedSince && !publishedSince) return answer;
         return {
             ...answer,
             artifact: {
                 ...answer.artifact,
-                openScope: opened.artifact.openScope,
-                published: opened.artifact.published,
+                ...(sharedSince ? { openScope: opened.artifact.openScope } : {}),
+                ...(publishedSince ? { published: opened.artifact.published } : {}),
             },
         };
     }
+
+    const choicesNow = () => ({ shared: sharedChoices, published: publishedChoices });
 
     /** Nothing is drawn from the address in hand any more: the version on show waits for a new one. */
     function drawFromNewAddress() {
@@ -563,18 +571,19 @@
         copied = "no";
     }
 
-    // Publishes the latest version the owner can see, in Share or from the bar: what they were looking at, so a version a
-    // bot made at that moment is never published unseen. Only the owner has the button; Orbit checks it again.
+    // Publishes the version the owner has on show, and only while it is the latest (`isLatest`): a newer one made meanwhile
+    // (a bot's, say) has to be opened first (Back to latest), so nothing is ever published unseen. The buttons name that same
+    // version. Only the owner has them; Orbit checks it again.
     function publish() {
-        if (!opened || publishing || pendingShare) return;
+        if (!opened || publishing || pendingShare || !isLatest) return;
         publishing = true;
         publishFailed = false;
-        void publishArtifact(id, latest, actualCowebsite.chat).then(
+        void publishArtifact(id, opened.version.number, actualCowebsite.chat).then(
             (artifact) => {
                 if (destroyed) return;
                 publishing = false;
                 if (!opened) return;
-                choices++;
+                publishedChoices++;
                 opened = {
                     ...opened,
                     artifact: {
@@ -607,7 +616,7 @@
                 if (destroyed) return;
                 pendingShare = undefined;
                 if (!opened) return;
-                choices++;
+                sharedChoices++;
                 opened = {
                     ...opened,
                     artifact: {
@@ -1072,13 +1081,22 @@
                         <div class="publish-box" data-testid="artifactPublishedGone">
                             <b class="unavailable">{$LL.chat.artifacts.publicUnavailable()}</b>
                             <small>{$LL.chat.artifacts.publicUnavailableHelp()}</small>
-                            <button
-                                type="button"
-                                class="go publish-full"
-                                disabled={publishing || !!pendingShare}
-                                data-testid="artifactPublish"
-                                on:click={publish}>{$LL.chat.artifacts.publishVersion({ version: latest })}</button
-                            >
+                            {#if isLatest}
+                                <button
+                                    type="button"
+                                    class="go publish-full"
+                                    disabled={publishing || !!pendingShare}
+                                    data-testid="artifactPublish"
+                                    on:click={publish}>{$LL.chat.artifacts.publishVersion({ version: latest })}</button
+                                >
+                            {:else}
+                                <button
+                                    type="button"
+                                    class="go publish-full"
+                                    data-testid="artifactPublishOpenLatest"
+                                    on:click={backToLatest}>{$LL.chat.artifacts.backToLatest()}</button
+                                >
+                            {/if}
                         </div>
                     {:else if published}
                         <div class="publish-row" data-testid="artifactPublished">
@@ -1095,28 +1113,46 @@
                                 {/if}
                             </span>
                             {#if published.version < latest}
-                                <button
-                                    type="button"
-                                    class="go publish-pill"
-                                    disabled={publishing || !!pendingShare}
-                                    data-testid="artifactPublish"
-                                    on:click={publish}
-                                    >{#if publishing}<IconLoader font-size="16" class="spin" />{/if}
-                                    {$LL.chat.artifacts.publish()}</button
-                                >
+                                {#if isLatest}
+                                    <button
+                                        type="button"
+                                        class="go publish-pill"
+                                        disabled={publishing || !!pendingShare}
+                                        data-testid="artifactPublish"
+                                        on:click={publish}
+                                        >{#if publishing}<IconLoader font-size="16" class="spin" />{/if}
+                                        {$LL.chat.artifacts.publish()}</button
+                                    >
+                                {:else}
+                                    <button
+                                        type="button"
+                                        class="go publish-pill"
+                                        data-testid="artifactPublishOpenLatest"
+                                        on:click={backToLatest}>{$LL.chat.artifacts.backToLatest()}</button
+                                    >
+                                {/if}
                             {/if}
                         </div>
                     {:else if openScope === "public"}
                         <div class="publish-box" data-testid="artifactNotPublished">
                             <b>{$LL.chat.artifacts.notPublished()}</b>
                             <small>{$LL.chat.artifacts.publishHelp()}</small>
-                            <button
-                                type="button"
-                                class="go publish-full"
-                                disabled={publishing || !!pendingShare}
-                                data-testid="artifactPublish"
-                                on:click={publish}>{$LL.chat.artifacts.publishVersion({ version: latest })}</button
-                            >
+                            {#if isLatest}
+                                <button
+                                    type="button"
+                                    class="go publish-full"
+                                    disabled={publishing || !!pendingShare}
+                                    data-testid="artifactPublish"
+                                    on:click={publish}>{$LL.chat.artifacts.publishVersion({ version: latest })}</button
+                                >
+                            {:else}
+                                <button
+                                    type="button"
+                                    class="go publish-full"
+                                    data-testid="artifactPublishOpenLatest"
+                                    on:click={backToLatest}>{$LL.chat.artifacts.backToLatest()}</button
+                                >
+                            {/if}
                         </div>
                     {:else}
                         <p class="menu-note pin" data-testid="artifactLinkFollows">
