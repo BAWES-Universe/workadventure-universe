@@ -329,6 +329,8 @@ const epochOf = (starts: Map<string, StartKeyEntry> | undefined): number => (sta
 const OVERTAKEN_NOTE = 'They wrote again while this was being checked, so nothing was started by this call.';
 const START_DISPATCHED_NOTE = 'A start for this person was already sent in this same turn, so this call sent nothing more and asked them nothing. Do not call use_computer again in this turn. Say nothing more about starting: what that start did is told to them separately.';
 const TRY_AGAIN_ASKED_NOTE = 'They have not chosen yet, so NOTHING was started. A fixed line under your reply already asked them: do not ask it again and do not call use_computer again in this turn. Only their next message can start anything.';
+/** A message with no time of its own is never the consent of a paid start (GPT's eighth note, A2): nothing is started from it and the person is asked to say it again. */
+const NO_CONSENT_TIME_NOTE = 'Nothing was started: this message carries no time of its own, so no job can be started from it. Say in one short sentence, in the person\'s language, that you could not start it from that message and that they can ask again.';
 const COULD_NOT_CHECK_NOTE = 'It is not known whether this job started. Say in one short sentence, in the person\'s language and in these words: "I couldn\'t check whether this job has started. I\'ll use the same request when you check again." They can also look at the bar above this chat. Do not say it failed or that it started.';
 
 /** What was asked, as one string: the same title in the same chat is the same ask (the details a model words differently when it asks again do not make a second job). */
@@ -607,11 +609,14 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
         // A reply written again has a new queue that counts from 0, but the starts the first one made are kept (their entries stay for the turn): a new start never takes the key of a kept one
         const kept = new Set<string>();
         for (const one of context.startKeys?.values() ?? []) if (one.key) kept.add(one.key);
-        const issued = context.inbound.ts ?? Date.now();
+        // Never the clock of this try (a message sent again would give the same event a new moment of consent): `ts` is given for every event that reaches here (checked before the key is made)
+        const issued = context.inbound.ts ?? 0;
         let key = startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart(), issued);
         while (kept.has(key)) key = startKeyFor(context.botId, context.inbound.roomId, context.inbound.eventId, context.confirmations.nextStart(), issued);
         return key;
     };
+    // A start of a Matrix event with no time of its own (not the event's, not the first the inbox saw) makes no paid key: it would take the moment of this try as the person's consent
+    if (!earlier && context.inbound && context.confirmations && context.inbound.ts === undefined) return { started: false, success: false, note: NO_CONSENT_TIME_NOTE };
     const entry: StartKeyEntry = earlier ?? { key: newKey(), at: now, open: true, unchecked: true, payload: current };
     // The entry is put where the next call finds it BEFORE anything is awaited
     if (entry.open) context.startKeys?.set(OPEN_START_SLOT, entry);

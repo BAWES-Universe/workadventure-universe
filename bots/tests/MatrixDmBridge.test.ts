@@ -1777,10 +1777,11 @@ describe('MatrixDmBridge', () => {
         deps.reply.mockResolvedValue({ text: '', media: [], failed: true });
         await bridge.checkWaiting();
         const kept = () => JSON.parse([...(bridge as any).localWaiting.get(BOT).values()][0].message);
-        expect(kept().unsigned).toEqual({ universe_attempts: 1 });
+        // the test's message has no time of its own: it is kept as one (GPT's eighth note, A2)
+        expect(kept().unsigned).toEqual({ universe_attempts: 1, universe_no_ts: true });
         deps.getBotConfig.mockResolvedValueOnce({ ...resting, enabled: true } as never).mockResolvedValueOnce(resting as never);
         await bridge.checkWaiting();
-        expect(kept().unsigned).toEqual({ universe_attempts: 1 });
+        expect(kept().unsigned).toEqual({ universe_attempts: 1, universe_no_ts: true });
     });
 
     it('a waiting message stays in line when the room store is unreachable, and is dropped once the chat is closed', async () => {

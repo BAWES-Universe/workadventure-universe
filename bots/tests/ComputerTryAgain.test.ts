@@ -915,6 +915,42 @@ describe('try_again with no job named for this turn', () => {
 });
 
 // GPT seventh note, A2 (Fable's final lines, /mnt/project-files/brick-three-job-lines/strings.txt): Orbit's `retired` and `stale_consent` answers to a start
+// GPT's eighth note, A2: a Matrix event with no time of its own is never the consent of a paid start (no clock stands in for it, so a redelivery cannot gain new spending permission)
+describe('an event with no time of its own starts nothing', () => {
+    const ok = { ok: true, job: { id: 'j', status: 'running', queuedFor: null }, restoredFrom: null };
+    const ctx = (admin: { startComputerJob: ReturnType<typeof vi.fn> }, over: Partial<ComputerToolContext> = {}): ComputerToolContext => ({ admin: admin as never, botId: BRICK, userId: 'uuid-alice', ...over });
+
+    it('a start of an event with no `ts` sends nothing and says so, however often it is delivered', async () => {
+        const admin = { startComputerJob: vi.fn().mockResolvedValue(ok) };
+        const memory = new Map();
+        const over = { startKeys: memory, confirmations: new ConfirmationQueue(), inbound: { roomId: '!r:test', eventId: '$undated' } };
+        const first = await runComputerTool({ job: 'Visa form' }, ctx(admin, over));
+        expect(first).toMatchObject({ started: false });
+        expect(String(first.note)).toMatch(/no time of its own/);
+        // the same event again (a restart, another server): still nothing, and nothing is kept
+        const again = await runComputerTool({ job: 'Visa form' }, ctx(admin, { ...over, startKeys: new Map(), confirmations: new ConfirmationQueue() }));
+        expect(again).toMatchObject({ started: false });
+        expect(admin.startComputerJob).not.toHaveBeenCalled();
+        expect([...memory.values()].some((entry) => entry.open)).toBe(false);
+    });
+
+    it('the same event WITH its time starts, with a key whose time is that time (and the key is the same every delivery)', async () => {
+        const admin = { startComputerJob: vi.fn().mockResolvedValue(ok) };
+        const inbound = { roomId: '!r:test', eventId: '$dated', ts: 1_700_000_000_000 };
+        await runComputerTool({ job: 'Visa form' }, ctx(admin, { startKeys: new Map(), confirmations: new ConfirmationQueue(), inbound }));
+        await runComputerTool({ job: 'Visa form' }, ctx(admin, { startKeys: new Map(), confirmations: new ConfirmationQueue(), inbound }));
+        const keys = admin.startComputerJob.mock.calls.map((call) => (call[2] as { startKey: string }).startKey);
+        expect(keys).toHaveLength(2);
+        expect(keys[0]).toBe(keys[1]);
+        expect(keys[0].startsWith(`t${(1_700_000_000_000).toString(36)}-`)).toBe(true);
+    });
+
+    it('a chat with no inbound event at all (not Matrix) keeps its random key', async () => {
+        const admin = { startComputerJob: vi.fn().mockResolvedValue(ok) };
+        expect(await runComputerTool({ job: 'Visa form' }, ctx(admin, { startKeys: new Map(), confirmations: new ConfirmationQueue() }))).toMatchObject({ started: true });
+    });
+});
+
 describe('a start Orbit answers with retired or stale_consent', () => {
     const run = (reason: string) => ({ startComputerJob: vi.fn().mockResolvedValue({ ok: false, reason }) });
     const ctx = (admin: ReturnType<typeof run>, over: Partial<ComputerToolContext> = {}): ComputerToolContext => ({ admin: admin as never, botId: BRICK, userId: 'uuid-alice', ...over });
@@ -924,7 +960,7 @@ describe('a start Orbit answers with retired or stale_consent', () => {
         const queue = new ConfirmationQueue();
         const offered: string[] = [];
         const memory = new Map();
-        const over = { confirmations: queue, startKeys: memory, offerNewJob: (title: string) => void offered.push(title), inbound: { roomId: '!r:test', eventId: '$e1' } };
+        const over = { confirmations: queue, startKeys: memory, offerNewJob: (title: string) => void offered.push(title), inbound: { roomId: '!r:test', eventId: '$e1', ts: 1_700_000_000_000 } };
         const first = await runComputerTool({ job: 'Visa form' }, ctx(admin, over));
         const again = await runComputerTool({ job: 'Visa form' }, ctx(admin, over));
         const other = await runComputerTool({ job: 'Book a taxi' }, ctx(admin, over));
@@ -952,10 +988,10 @@ describe('a start Orbit answers with retired or stale_consent', () => {
     it('the next message (a new turn, a new key) is an ordinary new start', async () => {
         const memory = new Map();
         const admin = run('stale_consent');
-        await runComputerTool({ job: 'Visa form' }, ctx(admin, { startKeys: memory, confirmations: new ConfirmationQueue(), inbound: { roomId: '!r:test', eventId: '$e1' } }));
+        await runComputerTool({ job: 'Visa form' }, ctx(admin, { startKeys: memory, confirmations: new ConfirmationQueue(), inbound: { roomId: '!r:test', eventId: '$e1', ts: 1_700_000_000_000 } }));
         admin.startComputerJob.mockResolvedValue({ ok: true, job: { id: 'j', status: 'running', queuedFor: null }, restoredFrom: null });
         const next = new Map();
-        const later = await runComputerTool({ job: 'Visa form' }, ctx(admin, { startKeys: next, confirmations: new ConfirmationQueue(), inbound: { roomId: '!r:test', eventId: '$e2' } }));
+        const later = await runComputerTool({ job: 'Visa form' }, ctx(admin, { startKeys: next, confirmations: new ConfirmationQueue(), inbound: { roomId: '!r:test', eventId: '$e2', ts: 1_700_000_005_000 } }));
         expect(later).toMatchObject({ started: true });
         const keys = admin.startComputerJob.mock.calls.map((call) => (call[2] as { startKey: string }).startKey);
         expect(keys[0]).not.toBe(keys[1]);

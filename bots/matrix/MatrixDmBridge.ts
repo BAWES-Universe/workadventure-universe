@@ -567,14 +567,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     sender: event.sender,
                     // Made from the original event's id: the same event handled again (another server, a second try) is the same continuation, never a new one
                     event_id: `$app-${createHash('sha256').update(event.event_id).digest('hex').slice(0, 32)}`,
-                    // The original event's own time when it has one; never this try's clock, which another try would give differently (CodeRabbit on 68379005): without one the
-                    // time the inbox kept with the event is the moment of consent. Put on the continuation itself (CodeRabbit on ea88b4c1, finding 6), so a Brick that rests keeps
-                    // that time with the message it remembers, and answers it later with the same moment of consent
-                    ...(typeof event.origin_server_ts === 'number'
-                        ? { origin_server_ts: event.origin_server_ts }
-                        : typeof tracked?.arrived === 'number'
-                          ? { origin_server_ts: tracked.arrived }
-                          : {}),
+                    // The original event's own time when it has one; never this try's clock, which another try would give differently (CodeRabbit on 68379005). An event with no time of its own
+                    // has none here either: no clock stands in for the moment of consent (GPT's eighth note, A2), so nothing paid for is started from it. Put on the continuation itself
+                    // (CodeRabbit on ea88b4c1, finding 6), so a Brick that rests keeps that time with the message it remembers
+                    ...(typeof event.origin_server_ts === 'number' ? { origin_server_ts: event.origin_server_ts } : {}),
                     content: { msgtype: 'm.text', body: note },
                 };
                 // Said by the bridge, outside the message's own content: a person's message can hold any content at all
@@ -2105,9 +2101,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 roomId: event.room_id,
                 ...(event.event_id ? { eventId: event.event_id } : {}),
-                // The moment of consent a start key carries (GPT's seventh note A2): the event's own time, else the time the durable inbox kept with it. Never the clock of this try: a
-                // retry or another server taking the event over would give the same event a different key (and a second job)
-                ...(typeof event.origin_server_ts === 'number' ? { eventTs: event.origin_server_ts } : hooks?.arrived !== undefined ? { eventTs: hooks.arrived } : {}),
+                // The moment of consent a start key carries (GPT's seventh and eighth notes, A2): the event's own time, and nothing else. An event with no time of its own, or one kept for a
+                // resting Brick that had none (`universe_no_ts`), has none: no clock (this try's, the inbox's arrival) may stand in for it, so a redelivery can never gain new spending permission
+                ...(typeof event.origin_server_ts === 'number' && event.unsigned?.universe_no_ts !== true ? { eventTs: event.origin_server_ts } : {}),
                 pointedArtifactIds,
                 // A starter tapped under a Brick's hello (#1995); a message that waited for a resting Brick is answered as typed
                 ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),
@@ -2627,11 +2623,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
             event_id: event.event_id,
             room_id: event.room_id,
             sender: event.sender,
-            // The event's own time, else the time the inbox kept with it (CodeRabbit on ea88b4c1, finding 6): this try's clock only for an event that has neither
+            // The event's own time, else the time the inbox kept with it, for the order and the age of what is kept (CodeRabbit on ea88b4c1, finding 6). It is NOT a moment of consent: an event
+            // that had no time of its own is marked (`universe_no_ts`), and answered later without one
             origin_server_ts: event.origin_server_ts ?? arrived ?? Date.now(),
             type: 'm.room.message',
             content: kept,
-            ...(attempts > 0 || connected ? { unsigned: { ...(attempts > 0 ? { universe_attempts: attempts } : {}), ...(connected ? { universe_connected_app: connected } : {}) } } : {}),
+            ...(attempts > 0 || connected || typeof event.origin_server_ts !== 'number' || event.unsigned?.universe_no_ts === true
+                ? {
+                      unsigned: {
+                          ...(attempts > 0 ? { universe_attempts: attempts } : {}),
+                          ...(connected ? { universe_connected_app: connected } : {}),
+                          ...(typeof event.origin_server_ts !== 'number' || event.unsigned?.universe_no_ts === true ? { universe_no_ts: true } : {}),
+                      },
+                  }
+                : {}),
         });
         if (this.deps.waiting?.hasSharedStore()) {
             try {
