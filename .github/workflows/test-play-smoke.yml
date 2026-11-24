@@ -1,0 +1,53 @@
+name: Test play client split smoke (temporary)
+
+# Temporary: builds the client with and without the vendor split and loads each in headless Chromium.
+on:
+  push:
+    branches: [claude/project-thread-yhfwg0]
+    paths:
+      - '.github/workflows/test-play-smoke.yml'
+      - '.github/test-smoke/smoke.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: unsplit-modern
+            split: ""
+            fast: "true"
+            modes: "modern"
+          - name: split-full
+            split: "true"
+            fast: ""
+            modes: "modern legacy"
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Build and export dist
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./play/Dockerfile.universe
+          target: dist-export
+          push: false
+          outputs: type=local,dest=${{ github.workspace }}/dist-out
+          build-args: |
+            NODE_OPTIONS=--max-old-space-size=16384
+            FAST_BUILD=${{ matrix.fast }}
+            GENERATE_SOURCEMAP=hidden
+            SPLIT_VENDOR=${{ matrix.split }}
+            RELEASE_VERSION=v0.5.0-test
+      - name: Load in Chromium
+        run: |
+          mkdir -p /tmp/smoke && cd /tmp/smoke && npm init -y >/dev/null && npm i playwright@1.49 >/dev/null 2>&1 && npx playwright install --with-deps chromium >/dev/null 2>&1
+          cp "$GITHUB_WORKSPACE/.github/test-smoke/smoke.mjs" /tmp/smoke/smoke.mjs
+          ls "$GITHUB_WORKSPACE/dist-out" | head -20
+          for m in ${{ matrix.modes }}; do node /tmp/smoke/smoke.mjs "$GITHUB_WORKSPACE/dist-out" "$m" || true; done

@@ -57,6 +57,29 @@ RUN export NODE_OPTIONS="$NODE_OPTIONS" && \
     SENTRY_ENVIRONMENT="$SENTRY_ENVIRONMENT" \
     npm run build
 
+# Source maps. With GENERATE_SOURCEMAP=hidden (the `universe` prod push) the maps exist only in this stage:
+# they are uploaded to Sentry under the release name and then deleted, so neither the image nor the public
+# site carries them and readable error traces come from Sentry. The Sentry token is a BuildKit secret, never
+# a build argument. A failed upload never fails the build (the warning is in the log), but the maps are
+# deleted either way.
+RUN --mount=type=secret,id=SENTRY_AUTH_TOKEN \
+    if [ "$GENERATE_SOURCEMAP" = "hidden" ]; then \
+        cd play/dist/public && \
+        if [ -s /run/secrets/SENTRY_AUTH_TOKEN ] && [ -n "$RELEASE_VERSION" ]; then \
+            export SENTRY_AUTH_TOKEN="$(cat /run/secrets/SENTRY_AUTH_TOKEN)" SENTRY_ORG=bawes-co && \
+            ( npx --yes @sentry/cli@3.4.3 sourcemaps inject . && \
+              npx --yes @sentry/cli@3.4.3 sourcemaps upload --project universe-play --release "$RELEASE_VERSION" . ) \
+            || echo "WARNING: source maps were NOT uploaded to Sentry"; \
+        else \
+            echo "WARNING: no Sentry token or release name: source maps were NOT uploaded to Sentry"; \
+        fi && \
+        find . -name '*.map' -delete; \
+    fi
+
+# TEST ONLY (removed before merge): lets CI export the built client.
+FROM scratch AS dist-export
+COPY --from=builder /usr/src/play/dist/public /
+
 # final production image
 FROM node:20.18-bookworm-slim
 EXPOSE 3000
