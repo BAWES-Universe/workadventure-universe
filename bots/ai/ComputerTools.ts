@@ -513,18 +513,22 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
     // The answer to a question that named several jobs: the one they chose, by its number in that question, among the jobs it named and Orbit still lists (never a list read anew)
     const shownIds = context.endedShown?.ids;
     const picked = typeof args.pick === 'number' && Number.isInteger(args.pick) && shownIds && context.endedShown?.at !== undefined && Date.now() - context.endedShown.at < ENDED_SHOWN_KEEP_MS ? shownIds[args.pick - 1] : undefined;
-    const chosen = picked ? ended.find((one) => one.id === picked) : undefined;
+    // The pick is held to the title they named: a pick kept from an earlier question (up to 6 hours) never carries on a job of another title
+    const chosen = picked ? ended.find((one) => one.id === picked && (!named || sameTitle(one.title, named))) : undefined;
     if (chosen) return { carryOn: { id: chosen.id, title: chosen.title } };
+    // A pick that does not resolve (the job left Orbit's list, was never named, or the question is too old) is NEVER read as the title: the job they turned down could be the one left. They are asked again
+    const unresolvedPick = args.pick !== undefined && args.pick !== null;
     // Every ended job counts, never the newest of each title (two jobs with one title are two jobs): one that the words name exactly carries on; two or more are asked about, unless the words say the latest
     const matches = named ? ended.filter((one) => sameTitle(one.title, named)) : [];
-    if (matches.length === 1) return { carryOn: { id: matches[0].id, title: matches[0].title } };
-    if (matches.length > 1 && args.latest === true) {
+    if (matches.length === 1 && !unresolvedPick) return { carryOn: { id: matches[0].id, title: matches[0].title } };
+    if (matches.length > 1 && args.latest === true && !unresolvedPick) {
         // Orbit lists them newest first; an end time, when it gives one, decides
         const newest = matches.reduce((best, one) => ((one.endedAt ?? -Infinity) > (best.endedAt ?? -Infinity) ? one : best), matches[0]);
         return { carryOn: { id: newest.id, title: newest.title } };
     }
     // At most three are shown, newest first: the jobs that share the title they named, else the latest ended jobs
     const shown = (matches.length > 1 ? matches : ended).slice(0, 3);
+    // (a single match that was only reached through a pick that did not resolve is asked about among the ended jobs, not carried on)
     const answer = { started: false, success: false } as const;
     if (shown.length > 0) {
         const dated = shown.some((one, index) => shown.some((other, at) => at !== index && sameTitle(other.title, one.title)));

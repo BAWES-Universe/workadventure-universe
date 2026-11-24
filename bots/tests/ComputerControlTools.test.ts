@@ -433,10 +433,95 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             const a = chat(mixed.admin);
             await a.run(CANCEL_JOB_TOOL, { job: 'form' });
             expect(await a.deliver()).toEqual(['Which one do you mean: “Visa form” (asked for 10 minutes ago), “Visa form” (asked for 2 hours ago) or “Taxi form”?']);
+        });
+        // Opus review of 5bb3748ca, finding 2: Orbit's live list is OLDEST first and today's Orbit sends no askedAt; the game never claims newer or older without the time
+        it('without askedAt the plain question is asked: nothing says which is newer or older', async () => {
             const blind = door(viewOf(working(), [inLine('job-visa-2', 'Visa form')]));
             const b = chat(blind.admin);
             await b.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
-            expect(await b.deliver()).toEqual(['Which “Visa form” do you mean: the newer one, or the older one?']);
+            expect(await b.deliver()).toEqual([CONTROL_REFUSALS.whichJob(['“Visa form”', '“Visa form”'])]);
+            expect(blind.acted()).toEqual([]);
+        });
+        it('is told newest first, whichever order Orbit lists them in', async () => {
+            const older = working({ askedAt: minutesAgo(125) });
+            const newer = inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) });
+            // Orbit's own order (the working job first, the older one): the newer one is still named first
+            const oldestFirst = door(viewOf(older, [newer]));
+            const a = chat(oldestFirst.admin);
+            await a.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
+            expect(await a.deliver()).toEqual(['Which “Visa form” do you mean: the one you asked for 10 minutes ago, or the one you asked for 2 hours ago?']);
+            const newestFirst = door(viewOf({ ...newer, ...working({ id: 'job-visa-2', askedAt: minutesAgo(10) }) }, [inLine('job-visa', 'Visa form', { askedAt: minutesAgo(125) })]));
+            const b = chat(newestFirst.admin);
+            await b.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
+            expect(await b.deliver()).toEqual(['Which “Visa form” do you mean: the one you asked for 10 minutes ago, or the one you asked for 2 hours ago?']);
+        });
+        it('two that read the same are told apart by order, newest first', async () => {
+            const orbit = door(viewOf(working({ askedAt: minutesAgo(130) }), [inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(125) })]));
+            const c = chat(orbit.admin);
+            await c.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
+            expect(await c.deliver()).toEqual(['Which “Visa form” do you mean: the newer one, or the older one?']);
+        });
+        describe('the answer picks by its number, among the jobs the question named', () => {
+            const asked = async (answers: Parameters<typeof door>[1] = {}) => {
+                const orbit = door(viewOf(working({ askedAt: minutesAgo(125) }), [inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) })]), answers);
+                const c = chat(orbit.admin);
+                await c.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
+                await c.deliver();
+                c.nextMessage('the older one');
+                return { orbit, c };
+            };
+            it('pause: pick 1 is the newer one, pick 2 the older one, and nothing else is touched', async () => {
+                const { orbit, c } = await asked({ pause: { ...viewOf(null), ok: true } });
+                await c.run(PAUSE_JOB_TOOL, { job: 'Visa form', pick: 2 });
+                expect(orbit.acted()).toEqual([{ action: 'pause', jobId: 'job-visa' }]);
+                const second = await asked();
+                await second.c.run(PAUSE_JOB_TOOL, { job: 'Visa form', pick: 1 });
+                expect(second.orbit.acted()).toEqual([{ action: 'pause', jobId: 'job-visa-2' }]);
+            });
+            it('cancel: asks about the picked job (by its id), never the other one', async () => {
+                // both have started (a job that never started is cancelled at once, with no question)
+                const orbit = door(viewOf(working({ askedAt: minutesAgo(125) }), [paused('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) })]));
+                const c = chat(orbit.admin);
+                await c.run(CANCEL_JOB_TOOL, { job: 'Visa form' });
+                await c.deliver();
+                c.nextMessage('the newer one');
+                await c.run(CANCEL_JOB_TOOL, { job: 'Visa form', pick: 1 });
+                expect(orbit.acted()).toEqual([]);
+                expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Visa form')]);
+                c.nextMessage('Yes');
+                await c.run(CANCEL_JOB_TOOL, { job: 'Visa form', pick: 1 });
+                expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa-2' }]);
+            });
+            it('a pick that names no job now (gone, out of range, or too old) asks again and acts on nothing', async () => {
+                const gone = await asked();
+                gone.orbit.admin.controlComputerJobs.mockClear();
+                await gone.c.run(PAUSE_JOB_TOOL, { job: 'Visa form', pick: 5 });
+                expect(gone.orbit.acted()).toEqual([]);
+                expect((await gone.c.deliver()).length).toBe(1);
+                const left = door(viewOf(working({ askedAt: minutesAgo(125) })));
+                const c = chat(left.admin);
+                c.state.shown = { ids: ['job-visa-2', 'job-visa'], at: Date.now() };
+                c.nextMessage('the newer one');
+                const result = await c.run(PAUSE_JOB_TOOL, { job: 'Visa form', pick: 1 });
+                expect(left.acted()).toEqual([]);
+                expect(result).toMatchObject({ done: false });
+                const old = await asked();
+                old.c.state.shown = { ids: ['job-visa-2', 'job-visa'], at: Date.now() - 7 * 60 * 60 * 1000 };
+                await old.c.run(PAUSE_JOB_TOOL, { job: 'Visa form', pick: 2 });
+                expect(old.orbit.acted()).toEqual([]);
+            });
+            it('computer_jobs follows the pick too, and names no job for one that fits none', async () => {
+                const { c } = await asked();
+                expect(await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form', pick: 2 })).toMatchObject({ job: 'job-visa' });
+                expect(await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form', pick: 7 })).toMatchObject({ notFound: true });
+            });
+            it('a pick kept from a question about another title reaches no job of this title', async () => {
+                const orbit = door(viewOf(working({ askedAt: minutesAgo(125) }), [inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) }), inLine('job-taxi', 'Taxi booking')]));
+                const c = chat(orbit.admin);
+                c.state.shown = { ids: ['job-taxi', 'job-visa'], at: Date.now() };
+                await c.run(PAUSE_JOB_TOOL, { job: 'Visa form', pick: 1 });
+                expect(orbit.acted()).toEqual([]);
+            });
         });
         it('jobs with different titles keep the plain question', async () => {
             const orbit = door(viewOf(working(), [inLine('job-visa-2', 'Visa renewal')]));

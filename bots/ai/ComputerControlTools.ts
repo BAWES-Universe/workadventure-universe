@@ -43,28 +43,31 @@ const JOB_WORDS_MAX = 200;
 
 const JOB_ARG = { type: 'string', description: 'Which job, in the person\'s words or as the bar shows it ("visa", "Taxi booking"), or its id from computer_jobs. Leave out when there is only one that fits.' };
 
+const PICK_ARG = { type: 'integer', description: 'After they were asked which of several jobs they mean: the number of the one they chose, counting the jobs in the question from the first one named. Use it with the same job words, never a guessed id.' };
+
 export function computerControlToolDefinitions(): { type: 'function'; function: { name: string; description: string; parameters: object } }[] {
     const tool = (name: string, description: string, properties: Record<string, object> = {}, required: string[] = []) => ({
         type: 'function' as const,
         function: { name, description, parameters: { type: 'object', properties, ...(required.length ? { required } : {}) } },
     });
     return [
-        tool(COMPUTER_JOBS_TOOL, 'See the jobs on your computer and how each is going: the one working and its step, what needs them, what is waiting in line, what is paused. Use it when they ask how a job is going or what is on your computer. Name a job to also get the steps it took so far.', { job: JOB_ARG }),
-        tool(PAUSE_JOB_TOOL, 'Pause a job on your computer: it keeps its progress and sign-ins, costs nothing while it waits, and carries on from where it was when they say resume. Use it when they ask you to pause, hold or stop a job "for now". It acts at once: do not ask first.', { job: JOB_ARG }),
-        tool(RESUME_JOB_TOOL, 'Carry on with a paused job, from where it stopped. It acts at once: do not ask first.', { job: JOB_ARG }),
+        tool(COMPUTER_JOBS_TOOL, 'See the jobs on your computer and how each is going: the one working and its step, what needs them, what is waiting in line, what is paused. Use it when they ask how a job is going or what is on your computer. Name a job to also get the steps it took so far.', { job: JOB_ARG, pick: PICK_ARG }),
+        tool(PAUSE_JOB_TOOL, 'Pause a job on your computer: it keeps its progress and sign-ins, costs nothing while it waits, and carries on from where it was when they say resume. Use it when they ask you to pause, hold or stop a job "for now". It acts at once: do not ask first.', { job: JOB_ARG, pick: PICK_ARG }),
+        tool(RESUME_JOB_TOOL, 'Carry on with a paused job, from where it stopped. It acts at once: do not ask first.', { job: JOB_ARG, pick: PICK_ARG }),
         tool(
             JOB_FIRST_TOOL,
             'Put a waiting job first. With pause_running, do it now: the job that is working pauses, this one starts, and the paused one carries on by itself right after. Use pause_running only when they say it cannot wait ("do this first", "do it now"); a new ask never interrupts the running job on its own. For a job they have not asked for yet, start it with use_computer first, then call this.',
-            { job: JOB_ARG, pause_running: { type: 'boolean', description: 'True when they want it done now, before the job that is working (that one pauses and carries on by itself after).' } },
+            { job: JOB_ARG, pick: PICK_ARG, pause_running: { type: 'boolean', description: 'True when they want it done now, before the job that is working (that one pauses and carries on by itself after).' } },
             ['job']
         ),
-        tool(CANCEL_JOB_TOOL, 'Cancel one job: it ends and cannot be resumed; its files are kept, and the others carry on. A job that has started always asks them first, with a line under your reply: call it when they ask to cancel or end one job, and again when they say yes in their next message (a job that never started is cancelled at once). Never cancel to "pause"; never in the same reply as the question.', { job: JOB_ARG }),
+        tool(CANCEL_JOB_TOOL, 'Cancel one job: it ends and cannot be resumed; its files are kept, and the others carry on. A job that has started always asks them first, with a line under your reply: call it when they ask to cancel or end one job, and again when they say yes in their next message (a job that never started is cancelled at once). Never cancel to "pause"; never in the same reply as the question.', { job: JOB_ARG, pick: PICK_ARG }),
         tool(STOP_COMPUTER_TOOL, 'Stop everything on your computer: every job ends, paused ones too, and their files are kept. It always asks them first, with a line under your reply: call it when they ask to stop everything, and again when they say yes in their next message. For one job use cancel_computer_job.'),
         tool(
             TELL_JOB_TOOL,
             "Pass the person's words on to a job: a change to a job that is working (\"use 12 March instead\", \"skip the hotel\"), or their answer when a job is waiting for their answer. It reaches the job at once and it carries on with it. Decide from their words whether it is a change to a job or a new job; if you truly cannot tell, ask one short question first. Never pass something on silently: this tool says it under your reply.",
             {
                 job: JOB_ARG,
+                pick: PICK_ARG,
                 message: { type: 'string', description: "What to tell the job, in the person's own words with what the job needs to act on it." },
             },
             ['message']
@@ -130,6 +133,8 @@ export interface ControlState {
     commands: Map<string, string>;
     /** This turn's message narrowed an answerable Stop (see `Narrowed`). Cleared by the next message. */
     narrowed?: Narrowed;
+    /** The live jobs the last "which one do you mean?" named, in the order it named them (kept across messages): the answer picks one of them by its number, never by a guessed id. */
+    shown?: { ids: string[]; at: number };
 }
 
 export function newControlState(): ControlState {
@@ -505,7 +510,33 @@ function say(context: ComputerControlContext, lines: string[], result: Record<st
 const STALE_CALL = { done: false, stale: true, note: 'A newer message from them came in while this was being looked at, so nothing was changed. Answer their newer message instead.' };
 
 /** What names a job in this turn's record of who a control went to: the person's words EXACTLY (two jobs whose ids differ only in a dash are two jobs), never a cleaned-up version of them. */
-const resolvedKeyOf = (name: string, words: string, args: Record<string, unknown>): string => `${name}|${JSON.stringify(words)}|${args.pause_running === true}`;
+const resolvedKeyOf = (name: string, words: string, args: Record<string, unknown>): string => `${name}|${JSON.stringify(words)}|${args.pause_running === true}|${pickOf(args) ?? ''}`;
+
+/** How long the jobs a "which one do you mean?" named are kept for the answer to pick from. */
+const SHOWN_KEEP_MS = 6 * 60 * 60 * 1000;
+
+/** The number the model gave as `pick` (a whole number from 1), or undefined. */
+function pickOf(args: Record<string, unknown>): number | undefined {
+    return typeof args.pick === 'number' && Number.isInteger(args.pick) && args.pick >= 1 ? args.pick : undefined;
+}
+
+/**
+ * The job a `pick` names: the nth job of the last live "which one?" question, only if it is still on the computer, and only if it is one the words fit (a pick kept from a question about another
+ * title never reaches a job of that title). null: a pick that names no job now; it is never read as the title (the one they turned down could be the one left).
+ */
+function pickedJob(args: Record<string, unknown>, words: string, jobs: ComputerControlJob[], state: ControlState): ComputerControlJob | null {
+    const n = pickOf(args);
+    const shown = state.shown;
+    if (n === undefined || !shown || Date.now() - shown.at >= SHOWN_KEEP_MS) return null;
+    const job = jobs.find((one) => one.id === shown.ids[n - 1]);
+    if (!job) return null;
+    if (words) {
+        const fits = findJob(words, jobs);
+        const ok = 'job' in fits ? fits.job.id === job.id : 'which' in fits && fits.which.some((one) => one.id === job.id);
+        if (!ok) return null;
+    }
+    return job;
+}
 
 /** The key this turn already holds for the control being asked (the job it first went to, and the control it sent), when it was sent. */
 function recordedControl(name: string, args: Record<string, unknown>, state: ControlState): string | null {
@@ -544,7 +575,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     const jobs = jobsOf(view);
     const words = clean(args.job, JOB_WORDS_MAX);
 
-    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, view, jobs, door);
+    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, args, context.state, view, jobs, door);
     // The list was read while a newer message may have come: a call that began on an older message changes nothing (a cancel or a stop must not run on the strength of a message that is no longer the latest)
     if (context.state.turn !== turn) return STALE_CALL;
     // A yes that named only some of the jobs a Stop listed ended nothing: Brick says what it will do, and asks about exactly those jobs (GPT's eighth note, D). Whichever of the two tools the model calls
@@ -566,9 +597,19 @@ async function control(name: string, args: Record<string, unknown>, context: Com
               : name === JOB_FIRST_TOOL
                 ? view.queued
                 : jobs;
-    const found: Found = resolved ? { job: resolved } : findJob(words, jobs, fallback);
+    let found: Found;
+    if (resolved) found = { job: resolved };
+    else if (args.pick !== undefined && args.pick !== null) {
+        // The answer to "which one?": that job by its number, or the question again; a pick that names no job is never read as the title
+        const chosen = pickedJob(args, words, jobs, context.state);
+        if (chosen) found = { job: chosen };
+        else {
+            const again = findJob(words, jobs, fallback);
+            found = 'which' in again ? again : { none: true };
+        }
+    } else found = findJob(words, jobs, fallback);
     if ('none' in found) return say(context, [CONTROL_REFUSALS.noSuchJob(quotedTitles(jobs.map((job) => job.title)))], { done: false, success: false });
-    if ('which' in found) return say(context, [whichLine(found.which)], { done: false, asked: 'which' });
+    if ('which' in found) return say(context, [whichLine(found.which, context)], { done: false, asked: 'which' });
     const job = found.job;
     context.state.resolved.set(resolvedKey, job);
 
@@ -749,9 +790,18 @@ function askFirst(context: ComputerControlContext, key: string, ask: Pick<Contro
     );
 }
 
-/** "Which one do you mean?" over live jobs: a title shown twice is told apart by when the person asked for it (FINAL, 24 Nov), else the plain question. */
-function whichLine(found: ComputerControlJob[]): string {
-    return whichDated('live', found.map((job) => ({ title: job.title, ...(job.askedAt === undefined ? {} : { at: job.askedAt }) })), Date.now(), (a, b) => plain(a) === plain(b), (quoted) => CONTROL_REFUSALS.whichJob(quoted));
+/**
+ * "Which one do you mean?" over live jobs. A title shown twice is told apart by when the person asked for it (FINAL, 24 Nov), newest first (Orbit's own list is oldest first, so it is sorted here by
+ * `askedAt`). When Orbit gave no time for such a job, nothing is said about newer or older (the game cannot know): the plain question. The jobs are kept in the order they were named, so the
+ * answer can pick by number.
+ */
+function whichLine(found: ComputerControlJob[], context: ComputerControlContext): string {
+    const same = (a: string, b: string): boolean => plain(a) === plain(b);
+    const sorted = [...found].sort((a, b) => (a.askedAt !== undefined && b.askedAt !== undefined ? b.askedAt - a.askedAt : a.askedAt !== undefined ? -1 : b.askedAt !== undefined ? 1 : 0));
+    context.state.shown = { ids: sorted.map((job) => job.id), at: Date.now() };
+    const twinsUndated = sorted.some((job, index) => job.askedAt === undefined && sorted.some((other, at) => at !== index && same(other.title, job.title)));
+    if (twinsUndated) return CONTROL_REFUSALS.whichJob(quotedTitles(sorted.map((job) => job.title)));
+    return whichDated('live', sorted.map((job) => ({ title: job.title, ...(job.askedAt === undefined ? {} : { at: job.askedAt }) })), Date.now(), same, (quoted) => CONTROL_REFUSALS.whichJob(quoted));
 }
 
 /**
@@ -770,7 +820,7 @@ async function askNarrowed(
     if (narrowed.said) return { done: false, asked: true, waitingForTheirAnswer: true, note: LINE_SAID };
     const named = narrowed.jobIds.map((id) => jobs.find((job) => job.id === id)).filter((job): job is ComputerControlJob => !!job);
     narrowed.said = true;
-    if (narrowed.which) return say(context, [named.length > 1 ? whichLine(named) : CONTROL_REFUSALS.whichJob(quotedTitles(narrowed.titles))], { done: false, asked: 'which' });
+    if (narrowed.which) return say(context, [named.length > 1 ? whichLine(named, context) : CONTROL_REFUSALS.whichJob(quotedTitles(narrowed.titles))], { done: false, asked: 'which' });
     if (named.length === 0) return say(context, [CONTROL_WORDS.stoppedNothingLeft(0, narrowed.jobIds.length, narrowed.titles.length === 1 ? narrowed.titles[0] : undefined)], { done: false, success: false });
     const statement = CONTROL_WORDS.narrowedStatement(quotedTitles(named.map((job) => job.title)), othersOf(narrowed.leftOut));
     if (named.every((job) => !hasStarted(job))) {
@@ -849,15 +899,17 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
 }
 
 /** "How is it going?": the jobs as Orbit has them, in words for the model (no fixed line: it changes nothing), and the steps a named job took so far when Orbit keeps them. */
-async function seeJobs(words: string, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>): Promise<Record<string, unknown>> {
+async function seeJobs(words: string, args: Record<string, unknown>, state: ControlState, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>): Promise<Record<string, unknown>> {
     const result: Record<string, unknown> = {
         jobs: jobs.map((job) => shownJob(job, view)),
         note: jobs.length
             ? 'Tell them in a sentence or two how it is going, in plain words, from these states and steps only. Say what needs them, if anything. Never a price, how much time is left or how long it will take.'
             : 'There are no jobs on your computer right now. Say so in one plain sentence.',
     };
-    if (!words || !jobs.length) return result;
-    const found = findJob(words, jobs);
+    if ((!words && (args.pick === undefined || args.pick === null)) || !jobs.length) return result;
+    const hasPick = args.pick !== undefined && args.pick !== null;
+    const chosen = hasPick ? pickedJob(args, words, jobs, state) : undefined;
+    const found: Found = hasPick ? (chosen ? { job: chosen } : { none: true }) : findJob(words, jobs);
     if (!('job' in found)) return { ...result, ...('which' in found ? { which: found.which.map((job) => job.title) } : { notFound: true }) };
     const activity = await door({ action: 'activity', jobId: found.job.id });
     if (activity.ok && activity.steps?.length) return { ...result, job: found.job.id, stepsSoFar: activity.steps.map((step) => step.label) };

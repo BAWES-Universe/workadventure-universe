@@ -549,6 +549,31 @@ describe('try_again with no job named for this turn', () => {
             expect(admin.startComputerJob).not.toHaveBeenCalled();
         });
 
+        // Opus review of 5bb3748ca, finding 1: the person turned the NEWER one down; it must never be the one that carries on
+        it('a picked older job that left Orbit\'s list never carries on the newer one: they are asked again', async () => {
+            const admin = world([twins()[0]]);
+            const queue = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true, pick: 2 }, ctx(admin, { confirmations: queue, endedShown: { ids: ['newest-newest-1', 'older-older-123'], at: Date.now() } }));
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            expect(queue.tell()).toHaveLength(1);
+        });
+
+        it('a pick kept from a question about another title never carries on a job of that other title', async () => {
+            const admin = world([...twins(), TAXI]);
+            const queue = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true, pick: 1 }, ctx(admin, { confirmations: queue, endedShown: { ids: [TAXI.id], at: Date.now() } }));
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            expect(queue.tell()).toHaveLength(1);
+        });
+
+        it('an unresolved pick is not "the latest" either', async () => {
+            const admin = world(twins());
+            const queue = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true, pick: 9, latest: true }, ctx(admin, { confirmations: queue, endedShown: { ids: ['gone-gone-1234'], at: Date.now() } }));
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            expect(queue.tell()).toHaveLength(1);
+        });
+
         it('a single match is unchanged: it carries on without a question', async () => {
             const admin = world([twins()[0], TAXI]);
             const queue = new ConfirmationQueue();
