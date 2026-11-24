@@ -235,10 +235,10 @@ export class MatrixAppServiceClient {
         }
     }
 
-    /** The latest messages in a room, oldest first, read as a bot that is in it. */
-    async getRecentMessages(userId: string, roomId: string, limit = 20): Promise<MatrixEvent[]> {
+    /** The latest messages in a room, oldest first, read as a bot that is in it. `filter`: a Matrix room event filter (e.g. only some types or senders), so `limit` counts only those. */
+    async getRecentMessages(userId: string, roomId: string, limit = 20, filter?: { types?: string[]; senders?: string[] }): Promise<MatrixEvent[]> {
         const response = await this.http.get(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages`, {
-            params: { user_id: userId, dir: 'b', limit },
+            params: { user_id: userId, dir: 'b', limit, ...(filter ? { filter: JSON.stringify(filter) } : {}) },
         });
         return ((response.data?.chunk ?? []) as MatrixEvent[]).reverse();
     }

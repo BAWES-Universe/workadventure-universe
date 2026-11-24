@@ -102,7 +102,7 @@ describe.runIf(!!URL)('the outbox of the notices to people whose message will no
      * transaction older than its memory). `next` says what the next sends do: `fail` (refused, nothing in the room), `lose` (the event is in the room, the answer never comes back).
      */
     const fakeMatrix = () => {
-        const events: Array<{ event_id: string; room_id: string; sender: string; content: Record<string, any>; txnId: string }> = [];
+        const events: Array<{ event_id: string; room_id: string; sender: string; type: string; content: Record<string, any>; txnId: string }> = [];
         const remembered = new Map<string, string>();
         const next: Array<'fail' | 'lose'> = [];
         let count = 0;
@@ -114,13 +114,21 @@ describe.runIf(!!URL)('the outbox of the notices to people whose message will no
             if (!id) {
                 id = `$notice-${++count}`;
                 remembered.set(key, id);
-                events.push({ event_id: id, room_id: room, sender: user, content, txnId });
+                events.push({ event_id: id, room_id: room, sender: user, type: 'm.room.message', content, txnId });
             }
             if (how === 'lose') throw new Error('socket hang up');
             return id;
         });
-        const getRecentMessages = vi.fn(async (_user: string, room: string) => events.filter((one) => one.room_id === room).map(({ txnId: _t, ...event }) => event));
-        return { events, next, sendMessage, getRecentMessages, forget: () => remembered.clear() };
+        // `/messages` read backwards: the latest `limit` events of the room that pass the filter, oldest first
+        const getRecentMessages = vi.fn(async (_user: string, room: string, limit = 20, filter?: { types?: string[]; senders?: string[] }) =>
+            events
+                .filter((one) => one.room_id === room && (!filter?.senders || filter.senders.includes(one.sender)) && (!filter?.types || filter.types.includes(one.type)))
+                .slice(-limit)
+                .map(({ txnId: _t, ...event }) => event)
+        );
+        /** Someone else writes in the room (not through the Brick). */
+        const write = (room: string, sender: string, body: string) => events.push({ event_id: `$other-${++count}`, room_id: room, sender, type: 'm.room.message', content: { msgtype: 'm.text', body }, txnId: randomUUID() });
+        return { events, next, sendMessage, getRecentMessages, write, forget: () => remembered.clear() };
     };
     const botId = '0b7c1d2e-1111-4222-8333-944455556666';
     const botUser = `@bot_${botId}:matrix.test`;
@@ -258,6 +266,64 @@ describe.runIf(!!URL)('the outbox of the notices to people whose message will no
             expect(B.deps.reply).not.toHaveBeenCalled();
             expect(C.deps.reply).not.toHaveBeenCalled();
         }
+    });
+
+    it('Opus on 341f2ecd, F1: after an uncertain send the homeserver restarts (forgets the transaction) and the room cannot be read once: nothing is sent blind, and the person gets ONE note', async () => {
+        quiet();
+        const room = roomOf('unread');
+        const id = fresh('unread');
+        await paidAndGone(room, id);
+        const matrix = fakeMatrix();
+        matrix.next.push('lose');
+        const B = bridgeOn(room, matrix);
+        const b = await serve(inboxOn(), B.handler);
+        await b.router.recover();
+        await vi.waitFor(() => expect(matrix.sendMessage).toHaveBeenCalledTimes(1));
+        expect(notes(matrix, room)).toHaveLength(1);
+        await vi.waitFor(async () => expect(await client.hGet(`matrix:outbox:${id}`, 'tries')).toBe('1'));
+        await b.router.settle(500);
+        // the homeserver restarts: it forgets the transaction, and the first read of the room fails
+        matrix.forget();
+        matrix.getRecentMessages.mockRejectedValueOnce(new Error('502 Bad Gateway'));
+        await pause(80);
+        const C = bridgeOn(room, matrix);
+        const c = await serve(inboxOn(), C.handler);
+        await c.router.recover();
+        await vi.waitFor(async () => expect(await client.hGet(`matrix:outbox:${id}`, 'tries')).toBe('2'));
+        await pause(30);
+        // nothing was sent on the try that could not look first, and the notice is still kept
+        expect(matrix.sendMessage).toHaveBeenCalledTimes(1);
+        expect(await client.exists(`matrix:outbox:${id}`)).toBe(1);
+        // after the back-off the room can be read: the note is found there, never sent again
+        await pause(150);
+        await c.router.recover();
+        await vi.waitFor(async () => expect(await client.exists(`matrix:outbox:${id}`)).toBe(0));
+        expect(notes(matrix, room)).toHaveLength(1);
+        expect(matrix.sendMessage).toHaveBeenCalledTimes(1);
+        expect(await client.get(`matrix:outbox-sent:${id}`)).toBe(notes(matrix, room)[0].event_id);
+    });
+
+    it('Opus on 341f2ecd, F2: the look in the room counts only the Brick\'s own messages, so a busy room (60 of the person\'s messages since) still finds the note', async () => {
+        quiet();
+        const room = roomOf('busy');
+        const id = fresh('busy');
+        await paidAndGone(room, id);
+        const matrix = fakeMatrix();
+        matrix.next.push('lose');
+        const B = bridgeOn(room, matrix);
+        const b = await serve(inboxOn(), B.handler);
+        await b.router.recover();
+        await vi.waitFor(async () => expect(await client.hGet(`matrix:outbox:${id}`, 'tries')).toBe('1'));
+        await b.router.settle(500);
+        matrix.forget();
+        for (let n = 0; n < 60; n++) matrix.write(room, '@alice:matrix.test', `message ${n}`);
+        await pause(80);
+        const C = bridgeOn(room, matrix);
+        const c = await serve(inboxOn(), C.handler);
+        await c.router.recover();
+        await vi.waitFor(async () => expect(await client.exists(`matrix:outbox:${id}`)).toBe(0));
+        expect(notes(matrix, room)).toHaveLength(1);
+        expect(matrix.getRecentMessages).toHaveBeenCalledWith(botUser, room, 50, { types: ['m.room.message'], senders: [botUser] });
     });
 
     it('closing or finishing the work record never deletes the notice: it stays, with no expiry, until Matrix gives it an event id', async () => {

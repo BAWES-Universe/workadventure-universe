@@ -2495,6 +2495,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (delivery.again) {
                 const found = await this.noticeInRoom(botUserId, event.room_id, delivery.txnId);
                 if (found) return { eventId: found };
+                // The room could not be read (most often while the homeserver restarts, which is when it forgets the transaction id): not sent blind, it is tried again after the back-off
+                if (found === null) return 'failed';
             }
             const content = { ...statusNoteContent(state, language, await this.botName(botId, config)), [NOTICE_TXN_KEY]: delivery.txnId };
             const sent = await this.say(botId, () => this.client.sendMessage(botUserId, event.room_id, content, delivery.txnId));
@@ -2509,16 +2511,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
         }
     }
 
-    /** The event id of a notice this Brick already sent under `txnId`, when it is among the room's latest messages; `undefined` when it is not, or the room could not be read. */
-    private async noticeInRoom(botUserId: string, roomId: string, txnId: string): Promise<string | undefined> {
+    /**
+     * The event id of a notice this Brick already sent under `txnId`, when it is among the Brick's own latest messages of the room; `undefined` when it is not there, `null` when the room could
+     * not be read (the caller does not send then: a send that cannot first be checked may be a second note).
+     */
+    private async noticeInRoom(botUserId: string, roomId: string, txnId: string): Promise<string | null | undefined> {
+        // A client that cannot read rooms at all: the send goes out under the same transaction id, as the homeserver remembers it
         if (typeof this.client.getRecentMessages !== 'function') return undefined;
         try {
-            const latest = await this.client.getRecentMessages(botUserId, roomId, NOTICE_LOOK_BACK);
+            // Only this Brick's messages count toward the look-back (Opus on 341f2ecd, F2)
+            const latest = await this.client.getRecentMessages(botUserId, roomId, NOTICE_LOOK_BACK, { types: ['m.room.message'], senders: [botUserId] });
             const found = (latest ?? []).find((one) => one?.sender === botUserId && one?.content?.[NOTICE_TXN_KEY] === txnId);
             return typeof found?.event_id === 'string' ? found.event_id : undefined;
         } catch {
-            // Not known: the send goes out under the same transaction id, which Matrix answers with the same event while it remembers the transaction
-            return undefined;
+            return null;
         }
     }
 
