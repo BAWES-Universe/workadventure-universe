@@ -136,7 +136,7 @@ export async function dismissComputerNotice(brickId: string, jobId: string): Pro
  * - over-limit: Resume while a spending limit the person set is still reached; the job stays paused.
  * - failed: Orbit could not be reached or said something else.
  */
-export type JobRefusal = "taken-over" | "ending" | "gone" | "changed" | "out-of-time" | "over-limit" | "failed";
+export type JobRefusal = "taken-over" | "ending" | "gone" | "changed" | "out-of-time" | "over-limit" | "failed" | "started";
 export type JobCallResult = { ok: true } | { ok: false; why: JobRefusal };
 
 function refusalOf(error: unknown): JobRefusal {
@@ -151,6 +151,12 @@ function refusalOf(error: unknown): JobRefusal {
     if (refused.reason === "rule") return "over-limit";
     return "changed";
 }
+
+/** Orbit's answer to a Cancel that expected a job that had not started: it had started, and nothing was cancelled. */
+const isStartedAnswer = (answer: unknown): boolean => {
+    const refused = answer as { ok?: unknown; reason?: unknown } | null;
+    return !!refused && typeof refused === "object" && refused.ok === false && refused.reason === "started";
+};
 
 /** The jobs with a call on its way, per Brick, so their row can show it and a second tap waits for the first. */
 const pending = writable<Map<string, ReadonlySet<string>>>(new Map());
@@ -195,6 +201,11 @@ async function jobCall(
         markPending(brickId, jobId, true);
         try {
             const answer = await send(commandId);
+            // A Cancel sent as "never started" that Orbit found started cancelled nothing: the page is read again and the person is asked first
+            if (isStartedAnswer(answer)) {
+                await loadBrickComputer(brickId);
+                return { ok: false, why: "started" };
+            }
             const view = parseBrickComputer(answer);
             if (view) put(brickId, view, sentAs);
             else await loadBrickComputer(brickId);
@@ -217,11 +228,19 @@ async function jobCall(
 }
 
 /** Pause, Resume, Do this next (now, pausing what runs, with "first-now") or Cancel, on one job. */
-export function brickComputerJobAction(brickId: string, jobId: string, control: JobControl): Promise<JobCallResult> {
-    return jobCall(brickId, jobId, control, (commandId) =>
+export function brickComputerJobAction(
+    brickId: string,
+    jobId: string,
+    control: JobControl,
+    options: { expected?: "not_started" } = {}
+): Promise<JobCallResult> {
+    return jobCall(brickId, jobId, options.expected ? `${control}\u0000${options.expected}` : control, (commandId) =>
         control === "first-now"
             ? botApiService.brickComputerJobAction(brickId, jobId, "first", { pauseRunning: true, commandId })
-            : botApiService.brickComputerJobAction(brickId, jobId, control, { commandId })
+            : botApiService.brickComputerJobAction(brickId, jobId, control, {
+                  commandId,
+                  ...(control === "cancel" && options.expected ? { expected: options.expected } : {}),
+              })
     );
 }
 

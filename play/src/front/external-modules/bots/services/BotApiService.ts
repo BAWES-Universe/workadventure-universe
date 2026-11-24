@@ -1445,13 +1445,21 @@ export class BotApiService {
         brickId: string,
         jobId: string,
         action: "pause" | "resume" | "first" | "cancel",
-        options: { pauseRunning?: boolean; commandId?: string } = {}
+        options: { pauseRunning?: boolean; commandId?: string; expected?: "not_started" } = {}
     ): Promise<unknown> {
         const url = `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/${action}`;
+        // A Cancel that goes without a question (the job was shown as never started) says so: Orbit then cancels it only if it still has not
+        // started, and otherwise cancels nothing and answers `{ ok: false, reason: "started" }`
         return action === "first" && options.pauseRunning
             ? await this.brickWrite(url, {
                   method: "POST",
                   body: JSON.stringify({ pauseRunning: true }),
+                  ...commandHeader(options.commandId),
+              })
+            : action === "cancel" && options.expected === "not_started"
+            ? await this.brickWrite(url, {
+                  method: "POST",
+                  body: JSON.stringify({ expected: "not_started" }),
                   ...commandHeader(options.commandId),
               })
             : await this.brickWrite(url, { method: "POST", ...commandHeader(options.commandId) });

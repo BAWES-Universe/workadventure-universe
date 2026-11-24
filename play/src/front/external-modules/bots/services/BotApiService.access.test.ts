@@ -569,6 +569,24 @@ describe("the calls on one computer job (computers plan, piece 7)", () => {
         expect(ids).toEqual(["cmd-00000001", "cmd-00000002", "cmd-00000003", "cmd-00000004", undefined, undefined]);
     });
 
+    it("sends expected in the body of a Cancel that goes without a question, and in no other call", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(() => Promise.resolve(json({ ok: false, reason: "started" })));
+        const api = service();
+        expect(await api.brickComputerJobAction("b1", "j1", "cancel", { expected: "not_started" })).toEqual({
+            ok: false,
+            reason: "started",
+        });
+        await api.brickComputerJobAction("b1", "j1", "cancel");
+        await api.brickComputerJobAction("b1", "j1", "pause", { expected: "not_started" });
+        expect(fetchMock.mock.calls.map(([, init]) => init?.body ?? null)).toEqual([
+            JSON.stringify({ expected: "not_started" }),
+            null,
+            null,
+        ]);
+    });
+
     it("sends the SAME id again when a renewed sign-in resends the request, so the control is done once", async () => {
         const fetchMock = vi
             .spyOn(globalThis, "fetch")

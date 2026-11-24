@@ -80,6 +80,8 @@ export function refusalWords(texts: TranslationFunctions, why: JobRefusal): stri
         case "over-limit":
             return words.refusedOverLimit();
         case "changed":
+        // It had started: the person is asked first (the panel opens the question), nothing to say here
+        case "started":
             return null;
         default:
             return words.failed();
