@@ -13,7 +13,6 @@ ARG NODE_OPTIONS="--max-old-space-size=16384"
 ARG FAST_BUILD=""
 # "false", "hidden" or empty (linked maps). See play/vite.config.mts.
 ARG GENERATE_SOURCEMAP=""
-ARG SPLIT_VENDOR=""
 # Sentry build args (optional - for universe builds)
 # SENTRY_RELEASE is derived from RELEASE_VERSION below rather than passed in directly.
 ARG SENTRY_URL=""
@@ -45,7 +44,6 @@ ENV NODE_ENV=production
 RUN export NODE_OPTIONS="$NODE_OPTIONS" && \
     export DISABLE_LEGACY_BROWSERS="$FAST_BUILD" && \
     export GENERATE_SOURCEMAP="$GENERATE_SOURCEMAP" && \
-    export SPLIT_VENDOR="$SPLIT_VENDOR" && \
     cd play && \
     npm run typesafe-i18n && \
     npm run build-iframe-api && \
@@ -75,10 +73,6 @@ RUN --mount=type=secret,id=SENTRY_AUTH_TOKEN \
         fi && \
         find . -name '*.map' -delete; \
     fi
-
-# TEST ONLY (removed before merge): lets CI export the built client.
-FROM scratch AS dist-export
-COPY --from=builder /usr/src/play/dist/public /
 
 # final production image
 FROM node:20.18-bookworm-slim

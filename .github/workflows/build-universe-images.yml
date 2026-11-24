@@ -147,6 +147,22 @@ jobs:
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # The prod client build (`universe` push: legacy browsers and source maps on) needs about 25 GB of memory,
+      # and the runner has 16 GB. A swap file takes the difference (measured: the build peaks at about 10 GB of
+      # swap and takes about 26 minutes). Without it the build dies with "JavaScript heap out of memory".
+      - name: Add swap for the prod client build
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/universe' }}
+        run: |
+          AVAIL=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          SIZE=$(( AVAIL - 8 )); [ "$SIZE" -gt 32 ] && SIZE=32
+          sudo swapoff -a || true
+          sudo fallocate -l "${SIZE}G" /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          swapon --show
+          free -m
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -154,9 +170,13 @@ jobs:
           file: ./play/Dockerfile.universe
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          # Read by the Dockerfile as a BuildKit secret (never a build argument, so it is not in the image).
+          secrets: |
+            SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
           build-args: |
-            NODE_OPTIONS=--max-old-space-size=16384
+            NODE_OPTIONS=--max-old-space-size=${{ (github.event_name == 'push' && github.ref == 'refs/heads/universe') && '30720' || '16384' }}
             FAST_BUILD=${{ (github.event_name != 'push' || github.ref != 'refs/heads/universe') && 'true' || '' }}
+            GENERATE_SOURCEMAP=${{ (github.event_name == 'push' && github.ref == 'refs/heads/universe') && 'hidden' || '' }}
             RELEASE_VERSION=${{ needs.get-version.outputs.release_version }}
             SENTRY_URL=
             SENTRY_AUTH_TOKEN=

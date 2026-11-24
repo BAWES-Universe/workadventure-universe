@@ -18,17 +18,6 @@ const pdfjsDir = dirname(createRequire(import.meta.url).resolve("pdfjs-dist/pack
 // (the package exports only its main file, core/rfb.js, so the folder is two levels up from it)
 const novncDir = dirname(dirname(createRequire(import.meta.url).resolve("@novnc/novnc")));
 
-// Keeps the biggest self-contained libraries out of the main bundle, so no single file the build has to
-// process (and the legacy build has to transpile a second time) is as large as the whole game.
-function splitVendorChunks(id: string): string | undefined {
-    if (!id.includes("/node_modules/")) return undefined;
-    if (/\/node_modules\/(phaser|phaser3-rex-plugins|phaser-animated-tiles)\//.test(id)) return "vendor-phaser";
-    if (/\/node_modules\/(matrix-js-sdk|@matrix-org)\//.test(id)) return "vendor-matrix";
-    if (/\/node_modules\/(livekit-client|@livekit)\//.test(id)) return "vendor-livekit";
-    if (/\/node_modules\/(@sentry|@sentry-internal|posthog-js)\//.test(id)) return "vendor-telemetry";
-    return undefined;
-}
-
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
     // Load env file based on `mode` in the current working directory.
@@ -50,14 +39,12 @@ export default defineConfig(({ mode }) => {
             // GENERATE_SOURCEMAP: "false" = no maps, "hidden" = maps are written next to the files but the files
             // do not point to them (the image build uploads them to Sentry and removes them), anything else = maps
             // linked from the files (what dev and `npm run build` have always done).
-            sourcemap: env.GENERATE_SOURCEMAP === "false" ? false : env.GENERATE_SOURCEMAP === "hidden" ? "hidden" : true,
+            sourcemap:
+                env.GENERATE_SOURCEMAP === "false" ? false : env.GENERATE_SOURCEMAP === "hidden" ? "hidden" : true,
             outDir: "./dist/public",
             rollupOptions: {
                 // external: ["@mediapipe/tasks-vision"],
                 //plugins: [inject({ Buffer: ["buffer/", "Buffer"] })],
-                output: {
-                    manualChunks: env.SPLIT_VENDOR === "true" ? splitVendorChunks : undefined,
-                },
             },
             assetsInclude: ["**/*.tflite", "**/*.wasm"],
         },
