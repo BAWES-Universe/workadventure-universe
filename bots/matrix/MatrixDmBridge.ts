@@ -2479,6 +2479,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const botId = await this.botForRoom(event.room_id, true);
             if (!botId || this.purgedBots.has(botId)) return 'nothing';
             const config = await this.deps.getBotConfig(botId).catch(() => null);
+            // A Brick its owner deleted (Undo can still give it back) says nothing, as in `handleMessage`: a notice kept for a retry is not sent after that (CodeRabbit on the round 9 head)
+            if (config?.brick?.deleted) return 'nothing';
             const language = detectLanguage(String(event.content?.body ?? ''));
             // `lost`: the entry's state lapsed, so whether paid work began is not known: the careful line
             const state: BotNoteState = why === 'paid' || why === 'lost' ? 'unsure' : 'trouble';

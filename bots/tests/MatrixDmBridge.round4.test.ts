@@ -525,6 +525,19 @@ describe('a message that arrives while the store that knows the chat is down', (
             // a chat that cannot be resolved is only reported, and never throws
             await expect(bridge.onGaveUp({ ...message('hi'), room_id: '!unknown:matrix.test' }, 'tries')).resolves.toBeUndefined();
         });
+
+        // CodeRabbit on the round 9 head: a Brick its owner deleted (Undo can still give it back) says nothing, a kept notice included
+        it('a Brick its owner deleted says nothing of an event it gave up on, kept notice or not', async () => {
+            const client = makeClient();
+            const stores = makeStores();
+            const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+            await bridge.onEvent(invite());
+            stores.deps.getBotConfig = vi.fn(async () => ({ botId: BOT, name: 'Nora', enabled: true, aiProviderRef: 'p', brick: { deleted: true } }) as never);
+            client.sendMessage.mockClear();
+            await bridge.onGaveUp(message('hello?'), 'tries');
+            await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-1', again: true })).resolves.toBe('nothing');
+            expect(client.sendMessage).not.toHaveBeenCalled();
+        });
     });
 
     it('the reply is kept as something the person was told only when Matrix gave the id of its text: a send that was suppressed keeps nothing', async () => {

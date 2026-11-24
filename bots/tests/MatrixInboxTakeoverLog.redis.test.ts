@@ -3,6 +3,7 @@ import { createClient } from 'redis';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { MatrixEvent } from '../matrix/MatrixAppServiceRouter';
 import { createEventInbox, INBOX_KEY, type InboxEntry } from '../matrix/MatrixEventInbox';
+import { OUTBOX_KEY, OUTBOX_PREFIX, OUTBOX_SENT_PREFIX } from '../matrix/MatrixNoticeOutbox';
 import { takeTurnOnInbox } from './helpers/sharedInboxLock';
 
 /**
@@ -29,8 +30,14 @@ describe.runIf(!!URL)('the take-over logs an entry it closes as paid work (a rea
                 ...used.map((id) => `matrix:inbox-resend:${id}`),
                 ...used.map((id) => `matrix:inbox-waited:${id}`),
                 ...used.map((id) => `matrix:room-order:!room-${id}:matrix.test`),
+                // The notice a TAKEOVER closure writes (no expiry): left behind, it would be found by later delivery scans and pile up across runs (CodeRabbit on the round 9 head)
+                ...used.map((id) => `${OUTBOX_PREFIX}${id}`),
+                ...used.map((id) => `${OUTBOX_SENT_PREFIX}${id}`),
             ]);
-        for (const id of used) await client.zRem(INBOX_KEY, id);
+        for (const id of used) {
+            await client.zRem(INBOX_KEY, id);
+            await client.zRem(OUTBOX_KEY, id);
+        }
         used.length = 0;
     });
     afterAll(async () => {

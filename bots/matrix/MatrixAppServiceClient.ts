@@ -3,6 +3,9 @@ import { randomUUID } from 'crypto';
 import { botIdFromMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { MatrixEvent } from './MatrixAppServiceRouter';
 
+/** How many pages of a room's history one read follows before it gives up (each page asks for `limit` messages). */
+const MESSAGES_PAGE_CAP = 40;
+
 /**
  * Calls the homeserver as the application service. Every call names the bot it acts for with ?user_id=, so one
  * token and one HTTP client serve every bot. Nothing here keeps a connection or a timer per bot.
@@ -235,12 +238,29 @@ export class MatrixAppServiceClient {
         }
     }
 
-    /** The latest messages in a room, oldest first, read as a bot that is in it. `filter`: a Matrix room event filter (e.g. only some types or senders), so `limit` counts only those. */
+    /**
+     * The latest messages in a room, oldest first, read as a bot that is in it. `filter`: a Matrix room event filter (e.g. only some types or senders), so `limit` counts only those.
+     * A homeserver may answer a filtered page with an empty `chunk` and an `end` token while more events remain (Matrix client-server API, /messages), so the pages are followed until `limit`
+     * matching messages were found or the history ended. A history that cannot be read to its end within `MESSAGES_PAGE_CAP` pages throws: a caller that reads "none" as "absent" must never be
+     * told so by a read that did not finish (CodeRabbit on the round 9 head).
+     */
     async getRecentMessages(userId: string, roomId: string, limit = 20, filter?: { types?: string[]; senders?: string[] }): Promise<MatrixEvent[]> {
-        const response = await this.http.get(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages`, {
-            params: { user_id: userId, dir: 'b', limit, ...(filter ? { filter: JSON.stringify(filter) } : {}) },
-        });
-        return ((response.data?.chunk ?? []) as MatrixEvent[]).reverse();
+        const found: MatrixEvent[] = [];
+        let from: string | undefined;
+        for (let page = 0; page < MESSAGES_PAGE_CAP; page++) {
+            // eslint-disable-next-line no-await-in-loop
+            const response = await this.http.get(`/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages`, {
+                params: { user_id: userId, dir: 'b', limit, ...(from ? { from } : {}), ...(filter ? { filter: JSON.stringify(filter) } : {}) },
+            });
+            found.push(...((response.data?.chunk ?? []) as MatrixEvent[]));
+            if (found.length >= limit) break;
+            const end = response.data?.end;
+            // No `end` token (or one that goes nowhere): the history is over
+            if (typeof end !== 'string' || end === '' || end === from) return found.reverse();
+            from = end;
+            if (page === MESSAGES_PAGE_CAP - 1) throw new Error(`Matrix history of ${roomId} was not read to its end in ${MESSAGES_PAGE_CAP} pages`);
+        }
+        return found.slice(0, limit).reverse();
     }
 
     /** Upload bytes to the homeserver's media repository and return the mxc:// URI. */

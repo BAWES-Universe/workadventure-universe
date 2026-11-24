@@ -295,6 +295,8 @@ export interface StartKeyEntry {
     /** With `found` and `made`: the job the resend made is queued (it has not started), and Orbit's reason (`allowance`, `turn`, `busy`, `pool`). A job that is only FOUND again is never told as queued: Orbit does not say whether it runs or waits. */
     queued?: true;
     queuedFor?: string | null;
+    /** On the entry of `TRY_AGAIN_HELD_SLOT`: every title whose retry found nothing in this turn (`key` is the first, or '' for a retry that named none, which holds every title). */
+    titles?: string[];
 }
 
 /**
@@ -341,7 +343,17 @@ const TRY_AGAIN_HELD_NOTE = 'They asked to try a job again and it could not be f
 /** The note when an ordinary start of this turn is held back by a retry that found nothing (see `TRY_AGAIN_HELD_SLOT`), else undefined. */
 const heldBack = (starts: Map<string, StartKeyEntry> | undefined, job: string): string | undefined => {
     const held = starts?.get(TRY_AGAIN_HELD_SLOT);
-    return held && (held.key === '' || sameTitle(text(held.key, TITLE_MAX), job)) ? TRY_AGAIN_HELD_NOTE : undefined;
+    if (!held) return undefined;
+    // Every retry that found nothing holds its own title (a second one never lifts the first), and a retry that named none holds every title (CodeRabbit on the round 9 head)
+    const titles = held.titles ?? [held.key];
+    return titles.some((title) => title === '') || titles.some((title) => sameTitle(text(title, TITLE_MAX), job)) ? TRY_AGAIN_HELD_NOTE : undefined;
+};
+/** A retry of this turn that found nothing to carry on: its title joins the ones already held (none named: '' holds every title). */
+const holdTitle = (starts: Map<string, StartKeyEntry> | undefined, title: string): void => {
+    if (!starts) return;
+    const before = starts.get(TRY_AGAIN_HELD_SLOT);
+    const titles = [...(before?.titles ?? (before ? [before.key] : [])), title];
+    starts.set(TRY_AGAIN_HELD_SLOT, { key: before?.key ?? title, at: Date.now(), open: false, titles });
 };
 const TRY_AGAIN_ASKED_NOTE = 'They have not chosen yet, so NOTHING was started. A fixed line under your reply already asked them: do not ask it again and do not call use_computer again in this turn. Only their next message can start anything.';
 /** A message with no time of its own is never the consent of a paid start (GPT's eighth note, A2): nothing is started from it and the person is asked to say it again. */
@@ -534,12 +546,18 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
         const dated = shown.some((one, index) => shown.some((other, at) => at !== index && sameTitle(other.title, one.title)));
         const line = whichDated('ended', shown.map((one) => ({ title: one.title, ...(one.endedAt === undefined ? {} : { at: one.endedAt }) })), Date.now(), sameTitle, (quoted) => TRY_AGAIN_WORDS.whichEarlierJob(quoted));
         // The jobs the question named, in its order: the answer picks one of these
-        if (context.endedShown) {
-            context.endedShown.ids = shown.map((one) => one.id);
-            context.endedShown.at = Date.now();
+        // They are kept only once the question is delivered: a question that never reached the person must not replace the choices they were last shown (CodeRabbit on the round 9 head)
+        const keep = (): void => {
+            if (context.endedShown) {
+                context.endedShown.ids = shown.map((one) => one.id);
+                context.endedShown.at = Date.now();
+            }
+        };
+        if (!context.confirmations) {
+            keep();
+            return { asked: true, answer: { ...answer, asked: 'which', note: dated ? whichEarlierDatedSaid(line) : whichEarlierJobSaid(line) } };
         }
-        if (!context.confirmations) return { asked: true, answer: { ...answer, asked: 'which', note: dated ? whichEarlierDatedSaid(line) : whichEarlierJobSaid(line) } };
-        context.confirmations.say(line);
+        context.confirmations.say(line, keep);
         return { asked: true, answer: { ...answer, asked: 'which', note: dated ? WHICH_EARLIER_DATED_NOTE : WHICH_EARLIER_JOB_NOTE } };
     }
     // No earlier job to list: the offer to start it as a new job (the card is the existing one), or, with no title for the work, the plain line
@@ -555,7 +573,8 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
 /** Runs use_computer. Never throws: the model is told in plain words what happened. */
 export async function runComputerTool(args: Record<string, unknown>, context: ComputerToolContext, turn: number = epochOf(context.startKeys)): Promise<Record<string, unknown>> {
     // "Try again" of the job Orbit named for this turn: that job, under its own title (the bar shows the same job), carried on from where it stopped. Orbit decides again
-    let carryOn = args.try_again === true && context.retry ? context.retry : undefined;
+    // (an explicit `pick` is the person's choice among the jobs a question named: the retry Orbit named never overrides it, and the pick is resolved against the question's list)
+    let carryOn = args.try_again === true && context.retry && (args.pick === undefined || args.pick === null) ? context.retry : undefined;
     // `turn`: the turn this call began under (taken before anything is awaited). A call that runs itself again carries it along: the person writing again ends it for the whole chain
     // "Try again" with no job named for this turn (GPT seventh note, E): NEVER a fresh paid start. The words name exactly one ended job of theirs: that one carries on (Orbit decides). Otherwise they
     // are asked which, or offered a new job: nothing is sent, and a fresh start comes only from their own tap or yes
@@ -580,7 +599,7 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             // A question put to the person ends every start of this turn (set in the same step that lets the mark go); a lookup that could not be answered, or a job carried on, asks nothing and blocks nothing
             if ('answer' in settled && settled.asked && !overtaken) context.startKeys?.set(TRY_AGAIN_ASKED_SLOT, { key: '', at: Date.now(), open: false });
             // A retry that found nothing to carry on and asked nothing (the ended jobs could not be read) authorises no ordinary start of its title in this turn, whichever call comes first (GPT's eighth note, E)
-            else if ('answer' in settled && !settled.asked && !overtaken) context.startKeys?.set(TRY_AGAIN_HELD_SLOT, { key: text(args.job, ENDED_TITLE_READ_MAX), at: Date.now(), open: false });
+            else if ('answer' in settled && !settled.asked && !overtaken) holdTitle(context.startKeys, text(args.job, ENDED_TITLE_READ_MAX));
             if (overtaken && 'carryOn' in settled) return { started: false, success: false, note: OVERTAKEN_NOTE };
         } finally {
             if (context.startKeys?.get(TRY_AGAIN_PENDING_SLOT) === pending) context.startKeys.delete(TRY_AGAIN_PENDING_SLOT);

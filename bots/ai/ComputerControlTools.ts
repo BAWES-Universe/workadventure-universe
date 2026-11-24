@@ -109,8 +109,11 @@ interface Narrowed {
     titles: string[];
     leftOut: Array<string | null>;
     which?: boolean;
-    /** The question was put under the reply (a second call of this turn says nothing again). */
-    said?: boolean;
+    /**
+     * The reply queue the question was put under (`true`: no queue, the model says it). A second call of this turn on the SAME queue says nothing again; a reply asked again makes a new queue,
+     * and the question goes into it (CodeRabbit on the round 9 head).
+     */
+    said?: ConfirmationQueue | true;
 }
 
 /** The controls of one person and Brick in this chat (kept in the chat's memory, runtime only). */
@@ -285,8 +288,10 @@ export function narrowingOf(message: string, ask: Pick<ControlAsk, 'titles' | 'j
     const whole = new Array<boolean>(words.length).fill(false);
     const partial = new Array<boolean>(words.length).fill(false);
     const named = new Array<boolean>(tokens.length).fill(false);
+    // The words of a title named in full: a title that starts INSIDE them is part of that longer title, never named by itself ("Book taxi" names "Book taxi", not also "Taxi"), wherever the longer one began (CodeRabbit on the round 9 head)
+    const insideWhole = new Array<boolean>(tokens.length).fill(false);
     for (let at = 0; at < tokens.length; at++) {
-        if (!startsTitle(tokens, at, named)) continue;
+        if (insideWhole[at] || !startsTitle(tokens, at, named)) continue;
         const matches = words.map((title, index) => {
             let length = 0;
             while (title.length > 0 && at + length < tokens.length && length < title.length && tokens[at + length] === title[length]) length++;
@@ -299,7 +304,10 @@ export function narrowingOf(message: string, ask: Pick<ControlAsk, 'titles' | 'j
             for (let i = 0; i < one.length; i++) named[at + i] = true;
             if (one.whole) {
                 // a shorter title inside a longer one that is also named here is not named by itself
-                if (one.length === longest) whole[one.index] = true;
+                if (one.length === longest) {
+                    whole[one.index] = true;
+                    for (let i = 1; i < one.length; i++) insideWhole[at + i] = true;
+                }
             } else if (one.length >= longest) partial[one.index] = true;
         }
     }
@@ -609,7 +617,10 @@ async function control(name: string, args: Record<string, unknown>, context: Com
         }
     } else found = findJob(words, jobs, fallback);
     if ('none' in found) return say(context, [CONTROL_REFUSALS.noSuchJob(quotedTitles(jobs.map((job) => job.title)))], { done: false, success: false });
-    if ('which' in found) return say(context, [whichLine(found.which, context)], { done: false, asked: 'which' });
+    if ('which' in found) {
+        const which = whichLine(found.which, context);
+        return say(context, [which.line], { done: false, asked: 'which' }, which.keep);
+    }
     const job = found.job;
     context.state.resolved.set(resolvedKey, job);
 
@@ -795,14 +806,23 @@ function askFirst(context: ComputerControlContext, key: string, ask: Pick<Contro
  * `askedAt`). When Orbit gave no time for such a job, nothing is said about newer or older (the game cannot know): the plain question. The jobs are kept in the order they were named, so the
  * answer can pick by number.
  */
-function whichLine(found: ComputerControlJob[], context: ComputerControlContext): string {
+function whichLine(found: ComputerControlJob[], context: ComputerControlContext): { line: string; keep: () => void } {
     const same = (a: string, b: string): boolean => plain(a) === plain(b);
-    const sorted = [...found].sort((a, b) => (a.askedAt !== undefined && b.askedAt !== undefined ? b.askedAt - a.askedAt : a.askedAt !== undefined ? -1 : b.askedAt !== undefined ? 1 : 0));
-    context.state.shown = { ids: sorted.map((job) => job.id), at: Date.now() };
+    const ordered = [...found].sort((a, b) => (a.askedAt !== undefined && b.askedAt !== undefined ? b.askedAt - a.askedAt : a.askedAt !== undefined ? -1 : b.askedAt !== undefined ? 1 : 0));
+    // Jobs that all share one title are told apart in at most three places ("the newest one, the one before it, the oldest one"): more than three are cut to the newest three, in the question AND in the numbers kept,
+    // so a number in the question is always the job it names (never the fourth, oldest one under "the oldest one")
+    const sorted = ordered.every((job) => same(job.title, ordered[0].title)) ? ordered.slice(0, WHICH_SHOWN_MAX) : ordered;
+    const ids = sorted.map((job) => job.id);
+    // The choices are kept only once the question is delivered: one that never reached the person must not replace the ones they were last shown (CodeRabbit on the round 9 head)
+    const keep = (): void => {
+        context.state.shown = { ids, at: Date.now() };
+    };
     const twinsUndated = sorted.some((job, index) => job.askedAt === undefined && sorted.some((other, at) => at !== index && same(other.title, job.title)));
-    if (twinsUndated) return CONTROL_REFUSALS.whichJob(quotedTitles(sorted.map((job) => job.title)));
-    return whichDated('live', sorted.map((job) => ({ title: job.title, ...(job.askedAt === undefined ? {} : { at: job.askedAt }) })), Date.now(), same, (quoted) => CONTROL_REFUSALS.whichJob(quoted));
+    if (twinsUndated) return { line: CONTROL_REFUSALS.whichJob(quotedTitles(sorted.map((job) => job.title))), keep };
+    return { line: whichDated('live', sorted.map((job) => ({ title: job.title, ...(job.askedAt === undefined ? {} : { at: job.askedAt }) })), Date.now(), same, (quoted) => CONTROL_REFUSALS.whichJob(quoted)), keep };
 }
+/** How many jobs a "which one do you mean?" about live jobs names (the same three the question about ended jobs names). */
+const WHICH_SHOWN_MAX = 3;
 
 /**
  * A yes that named only some of the jobs a Stop listed (GPT's eighth note, D): nothing is stopped. Brick says it will act on exactly those jobs and who it leaves alone, then asks about them (the
@@ -817,20 +837,39 @@ async function askNarrowed(
     door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>
 ): Promise<Record<string, unknown>> {
     // Put under the reply already in this turn (the model called both tools, or the reply was asked again): nothing is said twice
-    if (narrowed.said) return { done: false, asked: true, waitingForTheirAnswer: true, note: LINE_SAID };
+    // The message this question was put on: the cancels below stop when a newer one has come
+    const origin = context.state.turn;
+    // (a reply asked again has a NEW queue: the question goes into it, and a second call on the same queue says nothing again)
+    const queue = context.confirmations ?? true;
+    if (narrowed.said === queue) return { done: false, asked: true, waitingForTheirAnswer: true, note: LINE_SAID };
     const named = narrowed.jobIds.map((id) => jobs.find((job) => job.id === id)).filter((job): job is ComputerControlJob => !!job);
-    narrowed.said = true;
-    if (narrowed.which) return say(context, [named.length > 1 ? whichLine(named, context) : CONTROL_REFUSALS.whichJob(quotedTitles(narrowed.titles))], { done: false, asked: 'which' });
+    narrowed.said = queue;
+    if (narrowed.which) {
+        if (named.length > 1) {
+            const which = whichLine(named, context);
+            return say(context, [which.line], { done: false, asked: 'which' }, which.keep);
+        }
+        return say(context, [CONTROL_REFUSALS.whichJob(quotedTitles(narrowed.titles))], { done: false, asked: 'which' });
+    }
     if (named.length === 0) return say(context, [CONTROL_WORDS.stoppedNothingLeft(0, narrowed.jobIds.length, narrowed.titles.length === 1 ? narrowed.titles[0] : undefined)], { done: false, success: false });
     const statement = CONTROL_WORDS.narrowedStatement(quotedTitles(named.map((job) => job.title)), othersOf(narrowed.leftOut));
     if (named.every((job) => !hasStarted(job))) {
         return once(context, `stop|${named.map((job) => job.id).join('|')}`, async () => {
             const lines: string[] = [];
             for (const job of named) {
-                // eslint-disable-next-line no-await-in-loop
-                const answer = await door({ action: 'cancel', jobId: job.id, commandId: commandIdOf(context.state, context.inbound?.eventId, 'cancel', job.id, '') });
-                lines.push(answer.ok ? lineOf(CONTROL_WORDS.cancelledQueued, job.title) : refused(reasonOf(answer), job, view).lines[0]);
+                // A newer message came while the cancels were going: no more are sent on the strength of the older one, and what was already done is still said (CodeRabbit on the round 9 head)
+                if (context.state.turn !== origin) break;
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const answer = await door({ action: 'cancel', jobId: job.id, commandId: commandIdOf(context.state, context.inbound?.eventId, 'cancel', job.id, '') });
+                    lines.push(answer.ok ? lineOf(CONTROL_WORDS.cancelledQueued, job.title) : refused(reasonOf(answer), job, view).lines[0]);
+                } catch {
+                    // A request that broke may have been taken: said as not known (never as done, never as "nothing changed"), and the cancels that were done stay told
+                    lines.push(CONTROL_REFUSALS.unknown);
+                }
             }
+            // Only when nothing was said at all (a newer message came before the first cancel went) is there nothing to tell
+            if (lines.length === 0) return { result: { done: false, stale: true }, lines: [] };
             if (narrowed.leftOut.length > 0) lines.push(CONTROL_WORDS.notStopped(othersOf(narrowed.leftOut)));
             return { result: { done: true }, lines: [lines.join('\n')] };
         });
@@ -910,7 +949,12 @@ async function seeJobs(words: string, args: Record<string, unknown>, state: Cont
     const hasPick = args.pick !== undefined && args.pick !== null;
     const chosen = hasPick ? pickedJob(args, words, jobs, state) : undefined;
     const found: Found = hasPick ? (chosen ? { job: chosen } : { none: true }) : findJob(words, jobs);
-    if (!('job' in found)) return { ...result, ...('which' in found ? { which: found.which.map((job) => job.title) } : { notFound: true }) };
+    if (!('job' in found)) {
+        if (!('which' in found)) return { ...result, notFound: true };
+        // The model words this question itself: the ids go with it in the same order as the titles it is given, so the person's number picks the job they were shown (CodeRabbit on the round 9 head)
+        state.shown = { ids: found.which.map((job) => job.id), at: Date.now() };
+        return { ...result, which: found.which.map((job) => job.title) };
+    }
     const activity = await door({ action: 'activity', jobId: found.job.id });
     if (activity.ok && activity.steps?.length) return { ...result, job: found.job.id, stepsSoFar: activity.steps.map((step) => step.label) };
     return { ...result, job: found.job.id };

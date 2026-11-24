@@ -523,6 +523,49 @@ describe('stop everything: always asks, naming every job, and ends exactly those
                 expect(orbit.acted()).toEqual([]);
             });
         });
+        // CodeRabbit on the round 9 head: a number is the choice in the question the person SAW
+        it('a question that never reached the person leaves the choices they were last shown, so their number still means what they read', async () => {
+            const newer = inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) });
+            const first = door(viewOf(working({ askedAt: minutesAgo(125) }), [newer]));
+            const c = chat(first.admin);
+            await c.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
+            await c.deliver();
+            expect(c.state.shown?.ids).toEqual(['job-visa-2', 'job-visa']);
+            // a third job came; the next question about it never went out
+            const third = inLine('job-visa-3', 'Visa form', { askedAt: minutesAgo(2) });
+            const second = door(viewOf(working({ askedAt: minutesAgo(125) }), [newer, third]));
+            const again = chat(second.admin, c.state);
+            again.nextMessage('the older one');
+            await again.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
+            again.drop();
+            expect(c.state.shown?.ids).toEqual(['job-visa-2', 'job-visa']);
+            // "2" is the older one they read, not the middle one of a list they never saw
+            again.nextMessage('the older one');
+            await again.run(PAUSE_JOB_TOOL, { job: 'Visa form', pick: 2 });
+            expect(second.acted()).toEqual([{ action: 'pause', jobId: 'job-visa' }]);
+        });
+
+        it('four live jobs with one title that read the same are asked about as three, and the numbers kept are those three: the third is never the fourth', async () => {
+            const same = (id: string, over: Job = {}) => inLine(id, 'Visa form', { askedAt: minutesAgo(10), ...over });
+            const orbit = door(viewOf(working({ id: 'job-1', askedAt: minutesAgo(10) }), [same('job-2'), same('job-3'), same('job-4')]));
+            const c = chat(orbit.admin);
+            await c.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
+            const said = await c.deliver();
+            expect(said).toEqual(['Which “Visa form” do you mean: the newest one, the one before it, or the oldest one?']);
+            expect(c.state.shown?.ids).toHaveLength(3);
+            expect(c.state.shown?.ids).not.toContain('job-4');
+        });
+
+        it('computer_jobs keeps the jobs it names for an ambiguous title in the order of its titles, so the number picks the one they were given', async () => {
+            const orbit = door(viewOf(working({ askedAt: minutesAgo(125) }), [inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) })]));
+            const c = chat(orbit.admin);
+            const result = await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form' });
+            expect(result.which).toEqual(['Visa form', 'Visa form']);
+            expect(c.state.shown?.ids).toEqual(['job-visa', 'job-visa-2']);
+            c.nextMessage('the second one');
+            expect(await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form', pick: 2 })).toMatchObject({ job: 'job-visa-2' });
+        });
+
         it('jobs with different titles keep the plain question', async () => {
             const orbit = door(viewOf(working(), [inLine('job-visa-2', 'Visa renewal')]));
             const c = chat(orbit.admin);
@@ -614,6 +657,82 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             await c.run(STOP_COMPUTER_TOOL);
             expect(orbit.acted()).toEqual([]);
             expect((await c.deliver())[0]).toMatch(/^Just “Visa form renewal”, then\. I won't stop “Visa form”\.\nCancel “Visa form renewal”\?/);
+        });
+
+        // CodeRabbit on the round 9 head (finding 1): a title inside a longer title that was named is part of that longer title, never named by itself
+        it('"Book taxi" named in full is that job alone, never also the "Taxi" inside it; a separately named job still is selected', async () => {
+            const flight = () => working({ id: 'job-flight', title: 'Flight search' });
+            const bookTaxi = () => inLine('job-booktaxi', 'Book taxi');
+            const bareTaxi = () => inLine('job-taxi', 'Taxi');
+            const one = await askedAll([flight(), bookTaxi(), bareTaxi()], { cancel: { ...viewOf(null) } });
+            one.c.nextMessage('Yes, cancel Book taxi');
+            await one.c.run(STOP_COMPUTER_TOOL);
+            // only "Book taxi" never started: it is cancelled at once, and "Taxi" is left alone
+            expect(one.orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-booktaxi' }]);
+            expect(await one.c.deliver()).toEqual([`${lineOf(CONTROL_WORDS.cancelledQueued, 'Book taxi')}\nI haven't stopped “Flight search” and “Taxi”.`]);
+            const two = await askedAll([flight(), bookTaxi(), bareTaxi()]);
+            two.c.nextMessage('Yes, cancel Book taxi and Flight search');
+            await two.c.run(STOP_COMPUTER_TOOL);
+            expect(two.orbit.acted()).toEqual([]);
+            const asked = (await two.c.deliver())[0];
+            expect(asked).toContain('I won\'t stop “Taxi”.');
+            expect(asked).toContain('“Flight search”');
+            expect(asked).toContain('“Book taxi”');
+        });
+
+        // finding 3: a reply asked again has a NEW queue; the narrowed question goes into it, so the next yes can answer it
+        it('a narrowed question is put into the replacement queue when its reply is asked again, and only once in one queue', async () => {
+            const { orbit, c } = await askedAll([visa(), taxi(), flight()], { cancel: { ...viewOf(null) } });
+            c.nextMessage('Yes, cancel Visa form');
+            await c.run(STOP_COMPUTER_TOOL);
+            // the first reply never went out; the same reply is asked again
+            c.retry();
+            await c.run(STOP_COMPUTER_TOOL);
+            await c.run(CANCEL_JOB_TOOL, { job: 'Visa form' });
+            const said = await c.deliver();
+            expect(said).toHaveLength(1);
+            expect(said[0]).toContain(lineOf(CONTROL_WORDS.askCancel, 'Visa form'));
+            expect(orbit.acted()).toEqual([]);
+            // and the plain yes after it answers that question
+            c.nextMessage('Yes');
+            await c.run(CANCEL_JOB_TOOL, { job: 'Visa form' });
+            expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
+        });
+
+        // findings 4 and 5: the cancels of a narrowed Stop never outrun a newer message, and one that broke does not hide the ones that were done
+        it('a newer message stops the cancels that have not been sent yet, and the ones already done are still told', async () => {
+            const hotel = () => inLine('job-hotel', 'Hotel booking');
+            const { orbit, c } = await askedAll([visa(), taxi(), hotel()], { cancel: { ...viewOf(null) } });
+            const original = orbit.admin.controlComputerJobs.getMockImplementation()!;
+            let cancels = 0;
+            orbit.admin.controlComputerJobs.mockImplementation(async (bot: string, user: string, ask: ComputerControlAsk) => {
+                const answer = await original(bot, user, ask);
+                // they write "No, wait" while the first cancel is on its way
+                if (ask.action === 'cancel' && ++cancels === 1) startControlTurn(c.state, 'No, wait');
+                return answer;
+            });
+            c.nextMessage('Yes, cancel Taxi booking and Hotel booking');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi' }]);
+            const said = await c.deliver();
+            expect(said.join('\n')).toContain(lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking'));
+        });
+
+        it('a cancel that threw is told as not known, never "nothing changed", and the cancels already done are still told', async () => {
+            const hotel = () => inLine('job-hotel', 'Hotel booking');
+            const { orbit, c } = await askedAll([visa(), taxi(), hotel()], { cancel: { ...viewOf(null) } });
+            const original = orbit.admin.controlComputerJobs.getMockImplementation()!;
+            let cancels = 0;
+            orbit.admin.controlComputerJobs.mockImplementation(async (bot: string, user: string, ask: ComputerControlAsk) => {
+                if (ask.action === 'cancel' && ++cancels === 2) throw new Error('Orbit went away');
+                return original(bot, user, ask);
+            });
+            c.nextMessage('Yes, cancel Taxi booking and Hotel booking');
+            await c.run(STOP_COMPUTER_TOOL);
+            const said = (await c.deliver()).join('\n');
+            expect(said).toContain(lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking'));
+            expect(said).toContain(CONTROL_REFUSALS.unknown);
+            expect(said).not.toContain(CONTROL_REFUSALS.couldNot);
         });
 
         it('the jobs left alone: more than three, or any without a title, are "the other job" / "the other n jobs"', () => {

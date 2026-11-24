@@ -521,7 +521,12 @@ describe('try_again with no job named for this turn', () => {
         it('the answer picks one by its number in the question: that one carries on, and only that one', async () => {
             const admin = world(twins());
             const shown = {};
-            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: new ConfirmationQueue(), endedShown: shown, startKeys: new Map() }));
+            const question = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: question, endedShown: shown, startKeys: new Map() }));
+            // the choices are kept once the question was delivered, never before
+            expect(shown).toEqual({});
+            question.tell();
+            await question.deliver('$asked');
             // the next message: a new turn
             await runDelivered({ job: 'Visa form', try_again: true, pick: 2 }, ctx(admin, { endedShown: shown, startKeys: new Map() }));
             expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
@@ -536,7 +541,10 @@ describe('try_again with no job named for this turn', () => {
             expect(queue.tell()).toHaveLength(1);
             const asked = new ConfirmationQueue();
             const shown = {};
-            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: new ConfirmationQueue(), endedShown: shown, startKeys: new Map() }));
+            const question = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: question, endedShown: shown, startKeys: new Map() }));
+            question.tell();
+            await question.deliver('$asked');
             await runComputerTool({ job: 'Visa form', try_again: true, pick: 5 }, ctx(admin, { confirmations: asked, endedShown: shown, startKeys: new Map() }));
             expect(admin.startComputerJob).not.toHaveBeenCalled();
             expect(asked.tell()).toHaveLength(1);
@@ -572,6 +580,71 @@ describe('try_again with no job named for this turn', () => {
             await runComputerTool({ job: 'Visa form', try_again: true, pick: 9, latest: true }, ctx(admin, { confirmations: queue, endedShown: { ids: ['gone-gone-1234'], at: Date.now() } }));
             expect(admin.startComputerJob).not.toHaveBeenCalled();
             expect(queue.tell()).toHaveLength(1);
+        });
+
+        // CodeRabbit on the round 9 head: the retry Orbit named is the LATEST job; a pick is the person's choice and the retry never overrides it
+        it('a pick beside the retry Orbit named is resolved against the question\'s list: the retry job never replaces the one they chose', async () => {
+            const admin = world(twins());
+            const [newest, older] = twins();
+            await runDelivered({ job: 'Visa form', try_again: true, pick: 2 }, ctx(admin, { retry: { id: newest.id, title: newest.title }, endedShown: { ids: [newest.id, older.id], at: Date.now() }, startKeys: new Map() }));
+            expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+            expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: older.id }));
+            // no pick: the retry carries on as before
+            const plain = world(twins());
+            await runDelivered({ job: 'Visa form', try_again: true }, ctx(plain, { retry: { id: newest.id, title: newest.title }, startKeys: new Map() }));
+            expect(plain.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: newest.id }));
+        });
+
+        it('a pick that resolves to nothing, beside a retry, asks again and never carries on the retry job', async () => {
+            const admin = world(twins());
+            const [newest] = twins();
+            const queue = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true, pick: 9 }, ctx(admin, { retry: { id: newest.id, title: newest.title }, confirmations: queue, endedShown: { ids: ['gone-gone-1234'], at: Date.now() }, startKeys: new Map() }));
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            expect(queue.tell()).toHaveLength(1);
+        });
+
+        it('a question that was never delivered leaves the choices they were last shown, and one that was delivered replaces them', async () => {
+            const admin = world(twins());
+            const shown = { ids: ['older-older-123', 'newest-newest-1'], at: Date.now() - 1000 };
+            const lost = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: lost, endedShown: shown, startKeys: new Map() }));
+            lost.tell();
+            lost.drop();
+            await lost.deliver(undefined);
+            expect(shown.ids).toEqual(['older-older-123', 'newest-newest-1']);
+            const delivered = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: delivered, endedShown: shown, startKeys: new Map() }));
+            delivered.tell();
+            await delivered.deliver('$asked');
+            expect(shown.ids).toEqual(['newest-newest-1', 'older-older-123']);
+        });
+
+        it('two retries that found nothing hold both titles: neither one is started as a new job in this turn', async () => {
+            const down = world(null);
+            const memory = new Map();
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(down, { startKeys: memory }));
+            await runComputerTool({ job: 'Taxi', try_again: true }, ctx(down, { startKeys: memory }));
+            for (const job of ['Visa form', 'Taxi']) {
+                const answer = await runComputerTool({ job }, ctx(down, { startKeys: memory }));
+                expect(answer).toMatchObject({ started: false, success: false });
+            }
+            expect(down.startComputerJob).not.toHaveBeenCalled();
+            // a title nobody retried is still startable in this turn
+            const other = await runComputerTool({ job: 'Flight search' }, ctx(down, { startKeys: memory }));
+            expect(String(other.note ?? '')).not.toContain('NOTHING was started');
+            forgetSettledStarts(memory);
+            expect(memory.size).toBe(0);
+        });
+
+        it('a retry that named no title holds every title, even after a titled one', async () => {
+            const down = world(null);
+            const memory = new Map();
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(down, { startKeys: memory }));
+            await runComputerTool({ try_again: true }, ctx(down, { startKeys: memory }));
+            const answer = await runComputerTool({ job: 'Flight search' }, ctx(down, { startKeys: memory }));
+            expect(answer).toMatchObject({ started: false, success: false });
+            expect(down.startComputerJob).not.toHaveBeenCalled();
         });
 
         it('a single match is unchanged: it carries on without a question', async () => {
