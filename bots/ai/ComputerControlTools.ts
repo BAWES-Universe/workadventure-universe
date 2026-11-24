@@ -137,7 +137,15 @@ export interface ControlState {
     /** This turn's message narrowed an answerable Stop (see `Narrowed`). Cleared by the next message. */
     narrowed?: Narrowed;
     /** The live jobs the last "which one do you mean?" named, in the order it named them (kept across messages): the answer picks one of them by its number, never by a guessed id. */
-    shown?: { ids: string[]; at: number };
+    shown?: { ids: string[]; at: number; seq?: number };
+    /** The number of the last "which one?" question put (the one whose choices were kept last wins, whatever order the replies are delivered in). */
+    askedSeq?: number;
+}
+
+/** Keeps the choices of a "which one?" question once it was delivered, unless the choices of a LATER question were kept already (a late delivery never puts an older list back). */
+function commitShown(state: ControlState, ids: string[], seq: number): void {
+    if ((state.shown?.seq ?? 0) > seq) return;
+    state.shown = { ids, at: Date.now(), seq };
 }
 
 export function newControlState(): ControlState {
@@ -583,7 +591,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     const jobs = jobsOf(view);
     const words = clean(args.job, JOB_WORDS_MAX);
 
-    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, args, context.state, view, jobs, door);
+    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, args, context.state, view, jobs, door, context.confirmations);
     // The list was read while a newer message may have come: a call that began on an older message changes nothing (a cancel or a stop must not run on the strength of a message that is no longer the latest)
     if (context.state.turn !== turn) return STALE_CALL;
     // A yes that named only some of the jobs a Stop listed ended nothing: Brick says what it will do, and asks about exactly those jobs (GPT's eighth note, D). Whichever of the two tools the model calls
@@ -814,9 +822,8 @@ function whichLine(found: ComputerControlJob[], context: ComputerControlContext)
     const sorted = ordered.every((job) => same(job.title, ordered[0].title)) ? ordered.slice(0, WHICH_SHOWN_MAX) : ordered;
     const ids = sorted.map((job) => job.id);
     // The choices are kept only once the question is delivered: one that never reached the person must not replace the ones they were last shown (CodeRabbit on the round 9 head)
-    const keep = (): void => {
-        context.state.shown = { ids, at: Date.now() };
-    };
+    const seq = (context.state.askedSeq = (context.state.askedSeq ?? 0) + 1);
+    const keep = (): void => commitShown(context.state, ids, seq);
     const twinsUndated = sorted.some((job, index) => job.askedAt === undefined && sorted.some((other, at) => at !== index && same(other.title, job.title)));
     if (twinsUndated) return { line: CONTROL_REFUSALS.whichJob(quotedTitles(sorted.map((job) => job.title))), keep };
     return { line: whichDated('live', sorted.map((job) => ({ title: job.title, ...(job.askedAt === undefined ? {} : { at: job.askedAt }) })), Date.now(), same, (quoted) => CONTROL_REFUSALS.whichJob(quoted)), keep };
@@ -938,7 +945,7 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
 }
 
 /** "How is it going?": the jobs as Orbit has them, in words for the model (no fixed line: it changes nothing), and the steps a named job took so far when Orbit keeps them. */
-async function seeJobs(words: string, args: Record<string, unknown>, state: ControlState, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>): Promise<Record<string, unknown>> {
+async function seeJobs(words: string, args: Record<string, unknown>, state: ControlState, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>, queue?: ConfirmationQueue): Promise<Record<string, unknown>> {
     const result: Record<string, unknown> = {
         jobs: jobs.map((job) => shownJob(job, view)),
         note: jobs.length
@@ -952,7 +959,11 @@ async function seeJobs(words: string, args: Record<string, unknown>, state: Cont
     if (!('job' in found)) {
         if (!('which' in found)) return { ...result, notFound: true };
         // The model words this question itself: the ids go with it in the same order as the titles it is given, so the person's number picks the job they were shown (CodeRabbit on the round 9 head)
-        state.shown = { ids: found.which.map((job) => job.id), at: Date.now() };
+        const ids = found.which.map((job) => job.id);
+        const seq = (state.askedSeq = (state.askedSeq ?? 0) + 1);
+        // Kept once the reply that carries these words was delivered (a reply with no queue to wait on keeps them at once)
+        if (queue) queue.afterDelivery(() => commitShown(state, ids, seq));
+        else commitShown(state, ids, seq);
         return { ...result, which: found.which.map((job) => job.title) };
     }
     const activity = await door({ action: 'activity', jobId: found.job.id });

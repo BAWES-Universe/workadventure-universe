@@ -80,6 +80,19 @@ export class ConfirmationQueue {
     private closed = false;
     /** A newer turn (or the same reply asked again) replaced this queue: nothing new is added to it, and what was never put into a reply is gone. What WAS (the lines the reply being sent carries) stays until that event is taken. */
     private dropped = false;
+    /** The reply was handed over to be sent (`tell` was called): from then on a newer message cannot take back what the event Matrix accepts will have told the person. */
+    private handedOver = false;
+    /** Things that are true once the person has received the reply's text, whatever it said (for example the numbered choices its own words offered): run when the event is taken. */
+    private after: Array<() => void> = [];
+
+    /**
+     * `run` goes once the reply that carries the model's own words was delivered (the event Matrix took), never before: a reply that fails or is replaced by a newer message runs nothing.
+     * Used for what a number in the person's next message must mean (the choices they were shown).
+     */
+    afterDelivery(run: () => void): void {
+        if (this.closed || this.dropped) return;
+        this.after.push(run);
+    }
 
     /**
      * A job was named to the person in this reply: its confirmation waits for the reply to be delivered. One per key. `note` says which job and what became of it (see `jobLine`): the reply carries
@@ -114,6 +127,7 @@ export class ConfirmationQueue {
      * Returns the lines, in order and without repeats.
      */
     tell(): string[] {
+        this.handedOver = true;
         const lines: string[] = [];
         for (const item of this.items.values()) {
             if (!item.note) continue;
@@ -163,6 +177,13 @@ export class ConfirmationQueue {
     async deliver(eventId?: string): Promise<void> {
         if (this.closed || typeof eventId !== 'string' || eventId === '') return;
         this.closed = true;
+        for (const run of this.after.splice(0)) {
+            try {
+                run();
+            } catch {
+                /* never in the way of a reply */
+            }
+        }
         // A control line's question counts as asked only once the event that carries it was taken
         for (const said of this.said.splice(0)) {
             if (!said.told) continue;
@@ -191,6 +212,7 @@ export class ConfirmationQueue {
      */
     drop(): void {
         this.dropped = true;
+        if (!this.handedOver) this.after = [];
         for (const [key, item] of [...this.items]) if (!item.told) this.items.delete(key);
         this.said = this.said.filter((said) => said.told);
     }

@@ -561,9 +561,36 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             const c = chat(orbit.admin);
             const result = await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form' });
             expect(result.which).toEqual(['Visa form', 'Visa form']);
+            // kept once the reply that carries these words was delivered, never before
+            expect(c.state.shown).toBeUndefined();
+            await c.deliver();
             expect(c.state.shown?.ids).toEqual(['job-visa', 'job-visa-2']);
             c.nextMessage('the second one');
             expect(await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form', pick: 2 })).toMatchObject({ job: 'job-visa-2' });
+        });
+
+        it('a computer_jobs reply that never reached the person leaves the choices they were last shown; a late delivery never puts an older list back', async () => {
+            const orbit = door(viewOf(working({ askedAt: minutesAgo(125) }), [inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) })]));
+            const c = chat(orbit.admin);
+            c.state.shown = { ids: ['job-visa-2', 'job-visa'], at: Date.now(), seq: 1 };
+            c.state.askedSeq = 1;
+            await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form' });
+            c.drop();
+            expect(c.state.shown?.ids).toEqual(['job-visa-2', 'job-visa']);
+            // two replies in flight: the later question's choices are kept, and the earlier one delivered afterwards does not replace them
+            c.nextMessage('the older one');
+            await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form' });
+            const first = c.queue;
+            const firstLines = first.tell();
+            c.nextMessage('the older one');
+            await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form' });
+            const second = c.queue;
+            second.tell();
+            await second.deliver('$second');
+            expect(c.state.shown?.seq).toBe(4);
+            await first.deliver('$first');
+            expect(firstLines).toEqual([]);
+            expect(c.state.shown?.seq).toBe(4);
         });
 
         it('jobs with different titles keep the plain question', async () => {
