@@ -25,6 +25,7 @@ vi.mock("../../../UserList/PersonNavigation", () => ({
 
 import type { TranslationFunctions } from "../../../../../../i18n/i18n-types";
 import {
+    canBlockPartner,
     canInvitePartner,
     canOpenPartnerProfile,
     canReportPartner,
@@ -153,5 +154,23 @@ describe("a direct chat's Invite, Add friend and Report", () => {
         expect(canReportPartner(partner({ uuid: "uuid-ada" }))).toBe(true);
         expect(canReportPartner(partner())).toBe(false);
         expect(canReportPartner(partner({ uuid: "uuid-bot", isBot: true }))).toBe(false);
+    });
+});
+
+describe("what you can do with a Brick that is not standing on the map", () => {
+    // A Brick's chat account is @bot_<id>:<domain>. The `isBot` flag only comes with its avatar, which exists while it
+    // stands on a map: a Brick that lives nowhere, or is switched off, has none.
+    const brick = () => partner({ chatId: "@bot_0b7c1d2e:chat.example.com", isBot: false, uuid: "uuid-brick" });
+
+    it("never offers Block, for a Brick or for a person without an account id", () => {
+        expect(canBlockPartner(brick())).toBe(false);
+        expect(canBlockPartner(partner({ chatId: "@bot_0b7c1d2e:chat.example.com", isBot: true }))).toBe(false);
+        expect(canBlockPartner(partner())).toBe(true);
+        expect(canBlockPartner(partner({ chatId: undefined }))).toBe(false);
+    });
+
+    it("never offers Report, which needs a person's account", () => {
+        expect(canReportPartner(brick())).toBe(false);
+        expect(canReportPartner(partner({ uuid: "uuid-ada" }))).toBe(true);
     });
 });

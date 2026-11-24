@@ -450,6 +450,16 @@ const chat: BaseTranslation = {
             cancel: "Cancel",
             notification: "Deleted your chat with {name:string}",
         },
+        // A Brick's chat starts again from empty: it still remembers what it learned about the person
+        clearChat: {
+            label: "Clear chat",
+            hint: "Starts an empty chat. {name:string} still remembers what it learned about you.",
+            confirm: "Clear this chat?",
+            confirmHint: "You start again with an empty chat. {name:string} still remembers what it learned about you.",
+            confirmButton: "Clear",
+            failed: "The chat could not be cleared. Check your connection and try again.",
+            notification: "Cleared your chat with {name:string}",
+        },
         profile: {
             title: "Profile",
             fullProfile: "Full profile",
@@ -459,6 +469,8 @@ const chat: BaseTranslation = {
             unblockHint: "You'll see their messages again.",
             report: "Report {name:string}",
             reportHint: "Tell the Universe team what happened.",
+            settings: "Settings",
+            settingsHint: "Mind, personality, apps and more",
         },
     },
     details: {
@@ -1113,6 +1125,12 @@ const chat: BaseTranslation = {
         bringAlongLivesIn: "It lives in {room}. Take it out first, or place it elsewhere.",
         bringAlongNotYet: "{name} isn't on the map yet. It joins you when you walk into the next room.",
         endVisitFailed: "Couldn't end the visit. Try again.",
+        // A Brick that is switched off, on its profile in the chat
+        isOff: "{name} is off",
+        offLine: "It doesn't answer or work on anything until you turn it on.",
+        turnOn: "Turn on",
+        // The Brick's page opened from its chat: Back returns there
+        backToChat: "Chat with {name}",
         visitingWith: "Visiting with {name}",
         madeBy: "Made by {name}",
         visitingCardLine:

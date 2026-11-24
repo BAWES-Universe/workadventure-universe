@@ -36,16 +36,23 @@
     import { profileStatusLine } from "../../Status/ChatStatus";
     import type { ChatStatusFacts } from "../../Status/ChatStatus";
     import type { BotAvailability } from "../../../Bots/BotChatStatus";
+    import BrickPicture from "../../../Bricks/BrickPicture.svelte";
+    import BrickVisitCard from "../../../Bricks/BrickVisitCard.svelte";
+    import { openBrickChat } from "../../../Bricks/BrickChat";
+    import { myBricksByChatId } from "../../../Bricks/MyBricksStore";
+    import { openBrickPage } from "../../../Bricks/Templates/OpenBrick";
     import PartnerRoomBlock from "./PartnerRoomBlock.svelte";
     import { partnerNowIn, sameRoom, visitPerson } from "./PartnerNowIn";
     import type { DirectPartner } from "./DirectPartnerStore";
     import { isInUniverse } from "./PartnerPlace";
     import { partnerStillInChat } from "./partnerStillInChat";
     import {
+        canBlockPartner,
         canInvitePartner,
         canOpenPartnerProfile,
         canReportPartner,
         invitePartner,
+        isBotPartner,
         locatePartner,
         openPartnerProfile,
         partnerFriendAction,
@@ -54,12 +61,14 @@
         walkToPartner,
     } from "./PartnerActions";
     import {
+        IconAdjustmentsHorizontal,
         IconBan,
         IconChevronLeft,
         IconChevronRight,
         IconFlag,
         IconMapPin,
         IconMute,
+        IconRotate,
         IconTrash,
         IconUserCircle,
         IconUsersPlus,
@@ -110,6 +119,10 @@
     ) as ChatStatusFacts;
     $: status = profileStatusLine(facts, $LL, bot ? { words: botState } : undefined);
     $: live = !bot && isInUniverse(partner.place);
+    // A Brick (the person's own, or someone else's) has no avatar in the world: it is known by its chat address
+    $: isBrick = bot || isBotPartner(partner);
+    // The person's own Brick: its look, its line, its visit card and its settings, as on its own page
+    $: ownBrick = isBrick && partner.chatId ? $myBricksByChatId.get(partner.chatId) : undefined;
     $: canViewProfile = canOpenPartnerProfile(partner);
     $: canInvite = canInvitePartner(partner, $invitesEnabledStore);
     // A person shows where they are now, when they share their room with you and you can enter it (Orbit decides).
@@ -144,18 +157,34 @@
 
     function deleteChat() {
         // The name as it is now: once the chat is gone the panel no longer knows it.
-        const notification = $LL.chat.directChat.deleteChat.notification({ name });
-        // Deleting a chat leaves it and forgets it, so it goes from the person's lists and not just from view.
+        const cleared = isBrick;
+        const brickId = ownBrick?.id;
+        const notification = cleared
+            ? $LL.chat.directChat.clearChat.notification({ name })
+            : $LL.chat.directChat.deleteChat.notification({ name });
+        // Deleting a chat leaves it and forgets it, so it goes from the person's lists and not just from view. For a Brick
+        // that is clearing it: its server starts a new, empty chat with the person's next message, and the Brick keeps what
+        // it learned.
         room.leaveRoom({ forget: true })
             .then(() => {
                 dispatch("close");
                 if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
                 showChatDoneToast(notification);
+                // The person's own Brick opens again at once, as a new empty chat. When its server is still dropping the old
+                // one it does not, and the person is left on the list of chats, told that the chat was cleared.
+                if (brickId) openBrickChat(brickId).catch((error) => console.error(error));
             })
             .catch((error) => {
                 console.error("Failed to delete the chat", error);
-                warningMessageStore.addWarningMessage($LL.chat.directChat.deleteChat.failed());
+                warningMessageStore.addWarningMessage(
+                    cleared ? $LL.chat.directChat.clearChat.failed() : $LL.chat.directChat.deleteChat.failed()
+                );
             });
+    }
+
+    // Its Settings are its own page, which opens over the chat list; Back there returns to this chat
+    function openSettings() {
+        if (ownBrick) openBrickPage(ownBrick.id, { backToChat: true });
     }
 </script>
 
@@ -182,44 +211,93 @@
     </div>
 
     <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-        <div class="flex flex-col items-center gap-1.5 pt-1 text-center">
-            <div class="relative mb-1.5">
-                <TopRowAvatar
-                    pictureStore={picture}
-                    {name}
-                    color={$colourOf(partner.chatId, name)}
-                    size="xl"
-                    ring={false}
-                />
-                {#if live}
-                    <span
-                        class="absolute -inset-1.5 rounded-full border-2 border-solid"
-                        style:border-color={status.color}
-                    />
-                {/if}
-                {#if status.color}
-                    <span
-                        class="partner-presence absolute bottom-0.5 end-0.5 h-[18px] w-[18px] rounded-full"
-                        style:background-color={status.color}
-                    />
-                {/if}
-            </div>
-            <div class="max-w-full break-words text-lg font-bold leading-6" data-testid="partnerProfileName">
-                {name}
-            </div>
-            {#if status.label}
-                <div
-                    class="flex max-w-full items-center gap-1.5 text-xs text-white/60"
-                    data-testid="partnerProfileStatus"
-                >
-                    <span
-                        class="h-1.5 w-1.5 shrink-0 rounded-full"
-                        style:background-color={status.color ?? "rgb(255 255 255 / 0.35)"}
-                    />
-                    <span class="truncate">{status.label}</span>
+        {#if isBrick}
+            <!-- A Brick, drawn the way its own page draws it: its look, name and line, and the header's status word -->
+            <div class="flex items-center gap-3.5" data-testid="partnerProfileIdentity">
+                <div class="relative shrink-0">
+                    {#if ownBrick}
+                        <span class="partner-look" data-testid="partnerProfileLook">
+                            <BrickPicture look={ownBrick.characterTextureId} size={46} />
+                        </span>
+                    {:else}
+                        <TopRowAvatar
+                            pictureStore={picture}
+                            {name}
+                            color={$colourOf(partner.chatId, name)}
+                            size="lg"
+                            ring={false}
+                        />
+                    {/if}
+                    {#if status.color}
+                        <span
+                            class="partner-presence absolute bottom-0 end-0 h-[18px] w-[18px] rounded-full"
+                            style:background-color={status.color}
+                        />
+                    {/if}
                 </div>
+                <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div class="break-words text-xl font-bold leading-6" data-testid="partnerProfileName">{name}</div>
+                    {#if ownBrick?.description}
+                        <div class="break-words text-[15px] leading-5 text-white/80" data-testid="partnerProfileLine">
+                            {ownBrick.description}
+                        </div>
+                    {/if}
+                    {#if status.label}
+                        <div class="flex items-center gap-1.5 text-sm text-white/60" data-testid="partnerProfileStatus">
+                            <span
+                                class="h-2 w-2 shrink-0 rounded-full"
+                                style:background-color={status.color ?? "rgb(255 255 255 / 0.35)"}
+                            />
+                            <span class="truncate">{status.label}</span>
+                        </div>
+                    {/if}
+                </div>
+            </div>
+
+            {#if ownBrick}
+                <!-- The same visit card as its own page, so Bring along and End visit are right here -->
+                <BrickVisitCard brick={ownBrick} framed showOff />
             {/if}
-        </div>
+        {:else}
+            <div class="flex flex-col items-center gap-1.5 pt-1 text-center">
+                <div class="relative mb-1.5">
+                    <TopRowAvatar
+                        pictureStore={picture}
+                        {name}
+                        color={$colourOf(partner.chatId, name)}
+                        size="xl"
+                        ring={false}
+                    />
+                    {#if live}
+                        <span
+                            class="absolute -inset-1.5 rounded-full border-2 border-solid"
+                            style:border-color={status.color}
+                        />
+                    {/if}
+                    {#if status.color}
+                        <span
+                            class="partner-presence absolute bottom-0.5 end-0.5 h-[18px] w-[18px] rounded-full"
+                            style:background-color={status.color}
+                        />
+                    {/if}
+                </div>
+                <div class="max-w-full break-words text-lg font-bold leading-6" data-testid="partnerProfileName">
+                    {name}
+                </div>
+                {#if status.label}
+                    <div
+                        class="flex max-w-full items-center gap-1.5 text-xs text-white/60"
+                        data-testid="partnerProfileStatus"
+                    >
+                        <span
+                            class="h-1.5 w-1.5 shrink-0 rounded-full"
+                            style:background-color={status.color ?? "rgb(255 255 255 / 0.35)"}
+                        />
+                        <span class="truncate">{status.label}</span>
+                    </div>
+                {/if}
+            </div>
+        {/if}
 
         {#if $botRoom}
             <PartnerRoomBlock
@@ -284,6 +362,28 @@
             />
         {/if}
 
+        {#if ownBrick}
+            <div class="partner-group">
+                <button
+                    type="button"
+                    class="u-menu-row !m-0"
+                    data-testid="partnerBrickSettings"
+                    on:click={openSettings}
+                >
+                    <span class="u-menu-tile"><IconAdjustmentsHorizontal /></span>
+                    <span class="flex min-w-0 flex-1 flex-col">
+                        <span class="truncate">{$LL.chat.directChat.profile.settings()}</span>
+                        <span class="partner-hint">{$LL.chat.directChat.profile.settingsHint()}</span>
+                    </span>
+                    {#if direction === "rtl"}
+                        <IconChevronLeft font-size="18" />
+                    {:else}
+                        <IconChevronRight font-size="18" />
+                    {/if}
+                </button>
+            </div>
+        {/if}
+
         <PinnedSummary {room} />
 
         <ArtifactsSummary {room} botName={partner.isBot ? name : undefined} />
@@ -336,7 +436,7 @@
                     <span class="truncate">{friendAction.label}</span>
                 </button>
             {/if}
-            {#if !partner.isBot && partner.chatId}
+            {#if canBlockPartner(partner)}
                 <button
                     type="button"
                     class="u-menu-row u-danger !m-0"
@@ -375,9 +475,15 @@
             {/if}
             {#if confirmingDelete}
                 <div class="flex flex-col gap-2 p-2 text-sm" data-testid="partnerDeleteConfirm">
-                    <span class="font-bold">{$LL.chat.directChat.deleteChat.confirm()}</span>
+                    <span class="font-bold"
+                        >{isBrick
+                            ? $LL.chat.directChat.clearChat.confirm()
+                            : $LL.chat.directChat.deleteChat.confirm()}</span
+                    >
                     <span class="text-xs text-white/60"
-                        >{$partnerHolds
+                        >{isBrick
+                            ? $LL.chat.directChat.clearChat.confirmHint({ name })
+                            : $partnerHolds
                             ? $LL.chat.directChat.deleteChat.hint({ name })
                             : $LL.chat.directChat.deleteChat.hintGone({ name })}</span
                     >
@@ -392,7 +498,10 @@
                             type="button"
                             class="m-0 flex-1 rounded-lg bg-danger-900 px-2 py-2 text-sm font-bold text-white [font-family:inherit] hover:bg-danger"
                             data-testid="partnerDeleteConfirmButton"
-                            on:click={deleteChat}>{$LL.chat.directChat.deleteChat.confirmButton()}</button
+                            on:click={deleteChat}
+                            >{isBrick
+                                ? $LL.chat.directChat.clearChat.confirmButton()
+                                : $LL.chat.directChat.deleteChat.confirmButton()}</button
                         >
                     </div>
                 </div>
@@ -403,11 +512,19 @@
                     data-testid="partnerDeleteChat"
                     on:click={() => (confirmingDelete = true)}
                 >
-                    <span class="u-menu-tile"><IconTrash /></span>
+                    <span class="u-menu-tile"
+                        >{#if isBrick}<IconRotate />{:else}<IconTrash />{/if}</span
+                    >
                     <span class="flex min-w-0 flex-1 flex-col">
-                        <span class="truncate">{$LL.chat.directChat.deleteChat.label()}</span>
+                        <span class="truncate"
+                            >{isBrick
+                                ? $LL.chat.directChat.clearChat.label()
+                                : $LL.chat.directChat.deleteChat.label()}</span
+                        >
                         <span class="partner-hint"
-                            >{$partnerHolds
+                            >{isBrick
+                                ? $LL.chat.directChat.clearChat.hint({ name })
+                                : $partnerHolds
                                 ? $LL.chat.directChat.deleteChat.hint({ name })
                                 : $LL.chat.directChat.deleteChat.hintGone({ name })}</span
                         >
@@ -419,6 +536,16 @@
 </div>
 
 <style lang="scss">
+    /* A Brick's look on the dark ring its own page gives it */
+    .partner-look {
+        display: grid;
+        place-items: center;
+        width: 66px;
+        height: 66px;
+        border-radius: 50%;
+        background: #2a2340;
+        box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.45);
+    }
     .partner-presence {
         border: 3px solid rgb(var(--u-ink));
     }

@@ -7,12 +7,19 @@ const partnerActions = vi.hoisted(() => ({
     canInvitePartner: vi.fn(() => true),
     canOpenPartnerProfile: vi.fn(() => false),
     invitePartner: vi.fn(),
+    // A bot is known by its chat address, as the real one does
+    isBotPartner: vi.fn(
+        (who: { isBot?: boolean; chatId?: string }) => !!who.isBot || !!who.chatId?.startsWith("@bot_")
+    ),
     locatePartner: vi.fn(),
     openPartnerProfile: vi.fn(),
     partnerFriendAction: vi.fn(() => ({ label: "friend action", icon: icon.component, danger: false, act: () => {} })),
     walkToPartner: vi.fn(),
 }));
 vi.mock("../../DirectChat/PartnerActions", () => partnerActions);
+// Opening the chat with the person's own Brick again, after its chat was cleared
+const brickChat = vi.hoisted(() => ({ openBrickChat: vi.fn(() => Promise.resolve(undefined)) }));
+vi.mock("../../../../Bricks/BrickChat", () => brickChat);
 // Who the chat is with: a person by default; a test can make it a bot
 const partner = vi.hoisted(() => ({ chatId: "@ada:chat.example.com", isBot: false }));
 const sheet = vi.hoisted(() => ({ openModal: vi.fn(), own: [] as { id: string }[] }));
@@ -126,6 +133,7 @@ describe("a direct chat's ⋯ menu", () => {
         document.body.append(target);
         for (const mock of Object.values(partnerActions)) mock.mockClear();
         sheet.openModal.mockClear();
+        brickChat.openBrickChat.mockClear();
         partner.chatId = "@ada:chat.example.com";
         partner.isBot = false;
         sheet.own.length = 0;
@@ -201,12 +209,78 @@ describe("a direct chat's ⋯ menu", () => {
         expect(shownNote()).toBe("chat.roomMenu.leaveRoom.notification:Design team");
     });
 
+    describe("a chat with a Brick is cleared, not deleted", () => {
+        const BOT = "0b7c1d2e-1111-4222-8333-944455556666";
+
+        it("says Clear chat, and what it does, for a Brick that is not on the map right now", async () => {
+            // The chat address says it is a Brick, though no avatar of it stands on the map (isBot is only set then)
+            partner.chatId = `@bot_${BOT}:chat.example.com`;
+            partner.isBot = false;
+            await open(new Map([[partner.chatId, "Brick"]]));
+
+            expect(target.querySelector('[data-testid="deleteChatOption"]')?.textContent).toContain(
+                "chat.directChat.clearChat.label"
+            );
+            click('[data-testid="deleteChatOption"]');
+            await tick();
+            const ask = target.querySelector('[data-testid="deleteChatConfirm"]')?.textContent;
+            expect(ask).toContain("chat.directChat.clearChat.confirm");
+            expect(ask).toContain("chat.directChat.clearChat.confirmHint");
+            expect(ask).toContain("chat.directChat.clearChat.confirmButton");
+            expect(ask).not.toContain("deleteChat.confirm");
+        });
+
+        it("leaves the chat, says it was cleared, and opens a new empty chat with the person's own Brick", async () => {
+            partner.chatId = `@bot_${BOT}:chat.example.com`;
+            sheet.own.push({ id: BOT });
+            const room = directRoom("Brick");
+            await open(new Map([[partner.chatId, "Brick"]]), room);
+
+            click('[data-testid="deleteChatOption"]');
+            await tick();
+            click('[data-testid="deleteChatConfirmButton"]');
+            await settle();
+
+            expect(room.leaveRoom).toHaveBeenCalledWith({ forget: true });
+            expect(shownNote()).toBe("chat.directChat.clearChat.notification:Brick");
+            expect(brickChat.openBrickChat).toHaveBeenCalledWith(BOT);
+        });
+
+        it("does not open a chat with someone else's Brick: the person is left on the list", async () => {
+            partner.chatId = `@bot_${BOT}:chat.example.com`;
+            const room = directRoom("Melody");
+            await open(new Map([[partner.chatId, "Melody"]]), room);
+
+            click('[data-testid="deleteChatOption"]');
+            await tick();
+            click('[data-testid="deleteChatConfirmButton"]');
+            await settle();
+
+            expect(shownNote()).toBe("chat.directChat.clearChat.notification:Melody");
+            expect(brickChat.openBrickChat).not.toHaveBeenCalled();
+        });
+
+        it("still says Delete chat for a person", async () => {
+            await open(new Map());
+            expect(target.querySelector('[data-testid="deleteChatOption"]')?.textContent).toContain(
+                "chat.directChat.deleteChat.label"
+            );
+        });
+    });
+
     describe("what a bot remembers about the person (#2003)", () => {
         const BOT = "0b7c1d2e-1111-4222-8333-944455556666";
 
         it("offers nothing of the kind in a chat with a person", async () => {
             await open(new Map());
             expect(target.querySelector('[data-testid="botMemoryOption"]')).toBeNull();
+        });
+
+        it("offers it for a Brick that is not on the map right now, known by its chat address", async () => {
+            partner.chatId = `@bot_${BOT}:chat.example.com`;
+            partner.isBot = false;
+            await open(new Map([[partner.chatId, "Melody"]]));
+            expect(target.querySelector('[data-testid="botMemoryOption"]')).not.toBeNull();
         });
 
         it("offers it in a chat with someone else's bot, and opens the sheet for that bot", async () => {
