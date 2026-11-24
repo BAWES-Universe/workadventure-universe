@@ -158,8 +158,10 @@
         openWindow: () => window.open("about:blank", "_blank"),
         // A signed-in buyer's account is the buyer; a guest's own recovery code is (kept in this browser, for this page)
         buyer: () => (localUserStore.isLogged() ? "account" : "guest"),
-        // A guest's receipt link opens Orbit's public page, which only exists for a page anyone with the link may open
-        pageUrl: () => (openScope === "link" ? link : undefined),
+        // A guest's receipt link opens Orbit's public page, which only exists for a page anyone with the link may open:
+        // a Public one only once something is published, and not when that version is gone
+        pageUrl: () =>
+            openScope === "link" || (openScope === "public" && published && !publishedGone) ? link : undefined,
     });
     const payLine = payments.line;
     // The line under the page: what it says and what can be pressed (the approved mock M1)
