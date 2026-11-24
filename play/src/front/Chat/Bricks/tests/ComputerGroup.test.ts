@@ -703,6 +703,9 @@ describe("a Brick's computer on screen (#2000)", () => {
             expect(text()).toContain("Working · you're watching");
             expect(byId("brickScreenRestart")?.className).toContain("bs-go");
             expect(byId("brickScreenAnyway")?.className).toContain("bs-quiet");
+            // all three choices are there on the first screen, "Not now" among them
+            expect(byId("brickScreenNotNow")?.className).toContain("bs-quiet");
+            expect(byId("brickScreenNotNow")?.textContent).toContain("Not now");
             // not the plain take over and hand back buttons: the choice is the block's
             expect(byId("brickScreenTakeOver")).toBeNull();
             expect(byId("brickScreenHandBack")).toBeNull();
@@ -734,6 +737,24 @@ describe("a Brick's computer on screen (#2000)", () => {
             expect(byId("brickScreenBlock")).not.toBeNull();
             // asking is no failure
             expect(game.warn).not.toHaveBeenCalled();
+        });
+
+        it("Not now on the first screen (Restart first is still offered) goes back to watching and changes nothing on the computer", async () => {
+            await openScreen(waitingForYou({ state: "blocked", restartOffered: true }));
+            expect(byId("brickScreenRestart")).not.toBeNull();
+            byId("brickScreenNotNow")?.click();
+            await settle();
+            expect(byId("brickScreenBlock")).toBeNull();
+            expect(byId("brickScreenTakeOver")).not.toBeNull();
+            expect(text()).toContain("Working · you're watching");
+            expect(game.brickComputerAction).not.toHaveBeenCalled();
+            // the next tap of Take over asks again, with Restart first still offered
+            game.brickComputerAction.mockRejectedValue(refused("still_running"));
+            byId("brickScreenTakeOver")?.click();
+            await settle();
+            expect(byId("brickScreenBlock")).not.toBeNull();
+            expect(byId("brickScreenRestart")).not.toBeNull();
+            expect(byId("brickScreenNotNow")).not.toBeNull();
         });
 
         it("Take over anyway sends the person's choice, and says a program is still running in control", async () => {

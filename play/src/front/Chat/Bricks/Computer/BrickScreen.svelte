@@ -209,16 +209,9 @@
             >
         </div>
         <div class="bs-actions">
-            <div class="bs-btns">
+            <div class="bs-btns" class:col={check?.restartOffered}>
                 {#if check?.restartOffered}
-                    <button
-                        type="button"
-                        class="bs-quiet"
-                        disabled={busy}
-                        data-testid="brickScreenAnyway"
-                        on:click={() => takeOverAction("take-over-anyway")}
-                        >{$LL.chat.brick.computer.takeOverAnyway()}</button
-                    >
+                    <!-- Restart first is the main choice and sits alone on top; "Not now" and "Take over anyway" share the row under it, as on the screen after a restart -->
                     <button
                         type="button"
                         class="bs-go"
@@ -226,6 +219,23 @@
                         data-testid="brickScreenRestart"
                         on:click={() => takeOverAction("restart")}>{$LL.chat.brick.computer.restartFirst()}</button
                     >
+                    <div class="bs-btns">
+                        <button
+                            type="button"
+                            class="bs-quiet"
+                            disabled={busy}
+                            data-testid="brickScreenNotNow"
+                            on:click={() => (notNow = true)}>{$LL.chat.brick.computer.notNow()}</button
+                        >
+                        <button
+                            type="button"
+                            class="bs-quiet"
+                            disabled={busy}
+                            data-testid="brickScreenAnyway"
+                            on:click={() => takeOverAction("take-over-anyway")}
+                            >{$LL.chat.brick.computer.takeOverAnyway()}</button
+                        >
+                    </div>
                 {:else}
                     <button
                         type="button"
@@ -405,6 +415,14 @@
     }
     .bs-btns > :global(*) {
         flex: 1;
+    }
+    /* Three choices: the main one alone on top, the two quiet ones side by side under it */
+    .bs-btns.col {
+        flex-direction: column;
+    }
+    /* In a column "flex: 1" would shrink a button to its words: each keeps its own height */
+    .bs-btns.col > :global(*) {
+        flex: none;
     }
     .bs-now {
         display: flex;
