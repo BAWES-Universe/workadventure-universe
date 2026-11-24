@@ -842,7 +842,7 @@ describe("MatrixChatConnection: the chat with one person", () => {
                 addRoom("!r1", { type: "multiple" });
                 firstEvents["!r1"] = [directInvite(ALICE)];
                 const seen: Array<ReadonlySet<string> | undefined> = [];
-                connection.directChatPartners.subscribe((partners) => seen.push(partners));
+                const stop = connection.directChatPartners.subscribe((partners) => seen.push(partners));
 
                 connection["repairDirectAccountData"]();
                 connection["refreshDirectChatPartners"]();
@@ -850,6 +850,7 @@ describe("MatrixChatConnection: the chat with one person", () => {
                 expect(get(connection.directChatPartners)).toBeUndefined();
 
                 await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
+                stop();
                 expect(seen.every((partners) => partners === undefined || partners.has(ALICE))).toBe(true);
             });
 
