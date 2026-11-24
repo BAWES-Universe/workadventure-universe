@@ -2502,8 +2502,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             const content = { ...statusNoteContent(state, language, await this.botName(botId, config)), [NOTICE_TXN_KEY]: delivery.txnId };
             const sent = await this.say(botId, () => this.client.sendMessage(botUserId, event.room_id, content, delivery.txnId));
-            // The Brick is being deleted: it says nothing more
-            if (sent === undefined && this.saysNothing(botId)) return 'nothing';
+            // The Brick is being deleted: it says nothing more. A clear of ANOTHER room of it only holds sends for now: the notice stays kept and goes out after the clear (CodeRabbit round 4)
+            if (sent === undefined && this.purgedBots.has(botId)) return 'nothing';
+            if (sent === undefined && this.saysNothing(botId)) return 'failed';
             if (typeof sent === 'string' && sent.length > 0) return { eventId: sent };
             console.warn(`[MatrixDmBridge] A ${state} note in ${event.room_id} got no event id from Matrix; it is sent again`);
             return 'failed';

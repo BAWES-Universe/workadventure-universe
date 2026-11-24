@@ -557,6 +557,25 @@ describe('a message that arrives while the store that knows the chat is down', (
         });
     });
 
+    // CodeRabbit on the round 4 head of game #2121: a clear of another room of the Brick only holds sends for now: the kept notice stays and goes out after it
+    it('a kept notice waits while another room of the Brick is cleared, goes out after, and is dropped only for a Brick being purged', async () => {
+        const client = makeClient();
+        const stores = makeStores();
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        await bridge.onEvent(invite());
+        client.sendMessage.mockClear();
+        (bridge as any).clearingRooms.set(BOT, 1);
+        await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-4', again: false })).resolves.toBe('failed');
+        expect(client.sendMessage).not.toHaveBeenCalled();
+        (bridge as any).clearingRooms.delete(BOT);
+        await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-4', again: false })).resolves.toEqual({ eventId: '$evt' });
+        expect(client.sendMessage).toHaveBeenCalledTimes(1);
+        client.sendMessage.mockClear();
+        (bridge as any).purgedBots.add(BOT);
+        await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-5', again: false })).resolves.toBe('nothing');
+        expect(client.sendMessage).not.toHaveBeenCalled();
+    });
+
     it('the reply is kept as something the person was told only when Matrix gave the id of its text: a send that was suppressed keeps nothing', async () => {
         const client = makeClient();
         const stores = makeStores();
