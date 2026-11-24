@@ -33,7 +33,7 @@ import {
     startControlTurn,
     type ControlState,
 } from '../ai/ComputerControlTools';
-import { CONTROL_REFUSALS, CONTROL_WORDS, lineOf, quotedTitles } from '../ai/ComputerControlWords';
+import { CONTROL_REFUSALS, CONTROL_WORDS, lineOf, othersOf, quotedTitles } from '../ai/ComputerControlWords';
 import { COMPUTER_TOOL, ConfirmationQueue, computerToolsNote, isComputerTool, runComputerTool } from '../ai/ComputerTools';
 import { JOB_STATUS_WORDS, jobLine, quotedTitle, withJobLines } from '../ai/JobStatusLine';
 import { describeStep, showsAsStep } from '../ai/ToolSteps';
@@ -415,6 +415,148 @@ describe('stop everything: always asks, naming every job, and ends exactly those
         await c.run(STOP_COMPUTER_TOOL);
         expect(orbit.acted()).toEqual([{ action: 'stop', confirmedJobIds: ['job-visa', 'job-taxi', 'job-hotel'] }]);
         expect(await c.deliver()).toEqual([CONTROL_WORDS.stoppedAll(3)]);
+    });
+
+    // GPT's eighth note, E2 (FINAL strings of 24 Nov): two live jobs with one title are told apart by when the person asked for them (Orbit's `askedAt`)
+    describe('two live jobs with one title', () => {
+        const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+        it('"which one" says when each was asked for, never a clock time; nothing is paused', async () => {
+            const orbit = door(viewOf(working({ askedAt: minutesAgo(10) }), [inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(125) })]));
+            const c = chat(orbit.admin);
+            const result = await c.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
+            expect(result).toMatchObject({ done: false, asked: 'which' });
+            expect(await c.deliver()).toEqual(['Which “Visa form” do you mean: the one you asked for 10 minutes ago, or the one you asked for 2 hours ago?']);
+            expect(orbit.acted()).toEqual([]);
+        });
+        it('a mixed list ages only the title shown twice, and a missing time falls back to order', async () => {
+            const mixed = door(viewOf(working({ askedAt: minutesAgo(10) }), [inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(125) }), inLine('job-taxi', 'Taxi form', { askedAt: minutesAgo(300) })]));
+            const a = chat(mixed.admin);
+            await a.run(CANCEL_JOB_TOOL, { job: 'form' });
+            expect(await a.deliver()).toEqual(['Which one do you mean: “Visa form” (asked for 10 minutes ago), “Visa form” (asked for 2 hours ago) or “Taxi form”?']);
+            const blind = door(viewOf(working(), [inLine('job-visa-2', 'Visa form')]));
+            const b = chat(blind.admin);
+            await b.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
+            expect(await b.deliver()).toEqual(['Which “Visa form” do you mean: the newer one, or the older one?']);
+        });
+        it('jobs with different titles keep the plain question', async () => {
+            const orbit = door(viewOf(working(), [inLine('job-visa-2', 'Visa renewal')]));
+            const c = chat(orbit.admin);
+            await c.run(PAUSE_JOB_TOOL, { job: 'visa' });
+            expect(await c.deliver()).toEqual([CONTROL_REFUSALS.whichJob(left2(['Visa form', 'Visa renewal']))]);
+        });
+        const left2 = (titles: string[]) => titles.map((title) => quotedTitle(title));
+    });
+
+    // GPT's eighth note, D (Fable's FINAL strings of 24 Nov): "Yes, cancel Visa form" to a Stop that listed several jobs ends NOTHING: Brick says it will act on exactly those and asks, and the next plain yes acts on them only
+    describe('a yes that names only some of the jobs', () => {
+        const visa = () => working();
+        const taxi = () => inLine('job-taxi', 'Taxi booking');
+        const flight = () => paused('job-flight', 'Flight search');
+        const askedAll = async (jobs: Job[], answers: Parameters<typeof door>[1] = {}) => {
+            const orbit = door(viewOf(jobs[0], jobs.slice(1)), answers);
+            const c = chat(orbit.admin);
+            await c.run(STOP_COMPUTER_TOOL);
+            await c.deliver();
+            return { orbit, c };
+        };
+        const left = (titles: string[]) => titles.map((title) => quotedTitle(title));
+
+        it('names ONE job that has started: says it will cancel only that one, asks the approved question, stops nothing; the next plain yes cancels it, and only it, and says who was not stopped', async () => {
+            const { orbit, c } = await askedAll([visa(), taxi(), flight()], { cancel: { ...viewOf(null) } });
+            c.nextMessage('Yes, cancel Visa form');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([]);
+            expect(await c.deliver()).toEqual([`${CONTROL_WORDS.narrowedStatement(left(['Visa form']), `${quotedTitle('Taxi booking')} and ${quotedTitle('Flight search')}`)}\n${lineOf(CONTROL_WORDS.askCancel, 'Visa form')}`]);
+            expect(CONTROL_WORDS.narrowedStatement(left(['Visa form']), othersOf(['Taxi booking', 'Flight search']))).toBe('Just “Visa form”, then. I won\'t stop “Taxi booking” and “Flight search”.');
+            c.nextMessage('Yes');
+            await c.run(CANCEL_JOB_TOOL, { job: 'Visa form' });
+            expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-visa' }]);
+            expect(await c.deliver()).toEqual([`${lineOf(CONTROL_WORDS.cancelled, 'Visa form')}\nI haven't stopped “Taxi booking” and “Flight search”.`]);
+        });
+
+        it('whichever of the two tools the model calls, the one question is put once', async () => {
+            const { orbit, c } = await askedAll([visa(), taxi()]);
+            c.nextMessage('Yes, cancel Visa form');
+            await c.run(CANCEL_JOB_TOOL, { job: 'Visa form' });
+            await c.run(STOP_COMPUTER_TOOL);
+            await c.run(CANCEL_JOB_TOOL, { job: 'Taxi booking' });
+            expect((await c.deliver()).length).toBe(1);
+            expect(orbit.acted()).toEqual([]);
+        });
+
+        it('a plain yes (names none) still confirms the whole delivered list; so does one that names every job', async () => {
+            const one = await askedAll([visa(), taxi(), flight()], { stop: { ...viewOf(null), stopped: 3 } });
+            one.c.nextMessage('Yes');
+            await one.c.run(STOP_COMPUTER_TOOL);
+            expect(one.orbit.acted()).toEqual([{ action: 'stop', confirmedJobIds: ['job-visa', 'job-taxi', 'job-flight'] }]);
+            const all = await askedAll([visa(), taxi()], { stop: { ...viewOf(null), stopped: 2 } });
+            all.c.nextMessage('Yes, stop Visa form and Taxi booking');
+            await all.c.run(STOP_COMPUTER_TOOL);
+            expect(all.orbit.acted()).toEqual([{ action: 'stop', confirmedJobIds: ['job-visa', 'job-taxi'] }]);
+        });
+
+        it('names TWO or more (not all): the same, asked about both; the next yes stops exactly those two and the third is never touched', async () => {
+            const { orbit, c } = await askedAll([visa(), taxi(), flight()], { stop: { ...viewOf(null), stopped: 2, left: ['Flight search'] } });
+            c.nextMessage('Yes, cancel Visa form and Taxi booking');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([]);
+            expect(await c.deliver()).toEqual([`Just “Visa form” and “Taxi booking”, then. I won't stop “Flight search”.\nCancel “Visa form” and “Taxi booking”? Their files are kept, and the time they used is on their receipts. To come back to them later, I can pause them instead.`]);
+            c.nextMessage('Yes');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([{ action: 'stop', confirmedJobIds: ['job-visa', 'job-taxi'] }]);
+            expect(await c.deliver()).toEqual([`${lineOf(CONTROL_WORDS.cancelled, 'Visa form')}\n${lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking')}\nI haven't stopped “Flight search”.`]);
+        });
+
+        it('names ONE job that never started: cancelled at once, no second question, then who was not stopped', async () => {
+            const { orbit, c } = await askedAll([visa(), taxi(), flight()], { cancel: { ...viewOf(null) } });
+            c.nextMessage('Yes, cancel Taxi booking');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi' }]);
+            expect(await c.deliver()).toEqual([`${lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking')}\nI haven't stopped “Visa form” and “Flight search”.`]);
+        });
+
+        it('words that fit two titles ask which, over the delivered list, and stop nothing', async () => {
+            const { orbit, c } = await askedAll([visa(), inLine('job-renewal', 'Visa form renewal'), taxi()]);
+            c.nextMessage('Yes, cancel Visa form');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([]);
+            expect(await c.deliver()).toEqual([CONTROL_REFUSALS.whichJob(left(['Visa form', 'Visa form renewal', 'Taxi booking']))]);
+        });
+
+        it('a longer title named in full is that job alone, not the shorter one inside it', async () => {
+            const { orbit, c } = await askedAll([visa(), paused('job-renewal', 'Visa form renewal')]);
+            c.nextMessage('Yes, cancel Visa form renewal');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([]);
+            expect((await c.deliver())[0]).toMatch(/^Just “Visa form renewal”, then\. I won't stop “Visa form”\.\nCancel “Visa form renewal”\?/);
+        });
+
+        it('the jobs left alone: more than three, or any without a title, are "the other job" / "the other n jobs"', () => {
+            expect(othersOf(['Taxi booking'])).toBe('“Taxi booking”');
+            expect(othersOf(['A', 'B', 'C'])).toBe('“A”, “B” and “C”');
+            expect(othersOf(['A', 'B', 'C', 'D'])).toBe('the other 4 jobs');
+            expect(othersOf([null])).toBe('the other job');
+            expect(othersOf(['A', null])).toBe('the other 2 jobs');
+        });
+
+        it('a yes is still no yes when it carries a condition, and a job named only in the question of ANOTHER turn answers nothing', async () => {
+            const { orbit, c } = await askedAll([visa(), taxi()]);
+            c.nextMessage('Yes, cancel Visa form after the upload');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([]);
+        });
+
+        it('a job that came after the question is not in the narrowed set: Orbit is told only the named jobs', async () => {
+            const { orbit, c } = await askedAll([visa(), taxi(), flight()], { stop: { ...viewOf(null), stopped: 2, left: ['Taxi booking', 'Hotel booking'] } });
+            c.nextMessage('Yes, cancel Visa form and Flight search');
+            await c.run(STOP_COMPUTER_TOOL);
+            await c.deliver();
+            c.nextMessage('Yes');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([{ action: 'stop', confirmedJobIds: ['job-visa', 'job-flight'] }]);
+            // Hotel booking came after the question: said as such, in Fable's words for it
+            expect((await c.deliver())[0]).toBe(CONTROL_WORDS.stoppedSome(2, 2, ['Hotel booking']));
+        });
     });
 
     // GPT seventh note, D2 (Fable's final lines): Orbit ends only the confirmed jobs and says which live jobs it LEFT; they are said in Brick's own words, and a yes after that confirms nothing

@@ -166,6 +166,16 @@ export const CONTROL_WORDS = {
         titled: (title) => `Cancel ${title}? Its files are kept, and the time it used is on its receipt. To come back to it later, I can pause it instead.`,
         plain: 'Cancel your job? Its files are kept, and the time it used is on its receipt. To come back to it later, I can pause it instead.',
     } as ControlLine,
+    /**
+     * FINAL (24 Nov, `/mnt/project-files/brick-same-title-and-narrow-stop/strings.txt`): the person's yes to a Stop named only SOME of the jobs. Nothing is stopped yet: the statement comes FIRST
+     * ("Just “Visa form”, then. I won't stop “Taxi booking”."), then the question about exactly those jobs; their next plain yes acts on them only. `named` are already quoted; `others` is
+     * `othersOf(...)`.
+     */
+    narrowedStatement: (named: string[], others: string): string => `Just ${listed(named, 'and')}, then. I won't stop ${others}.`,
+    /** FINAL (same file): the question about two or more of them (one job has the approved `askCancel`). `titles` are already quoted. */
+    askCancelMany: (titles: string[]): string => `Cancel ${listed(titles, 'and')}? Their files are kept, and the time they used is on their receipts. To come back to them later, I can pause them instead.`,
+    /** FINAL (same file): said last, after the cancelled lines of the jobs they named. Only what Brick did, never where the other jobs are now. */
+    notStopped: (others: string): string => `I haven't stopped ${others}.`,
     /** FINAL: the question before Stop, which ends every job on the computer, paused ones too (by words; asked every time). `titles` are already quoted. */
     askStop: (titles: string[]): string =>
         titles.length === 1
@@ -284,6 +294,15 @@ export function whichDated(kind: 'ended' | 'live', jobs: DatedJob[], now: number
         return `${quoted[index]} (${kind === 'ended' ? `ended ${age}` : `asked for ${age}`})`;
     });
     return `${kind === 'ended' ? 'Which job do you mean' : 'Which one do you mean'}: ${listed(items, 'or')}?`;
+}
+
+/**
+ * FINAL (24 Nov, same file): the jobs left alone, as "I won't stop ..." and "I haven't stopped ..." name them. One titled: “Taxi booking”; two or three titled: “A” and “B” / “A”, “B” and “C”;
+ * more than three, or any untitled: "the other job" / "the other {n} jobs". Never "still running": Brick says only what it did.
+ */
+export function othersOf(titles: Array<string | null | undefined>): string {
+    if (titles.length >= 1 && titles.length <= 3 && titles.every((title) => typeof title === 'string' && title.trim() !== '')) return listed(titles.map((title) => quotedTitle(title as string)), 'and');
+    return titles.length === 1 ? 'the other job' : `the other ${titles.length} jobs`;
 }
 
 /** One line, with the job's title quoted, or its plain form when there is none. */

@@ -707,6 +707,8 @@ export interface ComputerControlJob {
     control: 'brick' | 'person';
     /** The job has been paused before (Orbit's `pausedBefore`, or a pause count above 0): a job put back in line after it ran is `queued` with `queuedFor` `turn` and has this set. */
     pausedBefore: boolean;
+    /** When the person asked for the job (milliseconds), from Orbit's `askedAt` (an ISO time): a question that tells two jobs of one title apart says how long ago. Absent when Orbit did not say. */
+    askedAt?: number;
 }
 
 export interface ComputerControlView {
@@ -753,6 +755,7 @@ export function controlJobOf(value: unknown): ComputerControlJob | null {
         waitingFor: textOrNull(value.waitingFor),
         control: value.control === 'person' ? 'person' : 'brick',
         pausedBefore: value.pausedBefore === true || (countOrNull(value.pauses) ?? 0) > 0,
+        ...(typeof value.askedAt === 'string' && Number.isFinite(Date.parse(value.askedAt)) ? { askedAt: Date.parse(value.askedAt) } : typeof value.askedAt === 'number' && Number.isFinite(value.askedAt) && value.askedAt > 0 ? { askedAt: value.askedAt } : {}),
     };
 }
 
