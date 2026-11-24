@@ -111,6 +111,41 @@ export async function brickComputerAction(
     }
 }
 
+/**
+ * What a take over (or "Restart first") came to, for the screen:
+ * - ok: the person has the screen (or the computer was restarted).
+ * - still-running: the check found a program still running; the person is asked (the page is read again and shows the block).
+ * - not-ready: the computer could not be made ready; nothing was changed on it, try again.
+ * - failed: Orbit could not be reached or said something else.
+ */
+export type TakeOverResult = "ok" | "still-running" | "not-ready" | "failed";
+
+/**
+ * "Take over", or "Take over anyway" (the person's choice to go on with a program still running), and "Restart first". Each reads the computer again, so the page and
+ * the bar agree; a refusal that is only the check asking something is not a failure.
+ */
+export async function brickTakeOver(
+    brickId: string,
+    how: "take-over" | "take-over-anyway" | "restart"
+): Promise<TakeOverResult> {
+    const sentAs = ticket(brickId);
+    try {
+        const answer = await botApiService.brickComputerAction(brickId, how);
+        const view = parseBrickComputer(answer);
+        if (view) put(brickId, view, sentAs);
+        else if (parseJobAnswer(answer)) await loadBrickComputer(brickId);
+        else return "failed";
+        return "ok";
+    } catch (error) {
+        const refused = error as { status?: number; reason?: string } | null;
+        console.warn(`Could not ${how} a Brick's computer`, error);
+        await loadBrickComputer(brickId);
+        if (refused?.status === 409 && refused.reason === "still_running") return "still-running";
+        if (refused?.status === 409 && refused.reason === "not_secured") return "not-ready";
+        return "failed";
+    }
+}
+
 /** "Dismiss" on the notice of how a job ended: Orbit forgets that ending, so neither the page nor the chat says it again. True when it did. */
 export async function dismissComputerNotice(brickId: string, jobId: string): Promise<boolean> {
     const sentAs = ticket(brickId);

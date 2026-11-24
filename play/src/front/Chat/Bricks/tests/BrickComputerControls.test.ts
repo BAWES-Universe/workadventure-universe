@@ -48,6 +48,7 @@ const view = (over: Partial<BrickComputerView> = {}): BrickComputerView => ({
     files: { bytes: 0, savedAt: null },
     restoredFrom: null,
     notice: null,
+    check: null,
     ...over,
 });
 

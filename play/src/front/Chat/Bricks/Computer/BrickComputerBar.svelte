@@ -43,8 +43,12 @@
     $: step = job ? stepLine($LL, job) : "";
     // A job "Do this first" put back in line carries on by itself right after: the bar names it ("· Visa form next")
     $: comesBack = holdsComputer(job) && waitingInLine[0]?.pausedBefore ? waitingInLine[0] : null;
+    // The person chose "Restart first" (a program was still running before their take over): the bar says the computer is restarting, under the job's name
+    $: restarting = view?.check?.state === "restarting" && !!job;
     $: line =
-        state === "waking"
+        restarting && job
+            ? $LL.chat.brick.computer.restartingBar({ job: job.title || step })
+            : state === "waking"
             ? $LL.chat.brick.computer.wakingUp()
             : state === "waiting"
             ? $LL.chat.brick.computer.barAskYou({ what: waitingWhat($LL, job?.waitingFor ?? null) })

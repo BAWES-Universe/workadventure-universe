@@ -665,4 +665,179 @@ describe("a Brick's computer on screen (#2000)", () => {
         expect(byId("brickScreenNone")).not.toBeNull();
         expect(game.brickComputerAction).not.toHaveBeenCalled();
     });
+
+    describe("the honest check before a take over", () => {
+        const waitingForYou = (check: Record<string, unknown> | null, over: Record<string, unknown> = {}) =>
+            computer({
+                machine: "working",
+                job: job({ status: "waiting", waitingFor: "signin", control: "person", ...over }),
+                ...(check ? { check } : {}),
+            });
+        /** The error Orbit's refusal gives the game: a 409 with a reason. */
+        const refused = (reason: string) => Object.assign(new Error("refused"), { status: 409, reason });
+
+        async function openScreen(read: unknown) {
+            game.getBrickComputer.mockResolvedValue(read);
+            await loadBrickComputer(BRICK);
+            piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+            await settle();
+        }
+
+        it("says nothing when the check passed: the person is in control with the plain lines", async () => {
+            await openScreen(waitingForYou(null));
+            expect(byId("brickScreenBlock")).toBeNull();
+            expect(text()).toContain("You're in control · Recipe Brick is waiting");
+            expect(byId("brickScreenControlLine")?.textContent).toContain(
+                "You're typing on Recipe Brick's computer. Recipe Brick can get to anything on it."
+            );
+            // and nothing in it says the computer is private or that Brick cannot see
+            expect(text()).not.toMatch(/can't see|private|safe|secure|checked/i);
+        });
+
+        it("asks first when a program is still running: the person is still watching, with Restart first as the main button and no program named", async () => {
+            await openScreen(waitingForYou({ state: "blocked", restartOffered: true }));
+            expect(byId("brickScreenBlock")?.textContent).toContain("Something is still running");
+            expect(byId("brickScreenBlock")?.textContent).toContain(
+                "A program Recipe Brick installed is still running on this computer. It could see what you type. A restart closes it."
+            );
+            expect(text()).toContain("Working · you're watching");
+            expect(byId("brickScreenRestart")?.className).toContain("bs-go");
+            expect(byId("brickScreenAnyway")?.className).toContain("bs-quiet");
+            // not the plain take over and hand back buttons: the choice is the block's
+            expect(byId("brickScreenTakeOver")).toBeNull();
+            expect(byId("brickScreenHandBack")).toBeNull();
+            expect(byId("brickScreenFill")).toBeNull();
+        });
+
+        it("asks again with no Restart first when it was restarted for this ask: Take over anyway or Not now", async () => {
+            await openScreen(waitingForYou({ state: "blocked", restartOffered: false }));
+            expect(byId("brickScreenBlock")?.textContent).toContain("It's still running");
+            expect(byId("brickScreenBlock")?.textContent).toContain(
+                "It started again after the restart, so it could still see what you type. Go on only if that's fine for this step."
+            );
+            expect(byId("brickScreenRestart")).toBeNull();
+            expect(byId("brickScreenAnyway")).not.toBeNull();
+            expect(byId("brickScreenNotNow")).not.toBeNull();
+        });
+
+        it("Not now goes back to watching, and the next tap of Take over asks again", async () => {
+            await openScreen(waitingForYou({ state: "blocked", restartOffered: false }));
+            byId("brickScreenNotNow")?.click();
+            await settle();
+            expect(byId("brickScreenBlock")).toBeNull();
+            expect(byId("brickScreenTakeOver")).not.toBeNull();
+            expect(game.brickComputerAction).not.toHaveBeenCalled();
+            game.brickComputerAction.mockRejectedValue(refused("still_running"));
+            byId("brickScreenTakeOver")?.click();
+            await settle();
+            expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "take-over");
+            expect(byId("brickScreenBlock")).not.toBeNull();
+            // asking is no failure
+            expect(game.warn).not.toHaveBeenCalled();
+        });
+
+        it("Take over anyway sends the person's choice, and says a program is still running in control", async () => {
+            await openScreen(waitingForYou({ state: "blocked", restartOffered: true }));
+            game.brickComputerAction.mockResolvedValue({ job: job({ control: "person" }) });
+            game.getBrickComputer.mockResolvedValue(waitingForYou({ state: "running", restartOffered: true }));
+            byId("brickScreenAnyway")?.click();
+            await settle();
+            expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "take-over-anyway");
+            expect(byId("brickScreenBlock")).toBeNull();
+            expect(text()).toContain("You're in control · a program is still running");
+            expect(byId("brickScreenControlLine")?.textContent).toContain(
+                "You're typing on Recipe Brick's computer. A program Recipe Brick installed is still running and could see what you type."
+            );
+        });
+
+        it("Restart first sends the restart and shows the computer restarting, with Brick asking again", async () => {
+            await openScreen(waitingForYou({ state: "blocked", restartOffered: true }));
+            let answer: (value: unknown) => void = () => undefined;
+            game.brickComputerAction.mockReturnValue(
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+            );
+            byId("brickScreenRestart")?.click();
+            await settle();
+            expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "restart");
+            expect(text()).toContain("Restarting · Recipe Brick will ask you again");
+            expect(byId("brickScreenRestarting")?.textContent).toContain(
+                "Restarting Recipe Brick's computer. Everything on it closes, then Recipe Brick gets the page ready again and asks you."
+            );
+            expect(byId("brickScreenBlock")).toBeNull();
+            expect(byId("brickScreenTakeOver")).toBeNull();
+            // Brick has the computer again and asks once its page is ready
+            game.getBrickComputer.mockResolvedValue(
+                computer({ machine: "working", job: job({ status: "waiting", waitingFor: "signin" }) })
+            );
+            answer({ job: job() });
+            await settle();
+            expect(byId("brickScreenRestarting")).toBeNull();
+            expect(byId("brickScreenTakeOver")).not.toBeNull();
+        });
+
+        it("shows the restart after a reload too: Orbit says it is restarting", async () => {
+            await openScreen(waitingForYou({ state: "restarting", restartOffered: false }));
+            expect(text()).toContain("Restarting · Recipe Brick will ask you again");
+            expect(byId("brickScreenRestarting")).not.toBeNull();
+        });
+
+        it("the take over button says it is getting the computer ready while it goes", async () => {
+            await openScreen(computer({ machine: "working", job: job({ status: "waiting", waitingFor: "signin" }) }));
+            let answer: (value: unknown) => void = () => undefined;
+            game.brickComputerAction.mockReturnValue(
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+            );
+            byId("brickScreenTakeOver")?.click();
+            await settle();
+            expect(byId("brickScreenTakeOver")?.textContent).toContain("Getting it ready…");
+            expect((byId("brickScreenTakeOver") as HTMLButtonElement).disabled).toBe(true);
+            answer({ job: job({ control: "person" }) });
+            await settle();
+        });
+
+        it("a computer that could not be made ready says so, and changes nothing on screen", async () => {
+            await openScreen(computer({ machine: "working", job: job({ status: "waiting", waitingFor: "signin" }) }));
+            game.brickComputerAction.mockRejectedValue(refused("not_secured"));
+            byId("brickScreenTakeOver")?.click();
+            await settle();
+            expect(game.warn).toHaveBeenCalledWith(
+                "Couldn't get the computer ready. Nothing was changed on it. Try again."
+            );
+            expect(byId("brickScreenBlock")).toBeNull();
+        });
+
+        it("the last step says Brick waits, never that it cannot see", async () => {
+            await openScreen(waitingForYou(null, { waitingFor: "pay" }));
+            expect(byId("brickScreenLast")?.textContent).toContain(
+                "Pay and submit, then hand back. Recipe Brick waits until you do."
+            );
+        });
+
+        it("the Computer page says what Brick can do on it, in both states, and names no one who may use it", async () => {
+            await showGroup(computer({ on: false }));
+            expect(byId("brickComputerTrust")?.textContent).toContain("Recipe Brick has full use of it");
+            expect(byId("brickComputerTrust")?.textContent).toContain(
+                "Recipe Brick can install and run anything on it and can get to everything there. A sign-in made on it can be used in any job Recipe Brick does."
+            );
+            piece?.$destroy();
+            await showGroup(computer({ machine: "working", job: job() }));
+            expect(byId("brickComputerTrust")).not.toBeNull();
+            expect(byId("brickComputer")?.textContent).not.toMatch(/just you|only you/i);
+        });
+
+        it("the bar says the computer is restarting, under the job's name", async () => {
+            game.getBrickComputer.mockResolvedValue(
+                waitingForYou({ state: "restarting", restartOffered: false }, { title: "Visa form" })
+            );
+            await loadBrickComputer(BRICK);
+            const bar = new BrickComputerBar({ target, props: { brick } });
+            piece = bar;
+            await settle();
+            expect(text()).toContain("Visa form · restarting the computer");
+        });
+    });
 });

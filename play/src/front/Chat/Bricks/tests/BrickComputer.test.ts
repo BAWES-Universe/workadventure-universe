@@ -9,6 +9,7 @@ import {
     parseBrickComputer,
     parseComputerJob,
     parseJobAnswer,
+    personHasScreen,
     sentenceStart,
     type BrickComputerView,
 } from "../Computer/BrickComputer";
@@ -36,6 +37,7 @@ const view = (over: Partial<BrickComputerView> = {}): BrickComputerView => ({
     files: { bytes: 0, savedAt: null },
     restoredFrom: null,
     notice: null,
+    check: null,
     ...over,
 });
 
@@ -149,5 +151,48 @@ describe("a Brick's computer as the game reads it (#2000)", () => {
         ).toBeNull();
         expect(noticeToTell(view({ job: null, machine: "resting" }))).toBeNull();
         expect(noticeToTell(undefined)).toBeNull();
+    });
+});
+
+describe("the honest check before a take over, as the game reads it", () => {
+    const read = (check: unknown) =>
+        parseBrickComputer({
+            computer: {
+                available: true,
+                on: true,
+                machine: "working",
+                job: job({ status: "waiting", control: "person" }),
+                queued: [],
+                files: {},
+                check,
+            },
+        });
+
+    it("reads what Orbit says about the check, and drops anything it does not know", () => {
+        expect(read({ state: "blocked", restartOffered: true })?.check).toEqual({
+            state: "blocked",
+            restartOffered: true,
+        });
+        expect(read({ state: "restarting", restartOffered: false })?.check).toEqual({
+            state: "restarting",
+            restartOffered: false,
+        });
+        expect(read({ state: "running", restartOffered: true })?.check).toEqual({
+            state: "running",
+            restartOffered: true,
+        });
+        // Restart is offered only on Orbit's word
+        expect(read({ state: "blocked" })?.check).toEqual({ state: "blocked", restartOffered: false });
+        for (const bad of [null, undefined, "blocked", 7, {}, { state: "scary" }, { state: null }])
+            expect(read(bad)?.check).toBeNull();
+    });
+
+    it("has the screen only when the job is the person's and nothing is being asked or restarted first", () => {
+        expect(personHasScreen(read(null))).toBe(true);
+        expect(personHasScreen(read({ state: "running", restartOffered: true }))).toBe(true);
+        expect(personHasScreen(read({ state: "blocked", restartOffered: true }))).toBe(false);
+        expect(personHasScreen(read({ state: "restarting", restartOffered: false }))).toBe(false);
+        expect(personHasScreen(undefined)).toBe(false);
+        expect(personHasScreen(view({ job: parseComputerJob(job()) ?? null }))).toBe(false);
     });
 });
