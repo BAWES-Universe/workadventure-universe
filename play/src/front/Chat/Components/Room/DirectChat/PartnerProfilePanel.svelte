@@ -299,7 +299,8 @@
             </div>
         {/if}
 
-        {#if $botRoom}
+        <!-- The person's own Brick says where it lives in its visit card (Take it out): the Visit block is for other Bricks -->
+        {#if $botRoom && !ownBrick}
             <PartnerRoomBlock
                 label={$LL.chat.botStatus.livesIn()}
                 link={$botRoom}

@@ -21,6 +21,8 @@ const bricks = vi.hoisted(() => ({
     openBrickPage: vi.fn<(id: string, options?: { backToChat?: boolean }) => void>(),
     openBrickChat: vi.fn(() => Promise.resolve(undefined)),
     toasts: [] as string[],
+    // Where the bot server says a Brick lives, when a test gives it a room
+    home: undefined as unknown,
 }));
 vi.mock("../../../../Bricks/MyBricksStore", () => ({ myBricksByChatId: bricks.byChatId }));
 vi.mock("../../../../Bricks/Templates/OpenBrick", () => ({ openBrickPage: bricks.openBrickPage }));
@@ -33,7 +35,7 @@ vi.mock("../../../../../Stores/ChatDoneToastStore", () => ({
 }));
 vi.mock("../../../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: vi.fn() } }));
 vi.mock("../../../../../external-modules/bots/services/BotApiService", () => ({
-    botApiService: { getDmRoom: () => Promise.resolve(undefined), getLiveView: () => Promise.resolve(undefined) },
+    botApiService: { getDmRoom: () => Promise.resolve(bricks.home), getLiveView: () => Promise.resolve(undefined) },
 }));
 vi.mock("../../../../../Connection/LocalUserStore", () => ({
     localUserStore: new Proxy(
@@ -85,10 +87,7 @@ vi.mock(
     "../../Details/PinnedSummary.svelte",
     async () => await import("../../../../../external-modules/bots/components/testStub.svelte")
 );
-vi.mock(
-    "../PartnerRoomBlock.svelte",
-    async () => await import("../../../../../external-modules/bots/components/testStub.svelte")
-);
+vi.mock("../PartnerRoomBlock.svelte", async () => await import("./brickRoomBlockStub.svelte"));
 vi.mock("../../../../../Components/VisitCard/VisitCard.svelte", async () => await import("./brickPictureStub.svelte"));
 vi.mock("../../../TopRow/TopRowAvatar.svelte", async () => await import("./brickPictureStub.svelte"));
 vi.mock("../../../../../Phaser/Game/GameManager", () => ({ gameManager: {} }));
@@ -165,6 +164,7 @@ describe("a chat's profile panel for a Brick", () => {
         bricks.openBrickPage.mockClear();
         bricks.openBrickChat.mockClear();
         bricks.toasts.length = 0;
+        bricks.home = undefined;
         room = chatRoom();
     });
     afterEach(() => {
@@ -282,5 +282,27 @@ describe("a chat's profile panel for a Brick", () => {
         expect(room.leaveRoom).toHaveBeenCalledWith({ forget: true });
         expect(bricks.toasts).toEqual(["Cleared your chat with Brick"]);
         expect(bricks.openBrickChat).not.toHaveBeenCalled();
+    });
+
+    describe("where a Brick lives", () => {
+        beforeEach(() => {
+            bricks.home = {
+                url: `${window.location.origin}/@/bawes/universe/lobby`,
+                room: "Lobby",
+                world: "",
+                universe: "",
+            };
+        });
+
+        it("shows Lives in with Visit for someone else's Brick, as it always did", async () => {
+            await open(partner({ chatId: brickChat(OTHER) }), { bot: true, botState: "online" });
+            expect(byId("partnerRoomBlockStub")).not.toBeNull();
+        });
+
+        it("leaves it to the visit card for the person's own Brick, which says where it lives with Take it out", async () => {
+            await open(ownBrick(), { bot: true, botState: "online" });
+            expect(byId("brickVisitCardStub")).not.toBeNull();
+            expect(byId("partnerRoomBlockStub")).toBeNull();
+        });
     });
 });
