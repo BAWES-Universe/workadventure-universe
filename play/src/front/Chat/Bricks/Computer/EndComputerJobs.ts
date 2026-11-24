@@ -10,7 +10,10 @@ import { refusalWords } from "./ComputerJobWords";
  * Ends what was tapped without a question, and says so when Orbit refused. True when it ended. "started": a Cancel of a job that was shown as never started
  * found it started by the time Orbit looked, so nothing was cancelled and the person is to be asked first.
  */
-export async function endAtOnce(brick: BrickRef, what: { stop: true } | { cancel: string }): Promise<boolean | "started"> {
+export async function endAtOnce(
+    brick: BrickRef,
+    what: { stop: true } | { cancel: string }
+): Promise<boolean | "started"> {
     const texts = get(LL);
     if ("stop" in what) {
         // The job (or jobs) the panel shows at the tap go with the Stop: Orbit ends those, never one that began since (GPT's seventh note D2)

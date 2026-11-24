@@ -136,7 +136,15 @@ export async function dismissComputerNotice(brickId: string, jobId: string): Pro
  * - over-limit: Resume while a spending limit the person set is still reached; the job stays paused.
  * - failed: Orbit could not be reached or said something else.
  */
-export type JobRefusal = "taken-over" | "ending" | "gone" | "changed" | "out-of-time" | "over-limit" | "failed" | "started";
+export type JobRefusal =
+    | "taken-over"
+    | "ending"
+    | "gone"
+    | "changed"
+    | "out-of-time"
+    | "over-limit"
+    | "failed"
+    | "started";
 export type JobCallResult = { ok: true } | { ok: false; why: JobRefusal };
 
 function refusalOf(error: unknown): JobRefusal {
