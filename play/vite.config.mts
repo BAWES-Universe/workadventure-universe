@@ -40,7 +40,11 @@ export default defineConfig(({ mode }) => {
             // do not point to them (the image build uploads them to Sentry and removes them), anything else = maps
             // linked from the files (what dev and `npm run build` have always done).
             sourcemap:
-                env.GENERATE_SOURCEMAP === "false" ? false : env.GENERATE_SOURCEMAP === "hidden" ? "hidden" : true,
+                env.GENERATE_SOURCEMAP === "false"
+                    ? false
+                    : env.GENERATE_SOURCEMAP === "hidden"
+                    ? ("hidden" as const)
+                    : true,
             outDir: "./dist/public",
             rollupOptions: {
                 // external: ["@mediapipe/tasks-vision"],
