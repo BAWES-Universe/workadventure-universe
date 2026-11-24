@@ -75,7 +75,7 @@ function setUp(over: { settings?: Record<string, unknown>; refused?: { status: n
             }),
         })),
         listBrickItems: vi.fn(async () => ({ ok: true as const, items: over.items ?? [item()] })),
-        changeBrickItem: vi.fn(async () => ({ ok: true as const, item: item({ nextDueAt: '2026-11-15T14:00:00.000Z' }) })),
+        changeBrickItem: vi.fn(async (_botId: string, _itemId: string, _change: Record<string, unknown>) => ({ ok: true as const, item: item({ nextDueAt: '2026-11-15T14:00:00.000Z' }) })),
     };
     const context: TaskToolContext = { admin: admin as unknown as TaskToolContext['admin'], botId: BRICK, userId: SARA, now: () => NOW };
     return { admin, context };
@@ -93,6 +93,13 @@ describe('time, on the person’s own clock', () => {
         expect(localToInstant('2026-11-15T16:00', 'Asia/Kuwait')).toBe('2026-11-15T13:00:00.000Z');
         expect(localToInstant('2026-07-01 09:30', 'America/New_York')).toBe('2026-07-01T13:30:00.000Z');
         expect(localToInstant('2026-12-01 09:30', 'America/New_York')).toBe('2026-12-01T14:30:00.000Z');
+    });
+
+    it('never drops seconds that are not zero: they are not a time here, and ":00" is the minute', () => {
+        expect(localToInstant('2026-11-15 16:00:99', 'Asia/Kuwait')).toBeNull();
+        expect(localToInstant('2026-11-15 16:00:30', 'Asia/Kuwait')).toBeNull();
+        expect(localToInstant('2026-11-15 16:00:00', 'Asia/Kuwait')).toBe('2026-11-15T13:00:00.000Z');
+        expect(localToInstant('2026-11-15 16:00', 'Asia/Kuwait')).toBe('2026-11-15T13:00:00.000Z');
     });
 
     it('reads a time the clock skips as the same moment on the new clock, and a time it repeats as the first one', () => {
@@ -113,6 +120,9 @@ describe('time, on the person’s own clock', () => {
         expect(localToInstant('2026-11-15 16:00', 'Nowhere/Land')).toBeNull();
         expect(timeOfDayOf('2026-11-15 09:05')).toBe('09:05');
         expect(timeOfDayOf('9am')).toBeNull();
+        // Seconds are not a time of day a reminder can keep: other than :00 they would be dropped, so they are not read at all
+        expect(timeOfDayOf('2026-11-15 09:05:00')).toBe('09:05');
+        expect(timeOfDayOf('2026-11-15 09:05:45')).toBeNull();
     });
 
     it('says a moment in words on their clock, and today as today', () => {
@@ -379,6 +389,35 @@ describe('setting a reminder', () => {
         const { admin, context } = setUp();
         await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', repeat: 'none', when: '2026-11-16 09:00' }, context);
         expect(admin.changeBrickItem.mock.calls[0][2]).toMatchObject({ change: { cadence: { type: 'once', at: '2026-11-16T06:00:00.000Z' } } });
+    });
+
+    it('keeps a daily reminder repeating on its days when a new time comes with no repeat', async () => {
+        const { admin, context } = setUp({ items: [item({ cadence: { type: 'daily', time: '08:00', days: [0, 1, 2, 3, 4] } })] });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:30' }, context);
+        expect(admin.changeBrickItem.mock.calls[0][2]).toMatchObject({ change: { cadence: { type: 'daily', time: '09:30', days: [0, 1, 2, 3, 4] } } });
+    });
+
+    it('takes a new time of day written with zero seconds for a daily reminder, and refuses one with real seconds, through change_task and set_reminder', async () => {
+        const daily = setUp({ items: [item({ cadence: { type: 'daily', time: '08:00', days: [0, 1, 2, 3, 4] } })] });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:30:00' }, daily.context);
+        expect(daily.admin.changeBrickItem.mock.calls[0][2]).toMatchObject({ change: { cadence: { type: 'daily', time: '09:30', days: [0, 1, 2, 3, 4] } } });
+        const seconds = setUp({ items: [item({ cadence: { type: 'daily', time: '08:00', days: [0, 1, 2, 3, 4] } })] });
+        const refusedSeconds = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:30:45' }, seconds.context);
+        expect(seconds.admin.changeBrickItem).not.toHaveBeenCalled();
+        expect(String(refusedSeconds.error)).toContain('time of day');
+        const set = setUp();
+        await runTaskTool(SET_REMINDER_TOOL, { text: 'Water the plants', when: '2026-11-15 09:30:00', repeat: 'every_day' }, set.context);
+        expect(set.admin.setBrickItem.mock.calls[0][1]).toMatchObject({ cadence: { type: 'daily', time: '09:30' } });
+    });
+
+    it('does not turn a repeating item into a one-off by "in 20 minutes" or by a new time on a check every few hours', async () => {
+        const daily = setUp({ items: [item({ cadence: { type: 'daily', time: '08:00', days: [0, 1, 2, 3, 4, 5, 6] } })] });
+        const soon = await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', in_minutes: 20 }, daily.context);
+        expect(daily.admin.changeBrickItem).not.toHaveBeenCalled();
+        expect(String(soon.error)).toContain('repeats');
+        const hours = setUp({ items: [item({ cadence: { type: 'every', minutes: 360 } })] });
+        await runTaskTool(CHANGE_TASK_TOOL, { id: 'item-1', action: 'change', when: '2026-11-16 09:00' }, hours.context);
+        expect(hours.admin.changeBrickItem).not.toHaveBeenCalled();
     });
 
     it('still asks for the time of day when a change only says it repeats every day', async () => {

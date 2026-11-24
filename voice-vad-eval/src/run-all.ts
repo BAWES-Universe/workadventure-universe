@@ -6,6 +6,8 @@ import { join } from 'node:path';
 
 const [data, out, shardsArg] = process.argv.slice(2);
 const shards = Number(shardsArg ?? 4);
+// Checked before anything is deleted: no shards would delete the results and report that all of them finished
+if (!Number.isInteger(shards) || shards < 1) throw new Error(`shards must be a whole number of 1 or more, got "${shardsArg}"`);
 mkdirSync(out, { recursive: true });
 for (const f of readdirSync(out)) if (/^(raw|done)-\d+\.(jsonl|json)$/.test(f)) rmSync(join(out, f));
 const codes = await Promise.all(

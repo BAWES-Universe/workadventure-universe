@@ -10,6 +10,7 @@ const ME = "@omar:chat.test";
 const chatIdOf = (brickId: string) => `@bot_${brickId}:chat.test`;
 
 type FakeRoom = { id: string; members: Writable<{ id: string }[]> };
+type FakeFolder = FakeRoom & { rooms: Writable<FakeRoom[]>; folders: Writable<FakeFolder[]> };
 
 const game = vi.hoisted(() => ({
     connection: undefined as unknown,
@@ -42,18 +43,36 @@ function fakeRoom(id: string, memberIds: string[] = []): FakeRoom {
     return { id, members: writable(memberIds.map((member) => ({ id: member }))) };
 }
 
+function fakeFolder(id: string, rooms: FakeRoom[] = [], folders: FakeFolder[] = []): FakeFolder {
+    return { ...fakeRoom(id), rooms: writable(rooms), folders: writable(folders) };
+}
+
 /** A chat as a device holds it: its direct chats, and the one it has with each address (found through members). */
 function fakeConnection() {
     const directRooms = writable<FakeRoom[]>([]);
     const rooms = writable<FakeRoom[]>([]);
+    const folders = writable<FakeFolder[]>([]);
     const connection = {
         directRooms,
         rooms,
+        folders,
         getDirectRoomFor: (chatId: string) =>
             get(directRooms).find((room) => get(room.members).some((member) => member.id === chatId)),
-        getRoomByID: (roomId: string) => [...get(directRooms), ...get(rooms)].find((room) => room.id === roomId),
+        getRoomByID: (roomId: string) => {
+            const seen = new Set<string>();
+            const inside = (list: FakeFolder[]): FakeRoom | undefined => {
+                for (const folder of list) {
+                    if (seen.has(folder.id)) continue;
+                    seen.add(folder.id);
+                    const found = get(folder.rooms).find((room) => room.id === roomId) ?? inside(get(folder.folders));
+                    if (found) return found;
+                }
+                return undefined;
+            };
+            return [...get(directRooms), ...get(rooms)].find((room) => room.id === roomId) ?? inside(get(folders));
+        },
     };
-    return { connection: connection as unknown as ChatConnectionInterface, directRooms, rooms };
+    return { connection: connection as unknown as ChatConnectionInterface, directRooms, rooms, folders };
 }
 
 const brick = (id: string, name: string): BrickCard => ({
@@ -215,6 +234,23 @@ describe("opening a Brick's chat from the game", () => {
         await expect(openBrickChat(THIRD)).resolves.toMatchObject({ id: "!known:chat.test" });
         expect(game.openChatRoom).toHaveBeenCalledWith("!known:chat.test");
         expect(game.openDirectChatRoom).not.toHaveBeenCalled();
+    });
+
+    it("finds a chat that is kept only in a folder, even in one inside another, and does not loop on folders that hold each other", async () => {
+        const { connection, folders } = fakeConnection();
+        game.connection = connection;
+        // A holds B, B holds A again and C, and the chat is in C
+        const a = fakeFolder("!a:chat.test");
+        const b = fakeFolder("!b:chat.test");
+        const c = fakeFolder("!c:chat.test", [fakeRoom("!inside:chat.test")]);
+        a.folders.set([b]);
+        b.folders.set([a, c]);
+        folders.set([a]);
+        game.askDirectChat.mockResolvedValue({ roomId: "!inside:chat.test" });
+        // it is there at once: the wait for the chats to load (ten seconds, and a warning) is not entered
+        await expect(openBrickChat(THIRD)).resolves.toMatchObject({ id: "!inside:chat.test" });
+        expect(game.openChatRoom).toHaveBeenCalledWith("!inside:chat.test");
+        expect(game.warn).not.toHaveBeenCalled();
     });
 
     it("opens nothing, and breaks nothing, when the chat cannot be opened", async () => {

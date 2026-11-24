@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { livesHere, parseBrickHome, parsePlaced, parseRoomBricks, placedByOthers, spotOf } from "./roomBricksModel";
+import {
+    livesHere,
+    parseBrickHome,
+    parsePlaced,
+    parseRoomBricks,
+    placedByOthers,
+    placementOf,
+    spotOf,
+} from "./roomBricksModel";
 
 const row = (over: Record<string, unknown> = {}) => ({
     id: "b1",
@@ -100,5 +108,43 @@ describe("where a Brick lives, as Orbit tells it (#2005)", () => {
         expect(livesHere(home, "https://play.test/_/acme/hq/cafe.tmj")).toBe(false);
         expect(livesHere(null, "https://play.test/_/acme/hq/lobby.tmj")).toBe(false);
         expect(livesHere(home, null)).toBe(false);
+    });
+});
+
+describe("what is sent when a Brick is placed at a spot", () => {
+    const spot = { behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } };
+
+    it("is the spot alone for a Brick that did not stand here", () => {
+        expect(placementOf(undefined, spot)).toEqual({ behaviorConfig: spot.behaviorConfig });
+        expect(placementOf({ behaviorType: null, behaviorConfig: null }, spot)).toEqual({
+            behaviorConfig: spot.behaviorConfig,
+        });
+    });
+
+    it("keeps how a Brick behaves where it stands already, and moves only its spot", () => {
+        const placed = placementOf(
+            {
+                behaviorType: "social",
+                behaviorConfig: { assignedSpace: { center: { x: 1, y: 2 }, radius: 50 }, approachDistance: 90 },
+            },
+            spot
+        );
+        expect(placed).toEqual({
+            behaviorType: "social",
+            behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 50 }, approachDistance: 90 },
+        });
+    });
+
+    it("reads how a Brick behaves from the room's list", () => {
+        const read = parseRoomBricks({
+            here: [
+                row({ behaviorType: "patrol", behaviorConfig: { wanderSpeed: 2 } }),
+                row({ id: "b2", behaviorType: "x" }),
+            ],
+            mine: [],
+        });
+        expect(read?.here.map((one) => one.behaviorType)).toEqual(["patrol", null]);
+        expect(read?.here[0].behaviorConfig).toEqual({ wanderSpeed: 2 });
+        expect(read?.here[1].behaviorConfig).toBeNull();
     });
 });

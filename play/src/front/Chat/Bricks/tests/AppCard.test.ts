@@ -104,10 +104,17 @@ describe("the card", () => {
 
 type Mocked = { [K in keyof ChatConnectSteps]: Mock & ChatConnectSteps[K] };
 
+/** Like the real sign-in: the window is open first, then the connection is made behind it, and the window ends with `result` */
+const windowThatEnds = (result: "done" | "stopped" | "blocked") =>
+    vi.fn((makeApp: () => Promise<string>) => {
+        makeApp().catch(() => undefined);
+        return Promise.resolve(result);
+    });
+
 function steps(over: Partial<ChatConnectSteps> = {}): Mocked {
     return {
         connectListedApp: vi.fn(() => Promise.resolve("conn-1")),
-        signIn: vi.fn(() => Promise.resolve("done" as const)),
+        signIn: windowThatEnds("done"),
         connectReadyMade: vi.fn(() => Promise.resolve({ status: "connected", appId: "conn-rm" } as const)),
         isConnected: vi.fn(() => Promise.resolve(false)),
         letBrickUse: vi.fn(() => Promise.resolve(undefined)),
@@ -122,21 +129,25 @@ describe("connecting from the card", () => {
         const s = steps();
         const order: string[] = [];
         s.connectListedApp.mockImplementation(() => (order.push("connect"), Promise.resolve("conn-1")));
-        s.signIn.mockImplementation((id: unknown) => (order.push("window"), Promise.resolve("done" as const)));
+        s.signIn.mockImplementation((makeApp: () => Promise<string>) => {
+            order.push("window");
+            makeApp().catch(() => undefined);
+            return Promise.resolve("done" as const);
+        });
         s.letBrickUse.mockImplementation(() => (order.push("let"), Promise.resolve(undefined)));
         s.carryOn.mockImplementation(() => (order.push("carry on"), Promise.resolve()));
 
         const pending = connectFromCard(raw as AppOffer, "brick-1", s);
-        // Both started before anything was awaited: the window is not blocked by waiting for the connection
-        expect(order).toEqual(["connect", "window"]);
+        // The window opens first, in the tap, and the connection is made behind it: a window that cannot open makes none
+        expect(order).toEqual(["window", "connect"]);
         expect(await pending).toBe("connected");
 
         expect(s.connectListedApp).toHaveBeenCalledWith("google-calendar");
-        // The window is given the connection, to be waited for
-        await expect(s.signIn.mock.calls[0][0]).resolves.toBe("conn-1");
+        // The window is given the way to ask for the connection, and the sign-in uses what it answers
+        expect(s.signIn).toHaveBeenCalledTimes(1);
         expect(s.letBrickUse).toHaveBeenCalledWith("conn-1", "brick-1");
         expect(s.carryOn).toHaveBeenCalledWith({ app: "google-calendar", name: "Google Calendar" });
-        expect(order).toEqual(["connect", "window", "let", "carry on"]);
+        expect(order).toEqual(["window", "connect", "let", "carry on"]);
         expect(s.refresh).toHaveBeenCalled();
     });
 
@@ -155,21 +166,23 @@ describe("connecting from the card", () => {
     });
 
     it("lets nothing use the App and says nothing to the Brick when the window is closed", async () => {
-        const s = steps({ signIn: vi.fn(() => Promise.resolve("stopped" as const)) });
+        const s = steps({ signIn: windowThatEnds("stopped") });
         expect(await connectFromCard(raw as AppOffer, "brick-1", s)).toBe("stopped");
         expect(s.letBrickUse).not.toHaveBeenCalled();
         expect(s.carryOn).not.toHaveBeenCalled();
     });
 
     it("is blocked when the window cannot open and the App is not connected anyway", async () => {
+        // A window that could not open never asks for the connection
         const s = steps({ signIn: vi.fn(() => Promise.resolve("blocked" as const)) });
         expect(await connectFromCard(raw as AppOffer, "brick-1", s)).toBe("blocked");
+        expect(s.connectListedApp).not.toHaveBeenCalled();
         expect(s.letBrickUse).not.toHaveBeenCalled();
     });
 
     it("goes on for an App that needs no sign-in: no window opened, but it is connected", async () => {
         const s = steps({
-            signIn: vi.fn(() => Promise.resolve("blocked" as const)),
+            signIn: windowThatEnds("blocked"),
             isConnected: vi.fn(() => Promise.resolve(true)),
         });
         expect(await connectFromCard(raw as AppOffer, "brick-1", s)).toBe("connected");
@@ -179,7 +192,7 @@ describe("connecting from the card", () => {
     it("is blocked when the connection cannot be made", async () => {
         const s = steps({
             connectListedApp: vi.fn(() => Promise.reject(new Error("no"))),
-            signIn: vi.fn(() => Promise.resolve("blocked" as const)),
+            signIn: windowThatEnds("blocked"),
         });
         expect(await connectFromCard(raw as AppOffer, "brick-1", s)).toBe("blocked");
         expect(s.carryOn).not.toHaveBeenCalled();
@@ -193,10 +206,11 @@ describe("connecting from the card", () => {
         expect(s.refresh).toHaveBeenCalled();
     });
 
-    it("still counts as connected when the nudge to the Brick is lost", async () => {
+    it("says the App is connected and let in but the Brick was not told to carry on, when the nudge to it is lost", async () => {
         vi.spyOn(console, "warn").mockImplementation(() => undefined);
         const s = steps({ carryOn: vi.fn(() => Promise.reject(new Error("offline"))) });
-        expect(await connectFromCard(raw as AppOffer, "brick-1", s)).toBe("connected");
+        expect(await connectFromCard(raw as AppOffer, "brick-1", s)).toBe("not_resumed");
+        expect(s.letBrickUse).toHaveBeenCalledWith("conn-1", "brick-1");
     });
 
     describe("a ready-made App", () => {

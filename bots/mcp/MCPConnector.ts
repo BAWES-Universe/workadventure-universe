@@ -440,16 +440,23 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
     };
     // Set once the call itself is on its way: a cancellation after that may have come too late, so it is not "never sent"
     let callSubmitted = false;
+    // The session entry this request is using: what it learns (a refusal, the time it was used) is about that entry only. A late
+    // answer on an old session must never delete, or refresh, the newer one another request installed under the same key.
+    let used: SessionEntry | undefined;
+    const forgetUsed = () => {
+        if (used && mcpSessionInitCache.get(key) === used) mcpSessionInitCache.delete(key);
+    };
     try {
         let sessionId: string | undefined;
         let cached = mcpSessionInitCache.get(key);
         if (cached && Date.now() >= cached.initializedAt + SESSION_INIT_TTL) cached = undefined;
+        used = cached;
         if (cached?.sessionId && method === 'tools/call' && Date.now() - (cached.usedAt ?? cached.initializedAt) > LINK_SESSION_IDLE_CHECK_MS) {
             // Before the call, not after it: a listing on the kept session says whether the link still knows it. Nothing is
             // counted or run by it, so a gone session is dropped here and the call below goes out on a fresh one, once.
             const check = await send({ jsonrpc: '2.0', id: 'check', method: 'tools/list' }, cached.sessionId);
             if (typeof check.status === 'number' && check.status >= 400) {
-                mcpSessionInitCache.delete(key);
+                forgetUsed();
                 // Only "the link does not know this session" is answered by opening another; any other refusal (its key, an
                 // outage) means the call cannot go out now, and nothing was asked of the App
                 if (![400, 404, 410].includes(check.status)) return { ...NOT_SENT, status: check.status };
@@ -469,20 +476,23 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
             sessionId = opened.sessionId || undefined;
             const told = await send({ jsonrpc: '2.0', method: 'notifications/initialized' }, sessionId);
             if (typeof told.status === 'number' && told.status >= 400) return { ...NOT_SENT, status: told.status };
-            mcpSessionInitCache.set(key, { sessionId, initializedAt: Date.now(), usedAt: Date.now() });
+            used = { sessionId, initializedAt: Date.now(), usedAt: Date.now() };
+            mcpSessionInitCache.set(key, used);
         }
         const requestId = method === 'tools/list' ? '1' : '2';
+        // Opening or checking the session may have used up the time left: a call is never submitted once Patience has run out
+        if (method === 'tools/call' && deadline !== undefined && remaining() <= 0) return NOT_SENT;
         if (method === 'tools/call') callSubmitted = true;
         const answer = await send({ jsonrpc: '2.0', id: requestId, method, ...(params !== undefined ? { params } : {}) }, sessionId, method === 'tools/call' ? link.callId : undefined);
         if (typeof answer.status === 'number' && answer.status >= 400) {
             // The link refused or lost the session: it did not run, and the next call opens a fresh session
-            mcpSessionInitCache.delete(key);
+            forgetUsed();
             // Not tried again: Orbit already counted this call id, and a second send would be refused as already made.
             // A session that went idle is caught before the call (see LINK_SESSION_IDLE_CHECK_MS), so this is only a race.
             return { data: null, neverRan: answer.status === 404 && sessionId !== undefined, retryable: false, status: answer.status };
         }
         const kept = mcpSessionInitCache.get(key);
-        if (kept) kept.usedAt = Date.now();
+        if (kept && kept === used) kept.usedAt = Date.now();
         // The link's answer comes as text: a stream is read as a stream, anything else as JSON (what a direct call would have parsed)
         const text = answer.body ?? '';
         const isStream = (answer.contentType || '').includes('text/event-stream') || /^\s*(event|data):/.test(text);
@@ -497,7 +507,7 @@ async function sendViaOrbit(link: OrbitLink, method: string, params: Record<stri
         const parsed = parseMcpResponse({ headers: { 'content-type': answer.contentType || '' }, data, status: answer.status }, requestId);
         return { data: parsed.data, neverRan: false, retryable: false, ...(parsed.listChanged ? { listChanged: true } : {}) };
     } catch (error: any) {
-        mcpSessionInitCache.delete(key);
+        forgetUsed();
         if (axios.isCancel(error)) return signal?.aborted && !callSubmitted ? NOT_SENT : NOT_ANSWERED;
         // Failing before the call is on its way (opening or checking a session) means it never went out
         if (!callSubmitted) {
@@ -543,7 +553,7 @@ async function sendJsonRpc(
     // client with an error that names nothing. Nothing is sent, and the log says which header it is.
     const unsendable = unsendableHeader(baseHeaders);
     if (unsendable) {
-        console.warn(`[MCPConnector] Not sent: the "${unsendable}" header has text that cannot be sent (${method} to ${serverUrl})`);
+        console.warn(`[MCPConnector] Not sent: the "${unsendable}" header has text that cannot be sent (${method})`);
         return NOT_SENT;
     }
 

@@ -17,8 +17,9 @@
 # Needs Docker, the image (IMAGE), strace, root, and a livekit-server on 127.0.0.1:7880 with the worker's test keys.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+FAILED=0
 DATA="$1"; OUT="$2"; TALK="${3:-20}"; IDLE="${4:-75}"; IMAGE="${IMAGE:-voice-worker:observer-packaged}"; PORT=8832
-mkdir -p "$OUT/go"; chmod 777 "$OUT" "$OUT/go"
+mkdir -p "$OUT/go"; chmod 755 "$OUT" "$OUT/go"
 docker image inspect --format 'image {{.Id}} created {{.Created}}' "$IMAGE" > "$OUT/image.txt"
 echo "== 1. the detector in the image, no network"
 docker run --rm --network none "$IMAGE" node --import tsx speech-observer/check.mts | tee "$OUT/detector-check.json"
@@ -33,12 +34,23 @@ run() { # name, extra docker args...
     strace -f -qq -s 256 -e trace=connect,sendto,sendmsg,sendmmsg -o "$OUT/$name.full.strace" -p "$pid" 2> "$OUT/$name.strace.err" &
     local tracer=$!
     sleep 1; touch "$OUT/go/now"
-    for _ in $(seq 1 120); do curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break; sleep 0.5; done
-    LOAD_TAG=x PEOPLE_PER_BUBBLE=2 npx tsx src/load.ts "ws://127.0.0.1:$PORT" "$DATA" 2 "$TALK" "$OUT/$name.lane.load.json" lane > /dev/null 2>&1 &
+    # A run is valid only if the worker came up and both load generators ended well: what is said about it below is otherwise
+    # "the observer reaches nothing" about a worker that heard nothing. The reasons are kept with the summary
+    local problems="" healthy=0
+    for _ in $(seq 1 120); do curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { healthy=1; break; }; sleep 0.5; done
+    [ "$healthy" = 1 ] || problems="$problems the worker never became healthy;"
+    LOAD_TAG=x PEOPLE_PER_BUBBLE=2 npx tsx src/load.ts "ws://127.0.0.1:$PORT" "$DATA" 2 "$TALK" "$OUT/$name.lane.load.json" lane > "$OUT/$name.lane.log" 2>&1 &
     local lane=$!
-    LOAD_TAG=y PEOPLE_PER_BUBBLE=2 npx tsx src/load.ts "ws://127.0.0.1:$PORT" "$DATA" 2 "$TALK" "$OUT/$name.room.load.json" room > /dev/null 2>&1 &
+    LOAD_TAG=y PEOPLE_PER_BUBBLE=2 npx tsx src/load.ts "ws://127.0.0.1:$PORT" "$DATA" 2 "$TALK" "$OUT/$name.room.load.json" room > "$OUT/$name.room.log" 2>&1 &
     local room=$!
-    wait "$lane" "$room" 2>/dev/null
+    local lane_rc=0 room_rc=0
+    wait "$lane" || lane_rc=$?
+    wait "$room" || room_rc=$?
+    [ "$lane_rc" -eq 0 ] || problems="$problems the lane load generator failed (exit $lane_rc, see $name.lane.log);"
+    [ "$room_rc" -eq 0 ] || problems="$problems the room load generator failed (exit $room_rc, see $name.room.log);"
+    # The load generator ends well (exit 0) even when some of the people could not join: what it says about who connected is read too
+    grep -q '^2 of 2 people connected' "$OUT/$name.lane.log" || problems="$problems not all people connected on the lane path (see $name.lane.log);"
+    grep -q '^2 of 2 people connected' "$OUT/$name.room.log" || problems="$problems not all people connected in the room (see $name.room.log);"
     sleep "$IDLE"
     curl -fsS "http://127.0.0.1:$PORT/stats" > "$OUT/$name.stats.json" 2>/dev/null || echo '{}' > "$OUT/$name.stats.json"
     # Whether the runtime's native library is in the worker's memory at all
@@ -56,8 +68,12 @@ run() { # name, extra docker args...
     asked=$(grep -aoE '\\[0-9]{1,3}[a-z0-9-]+(\\[0-9]{1,3}[a-z0-9-]+)+\\0' "$OUT/$name.strace" | sed -E 's/\\[0-9]{1,3}/./g; s/^\.//; s/\.$//' | grep -E '^([a-z0-9-]+\.)+[a-z]{2,}$' | sort | uniq -c | sed -E 's/^ +//' | paste -sd',' || true)
     names=$(grep -aoiE '(microsoft|visualstudio|applicationinsights|events\\[0-9]+data)[a-z0-9.\\-]*' "$OUT/$name.full.strace" | sort -u | tr '\n' ' ' || true)
     summary=$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=s.counters??{};const o=Object.keys(c).filter((k)=>k.startsWith("observer_"));const y=Object.keys(c).filter((k)=>k.startsWith("yield_")&&c[k]);console.log(`observer in /stats: ${s.speechObserver?JSON.stringify(s.speechObserver):"none"}; observer counters: ${o.length}${o.length?` (loaded ${c.observer_loaded??0}, could not load ${c.observer_unavailable??0}, windows kept ${c.observer_windows_accepted??0}, errors ${c.observer_errors??0})`:""}; pause counters moved: ${y.length?y.map((k)=>`${k.slice(6)} ${c[k]}`).join(", "):"none"}; frames heard: ${c.frames_heard??0}`)' "$OUT/$name.stats.json" 2>/dev/null || echo "stats missing")
-    echo "$name: traced threads and processes=$(cut -d' ' -f1 "$OUT/$name.full.strace" | sort -u | wc -l); network calls=$total, of them to anywhere but this machine=$outside; names looked up: ${asked:-none}; microsoft names seen in traffic: ${names:-none}; runtime library lines in the process's memory map: ${loaded:-0}; $summary" | tee "$OUT/$name.summary.txt"
+    echo "$name: traced threads and processes=$(cut -d' ' -f1 "$OUT/$name.full.strace" | sort -u | wc -l); calls naming a network address=$total, of them to anywhere but this machine=$outside; names looked up: ${asked:-none}; microsoft names seen in traffic: ${names:-none}; runtime library lines in the process's memory map: ${loaded:-0}; $summary" | tee "$OUT/$name.summary.txt"
     rm -f "$OUT/$name.full.strace"
+    if [ -n "$problems" ]; then
+        echo "$name: RUN INVALID:$problems the counts above say nothing about the worker" | tee -a "$OUT/$name.summary.txt"
+        FAILED=1
+    fi
 }
 echo "== 2 and 3. traced runs: off, on, off again"
 run 1-off -e VOICE_SPEECH_OBSERVER=0
@@ -71,3 +87,4 @@ if [ "${YIELD:-0}" = 1 ]; then
     run 6-pause-removed -e VOICE_SPEECH_OBSERVER=0
 fi
 rm -rf "$OUT/go"
+exit "$FAILED"

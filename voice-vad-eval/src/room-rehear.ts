@@ -5,6 +5,7 @@
 // measured: whether the worker is subscribed to their microphone again, and how much of their audio it hears in the
 // next 6 seconds. Needs a livekit-server on 127.0.0.1:7880 with the worker's test keys.
 //   tsx src/room-rehear.ts [pause in ms, several] > results/room-rehear.jsonl
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { privateEvent, sleep, startRig, waitFor } from '../../voice-worker/test/harness.ts';
@@ -13,6 +14,18 @@ const fromWorker = createRequire(new URL('../../voice-worker/package.json', impo
 const lk = (await import(pathToFileURL(fromWorker.resolve('@livekit/rtc-node')).href)) as typeof import('../../voice-worker/node_modules/@livekit/rtc-node');
 const sdk = (await import(pathToFileURL(fromWorker.resolve('livekit-server-sdk')).href)) as typeof import('../../voice-worker/node_modules/livekit-server-sdk');
 const URL_WS = process.env.LIVEKIT_WS_URL ?? 'ws://127.0.0.1:7880';
+// Which worker produced these records: the commit of the repository whose voice-worker files the rig runs, and whether those
+// files differ from it (git status of voice-worker/). WORKER_BUILD names a built image instead (its id), for a run against one.
+function workerBuild(): { commit: string; changedFiles: number | 'unknown'; image: string | null } {
+    const repo = new URL('../..', import.meta.url).pathname;
+    const git = (...args: string[]): string => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+    try {
+        return { commit: git('rev-parse', 'HEAD'), changedFiles: git('status', '--porcelain', '--', 'voice-worker').split('\n').filter(Boolean).length, image: process.env.WORKER_BUILD ?? null };
+    } catch {
+        return { commit: 'unknown', changedFiles: 'unknown', image: process.env.WORKER_BUILD ?? null };
+    }
+}
+const build = workerBuild();
 const pauses = process.argv.slice(2).map(Number).filter((n) => n >= 0);
 
 async function token(room: string, identity: string): Promise<string> {
@@ -65,6 +78,10 @@ for (const pauseMs of pauses.length ? pauses : [0, 700, 2000, 5000]) {
             aliceSecondsHeardInNext6: Number(((frames('room_alice') - before.alice) / 100).toFixed(1)),
             workerAskedToSubscribe: r.worker.counters.get('room_subscribed'),
             workerUnsubscribed: r.worker.counters.get('room_unsubscribed'),
+            // Asking again to subscribe after a refusal, and giving up on it: the counters of the worker's room transport
+            workerResubscribeRetries: r.worker.counters.get('room_resubscribe_retries'),
+            workerResubscribeGaveUp: r.worker.counters.get('room_resubscribe_gave_up'),
+            workerBuild: build,
         })
     );
     for (const t of timers) clearInterval(t);

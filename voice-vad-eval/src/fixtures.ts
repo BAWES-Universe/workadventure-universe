@@ -23,6 +23,8 @@ export interface Item {
     source: string;
     /** Commands only: the contributor, from the file name as each dataset documents it. Sentences carry none. */
     speaker?: string;
+    /** The other recordings this clip is mixed from beyond `source` (a speech clip mixed with noise reads a noise recording too), by their keys. */
+    inputs?(): string[];
     build(): Built;
 }
 export interface Built {
@@ -32,6 +34,8 @@ export interface Built {
     offset?: number;
     /** What the level really came out as (dBFS): whole-clip RMS for noise, active-speech RMS for speech. */
     level: number;
+    /** The other recordings that were read to build the clip, by key: the same ones the item's `inputs()` names. */
+    inputs?: string[];
 }
 
 function mulberry32(seed: number): () => number {
@@ -126,6 +130,9 @@ export const SPEECH_CONDITIONS = ['S20', 'S30', 'S40', 'N10', 'N5'] as const;
 export const LEAD = 1.0;
 const TAIL = 1.0;
 
+/** The speech-to-text providers a clip is replayed with (yield-replay.ts): speech with one that says words, a noise clip with one that hears nothing and with one that says words. */
+export const replayProvidersOf = (item: Pick<Item, 'kind'>): Array<'empty' | 'words'> => (item.kind === 'speech' ? ['words'] : ['empty', 'words']);
+
 export function buildManifest(data: string): Item[] {
     const items: Item[] = [];
     const split = (key: string): 'tune' | 'report' => (hash('split:' + key) % 2 === 0 ? 'tune' : 'report');
@@ -193,6 +200,17 @@ export function buildManifest(data: string): Item[] {
                 split: split(sp.set === 'en-sentence' ? sp.key : `${sp.set}/${speakerOf(sp.key)}`),
                 source: sp.key,
                 speaker: sp.set === 'en-sentence' ? undefined : `${sp.set}/${speakerOf(sp.key)}`,
+                // The noise recording is picked from the clip's own random numbers, after the floor of the mix: the same numbers are
+                // walked here, so it is known before anything is read for the build
+                inputs: () => {
+                    if (condition !== 'N10' && condition !== 'N5') return [];
+                    const rand = mulberry32(hash(`${sp.key}|${condition}`));
+                    const length = sp.set === 'en-sentence' ? Math.min(4 * RATE, readWav16k(sp.path).length) : readWav16k(sp.path).length;
+                    const total = Math.round((LEAD + TAIL) * RATE) + length;
+                    // Each sample of the floor takes two numbers (gaussian)
+                    for (let i = 0; i < total * 2; i++) rand();
+                    return [mixNoise[Math.floor(rand() * mixNoise.length)].key];
+                },
                 build: () => {
                     const rand = mulberry32(hash(`${sp.key}|${condition}`));
                     let clip = readWav16k(sp.path);
@@ -204,9 +222,11 @@ export function buildManifest(data: string): Item[] {
                     // A digital-silence floor so nothing is exactly zero
                     const floor = fromDb(-75);
                     for (let i = 0; i < total; i++) mix[i] = gaussian(rand) * floor;
+                    const inputs: string[] = [];
                     if (condition === 'N10' || condition === 'N5') {
                         const snr = condition === 'N10' ? 10 : 5;
                         const nf = mixNoise[Math.floor(rand() * mixNoise.length)];
+                        inputs.push(nf.key);
                         const noise = readWav16k(nf.path);
                         const start = Math.floor(rand() * Math.max(1, noise.length - total));
                         const seg = noise.subarray(start, start + total);
@@ -216,7 +236,7 @@ export function buildManifest(data: string): Item[] {
                     const gain = fromDb(target) / Math.max(1, activeRms);
                     const at = Math.round(LEAD * RATE);
                     for (let i = 0; i < clip.length; i++) mix[at + i] += clip[i] * gain;
-                    return { pcm: toInt16(mix), onset: LEAD + onset, offset: LEAD + offset, level: target };
+                    return { pcm: toInt16(mix), onset: LEAD + onset, offset: LEAD + offset, level: target, inputs };
                 },
             });
         }

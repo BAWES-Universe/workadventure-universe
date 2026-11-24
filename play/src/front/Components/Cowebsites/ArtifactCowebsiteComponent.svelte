@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
-    import LL from "../../../i18n/i18n-svelte";
+    import LL, { locale } from "../../../i18n/i18n-svelte";
     import type { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
     import {
         ArtifactRequestError,
@@ -15,7 +15,8 @@
         type OpenedArtifact,
     } from "../../Artifacts/ArtifactApi";
     import { artifactBadge } from "../../Artifacts/artifactBadge";
-    import { pagePayments, type PayProblem } from "../../Artifacts/PagePayments";
+    import { pagePayments } from "../../Artifacts/PagePayments";
+    import { describePayLine, type PayAction } from "../../Artifacts/payLineView";
     import { nearbyPeopleNames } from "../../Artifacts/nearbyPeople";
     import type { ArtifactKind } from "../../Artifacts/artifactCard";
     import { whenLabel } from "../../Artifacts/whenLabel";
@@ -24,6 +25,7 @@
     import { versionMenuRoom, VERSION_MENU_MIN_ROOM } from "../../Artifacts/versionMenuRoom";
     import { chatOwnSheetHeightStore } from "../../Chat/ChatSheetStore";
     import { windowSize } from "../../Stores/CoWebsiteStore";
+    import { localUserStore } from "../../Connection/LocalUserStore";
     import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
@@ -117,40 +119,91 @@
     let renewTimer: ReturnType<typeof setTimeout> | undefined;
     /** Counts the times the version on show was opened again: only the answer to the last one is used. */
     let renewal = 0;
+    /** A renewal was asked for while another opening was on its way, and is still wanted if that one does not come on show. */
+    let renewWhenFree = false;
+    /** An opening started while a version was on show, and dropped its renewal: set when it starts, cleared when it comes on show. */
+    let renewalDropped = false;
+    /** Counts the openings that came on show: a checkout asked for by the page of one is never told to the page of another. */
+    let opening = 0;
     /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
     let addressOver = false;
 
     // A page that takes payments asks for its checkout by message (game #2044); only this window's own frame is listened to
-    let frameElement: HTMLIFrameElement | undefined;
+    let frameElement: HTMLIFrameElement | null | undefined;
+    // Whether the page in the frame on show has loaded: a frame has a window before its page is there, and a payment result
+    // sent in that time reaches nobody. Cleared each time the frame is drawn again (a new element, or another address).
+    let frameLoaded = false;
+    let frameDrawn: { element: HTMLIFrameElement | null | undefined; url: string | null | undefined } | undefined;
+    function watchFrame(element: HTMLIFrameElement | null | undefined, url: string | null | undefined) {
+        if (frameDrawn && frameDrawn.element === element && frameDrawn.url === url) return;
+        frameDrawn = { element, url };
+        frameLoaded = false;
+    }
+    $: watchFrame(frameElement, opened?.version.url);
     const payments = pagePayments({
         artifactId: id,
         chat: () => actualCowebsite.chat,
         frame: () => frameElement?.contentWindow,
+        loaded: () => frameLoaded,
+        opening: () => opening,
         openWindow: () => window.open("about:blank", "_blank"),
+        // A signed-in buyer's account is the buyer; a guest's own recovery code is (kept in this browser, for this page)
+        buyer: () => (localUserStore.isLogged() ? "account" : "guest"),
+        // A guest's receipt link opens Orbit's public page, which only exists for a page anyone with the link may open
+        pageUrl: () => (openScope === "link" ? link : undefined),
     });
     const payLine = payments.line;
+    // The line under the page: what it says and what can be pressed (the approved mock M1)
+    let receiptCopied = false;
+    // The receipt link, shown to be selected by hand when the browser would not copy it: it is the guest's way back to the purchase on another device
+    let receiptByHand: string | undefined;
+    let receiptTimer: ReturnType<typeof setTimeout> | undefined;
+    $: if (!$payLine.paid) {
+        receiptCopied = false;
+        receiptByHand = undefined;
+    }
+    $: payView = describePayLine(
+        $payLine,
+        { copied: receiptCopied, locale: $locale, owner: opened?.you.owner ? { maker: makerName } : undefined },
+        $LL.chat.artifacts
+    );
+    function payAction(action: PayAction) {
+        if (action.kind === "check") payments.checkPayment();
+        else if (action.kind === "restore") payments.restorePurchase();
+        else if (action.kind === "copy") copyReceipt();
+    }
+    function copyReceipt() {
+        const receipt = payments.receiptLink();
+        if (!receipt) return;
+        // The paid line this copy was started from: a guest's receipt link is the same for every checkout of this page, so it is the line that tells
+        // whether the outcome still belongs to what the buyer sees
+        const copiedFrom = $payLine.paid;
+        const copying = navigator.clipboard?.writeText(receipt) ?? Promise.reject(new Error("No clipboard"));
+        copying.then(
+            () => {
+                // Only for the line that was being copied from: a new checkout may have taken the line since
+                if (destroyed || $payLine.paid !== copiedFrom) return;
+                receiptByHand = undefined;
+                receiptCopied = true;
+                if (receiptTimer) clearTimeout(receiptTimer);
+                receiptTimer = setTimeout(() => (receiptCopied = false), 8_000);
+            },
+            () => {
+                if (destroyed || $payLine.paid !== copiedFrom) return;
+                receiptByHand = receipt;
+            }
+        );
+    }
     onMount(() => {
         window.addEventListener("message", payments.onMessage);
         return () => window.removeEventListener("message", payments.onMessage);
     });
 
-    function payProblemText(problem: PayProblem): string {
-        switch (problem) {
-            case "limit":
-                return $LL.chat.artifacts.payLimit();
-            case "not_paid":
-                return $LL.chat.artifacts.payNotPaid();
-            case "cant_confirm":
-                return $LL.chat.artifacts.payCantConfirm();
-            default:
-                return $LL.chat.artifacts.payUnavailable();
-        }
-    }
-
     onDestroy(() => {
         payments.destroy();
         destroyed = true;
         if (copiedTimer) clearTimeout(copiedTimer);
+        if (receiptTimer) clearTimeout(receiptTimer);
         renewIn(undefined);
     });
 
@@ -199,6 +252,8 @@
             if (opened) {
                 request++;
                 phase = "ready";
+                // The opening that was cancelled had dropped the renewal of the one on show
+                lookAfterRenewal();
             }
             return;
         }
@@ -212,6 +267,13 @@
 
     async function load(version: number | undefined) {
         const mine = ++request;
+        // A renewal of the version on show that is still on its way is out of date from the moment another opening starts:
+        // if it answers "kept private" while this opening is still loading, it must not put away the opening that is coming.
+        // One that is only waiting for its time is cancelled too, and renewAddress does nothing until this opening ends.
+        renewal++;
+        renewIn(undefined);
+        // A version on show (if any) lost its renewal: it is set up again if this opening does not come on show
+        renewalDropped = true;
         switchFailed = false;
         // A failed restore was about the version that was showing
         restoreFailed = false;
@@ -221,6 +283,13 @@
             if (destroyed || mine !== request) return;
             opened = answer;
             shownNumber = answer.version.number;
+            // What this opening shows is newer than any renewal of a version that was on show before it: that one is not used,
+            // also when the same version is on show again (1, then 2, then 1)
+            renewal++;
+            renewWhenFree = false;
+            // This opening brings its own address and timer (watchAddress below): nothing was dropped that needs setting up again
+            renewalDropped = false;
+            opening++;
             text = undefined;
             textFailed = false;
             summaryStore.set({
@@ -245,6 +314,8 @@
                 switchFailed = true;
                 versionStore.set(opened.version.number);
                 phase = "ready";
+                // A renewal of the one showing that was due or on its way was dropped when this opening started: look after it again
+                lookAfterRenewal();
                 return;
             }
             phase = "failed";
@@ -295,6 +366,28 @@
         addressOver = false;
     }
 
+    /** The version on show was left without its renewal while another opening was on its way: set one up again. */
+    function lookAfterRenewal() {
+        // Nothing was dropped (the opening came on show, or the version was never opened again): the timer in place is the right one
+        if (!renewalDropped) return;
+        renewalDropped = false;
+        // A page whose address stopped (addressOver) waits behind the loading line for the renewal that this opening cut off: it is set up again at once
+        if (opened && (renewWhenFree || addressOver || (opened.version.url !== null && opened.version.urlHasMedia))) {
+            renewIn(addressOver ? 0 : renewWait(opened.version));
+        }
+        renewWhenFree = false;
+    }
+
+    /**
+     * How long until the version on show is to be renewed: from when its address stops (known, whatever happened to its timer meanwhile),
+     * the same lead watchAddress uses; at once when that time has come. Only a renewal with no address end to go by waits the quick retry.
+     */
+    function renewWait(version: ArtifactVersionInfo): number {
+        const life = version.urlLifeMs;
+        if (addressEndsAt === undefined || life === undefined || !version.urlHasMedia) return RENEW_RETRY_MS;
+        return Math.max(0, addressEndsAt - Math.min(RENEW_LEAD_MS, life / 10) - Date.now());
+    }
+
     /** Opens the version on show again after `wait`, in place of any wait already set; with none, never. */
     function renewIn(wait: number | undefined) {
         if (renewTimer) clearTimeout(renewTimer);
@@ -323,6 +416,11 @@
     async function renewAddress() {
         renewIn(undefined);
         if (destroyed || shownNumber === undefined) return;
+        // Another version is being opened: that one brings its own address; a renewal asked for meanwhile waits for its end
+        if (phase === "opening") {
+            renewWhenFree = true;
+            return;
+        }
         const turn = ++renewal;
         const number = shownNumber;
         // Dropped when another version came on show meanwhile, it was put away, or it was asked for again
@@ -354,6 +452,15 @@
     // so nothing is drawn until it is opened again at a new one.
     function redrawIfStopped() {
         if (addressStopped()) drawFromNewAddress();
+    }
+
+    // The frame has loaded: what a checkout ended with while the buyer was in Code view (it has no frame then) is told to it now.
+    // From an address that has stopped it shows nothing, so it waits for the frame of the new one.
+    function onFrameLoad() {
+        // From an address that has stopped it shows nothing: it is not a page that can hear anything
+        frameLoaded = !addressStopped();
+        if (frameLoaded) payments.frameReady();
+        redrawIfStopped();
     }
 
     // The list drops down from the button. On a phone the window sits behind the chat, so the list ends above the chat,
@@ -717,30 +824,53 @@
                     allow=""
                     data-testid="artifactFrame"
                     bind:this={frameElement}
-                    on:load={redrawIfStopped}
+                    on:load={onFrameLoad}
                 />
-                {#if $payLine.checking || $payLine.problem || $payLine.paid}
-                    <div class="pay-line" role="status" data-testid="artifactPayLine">
-                        {#if $payLine.paid}
-                            <p>
-                                {$payLine.paid.test ? $LL.chat.artifacts.payPaidTest() : $LL.chat.artifacts.payPaid()}
-                            </p>
-                        {:else if $payLine.problem}
-                            <p>{payProblemText($payLine.problem)}</p>
-                        {:else}
-                            <p>{$LL.chat.artifacts.payChecking()}</p>
-                            {#if $payLine.resume}
-                                <a
-                                    class="pay-go"
-                                    href={$payLine.resume.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    data-testid="artifactPayContinue"
-                                    >{$payLine.resume.app
-                                        ? $LL.chat.artifacts.payContinue({ app: $payLine.resume.app })
-                                        : $LL.chat.artifacts.payContinueDefault()}</a
-                                >
-                            {/if}
+                {#if payView}
+                    <div class="pay-line" class:closable={payView.closable} role="status" data-testid="artifactPayLine">
+                        {#if payView.closable}
+                            <button
+                                type="button"
+                                class="pay-x"
+                                aria-label={$LL.chat.artifacts.payClose()}
+                                data-testid="artifactPayClose"
+                                on:click={() => payments.dismiss()}>×</button
+                            >
+                        {/if}
+                        <p class="pay-a">{payView.title}</p>
+                        {#if payView.sub}<p class="pay-s">{payView.sub}</p>{/if}
+                        {#if payView.actions.length > 0}
+                            <div class="pay-acts">
+                                {#each payView.actions as action (action.kind)}
+                                    {#if action.kind === "resume"}
+                                        <a
+                                            class="pay-btn"
+                                            class:cta={action.style === "primary"}
+                                            href={action.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            data-testid="artifactPayContinue">{action.label}</a
+                                        >
+                                    {:else}
+                                        <button
+                                            type="button"
+                                            class="pay-btn"
+                                            class:cta={action.style === "primary"}
+                                            disabled={action.kind === "copy" && action.disabled === true}
+                                            data-testid="artifactPay-{action.kind}"
+                                            on:click={() => payAction(action)}>{action.label}</button
+                                        >
+                                    {/if}
+                                {/each}
+                            </div>
+                        {/if}
+                        {#if receiptByHand}
+                            <p class="pay-s" role="alert">{$LL.chat.artifacts.copyFailed()}</p>
+                            <code
+                                class="link-text"
+                                aria-label={$LL.chat.artifacts.payReceiptLinkLabel()}
+                                data-testid="artifactReceiptText">{receiptByHand}</code
+                            >
                         {/if}
                     </div>
                 {/if}
@@ -947,16 +1077,63 @@
         text-align: center;
         transform: translateX(-50%);
     }
+    .pay-line.closable {
+        padding-right: 44px;
+    }
     .pay-line p {
         margin: 0;
     }
-    .pay-go {
-        padding: 8px 16px;
-        border-radius: 999px;
-        background: #f3f1fa;
+    .pay-a {
         font-weight: 600;
-        color: #0a0814;
+    }
+    .pay-s {
+        font-size: 13px;
+        line-height: 1.4;
+        color: #b3acc7;
+    }
+    .pay-acts {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 4px;
+    }
+    .pay-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        font: inherit;
+        font-weight: 700;
+        color: #fff;
         text-decoration: none;
+        cursor: pointer;
+    }
+    .pay-btn.cta {
+        border-color: transparent;
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+    }
+    .pay-btn:disabled {
+        cursor: default;
+        opacity: 0.7;
+    }
+    .pay-x {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border: 0;
+        background: transparent;
+        font-size: 20px;
+        color: rgba(255, 255, 255, 0.6);
+        cursor: pointer;
     }
     iframe {
         display: block;

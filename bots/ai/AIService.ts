@@ -119,6 +119,8 @@ import {
     artifactsEnabled,
     formatArtifactResult,
     isArtifactTool,
+    READ_ARTIFACT_TOOL,
+    LIST_ARTIFACTS_TOOL,
     writesArtifact,
     ARTIFACT_CUT_OFF_MESSAGE,
     NOTHING_SAVED_LINE,
@@ -130,7 +132,10 @@ import {
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
-import { COMPUTER_TOOL, computerToolDefinitions, computerToolsNote, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
+import type { StartKeyStore } from '../server/ComputerStartKeys';
+import { CANCEL_JOB_TOOL, COMPUTER_JOBS_TOOL, JOB_FIRST_TOOL, PAUSE_JOB_TOOL, RESUME_JOB_TOOL, STOP_COMPUTER_TOOL, TELL_JOB_TOOL, computerControlToolDefinitions, newControlState, runComputerControlTool, startControlTurn } from './ComputerControlTools';
+import { asksToTryAgain, offersTryAgain, tryAgainNote, type RetryJob } from './ComputerTryAgain';
+import { COMPUTER_TOOL, ConfirmationQueue, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
@@ -146,6 +151,8 @@ import {
     newInstantTask,
     instantTaskPending,
     openInstantReceipt,
+    renewInstantReceipt,
+    mixedTaskNote,
     type InstantTask,
     type InstantTurn,
     runInstantTool,
@@ -174,6 +181,11 @@ interface TurnFacts {
     artifactSaved: boolean;
     /** The switch is on for this bot. */
     guard: boolean;
+    /**
+     * Set when a reply other people read is made from what only the people who were here for it may be told (files named in the prompt, or read
+     * by a tool): `joined` says whether someone has walked up since. Its words are held until the round is over and checked then (see `heldForGroup`).
+     */
+    fileDerived?: { joined(): boolean };
 }
 
 /**
@@ -245,7 +257,22 @@ const NEARBY_ASK_RULE =
     'Before you call a tool, write nothing first. Never repeat what is on a card (names, subjects, amounts, wording) in your reply or later to anyone else. ' +
     'When a tool says a card was shown, write nothing more.';
 /** What the model hears when an earlier file or card was not sent because someone walked up while it was looked up (#1993). */
+const ARTIFACT_NOT_PLACED = 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.';
+/** The card of a saved artifact that nobody was shown yet, by the result its write was kept under: a retry of the turn places it. */
+const unshownCards = new WeakMap<object, ArtifactCard>();
 const SOMEONE_CAME = "Someone else just joined, so it wasn't sent. Say so in one short line; they can ask again.";
+/** The one line everyone reads instead of a reply built from files or pages when someone walked up while it was made (#1993). */
+const SOMEONE_CAME_READING = "Someone else just joined, so I'm not going to say what I found in your files here. Ask me again and I'll answer for everyone who is here now.";
+/** The tools that read what only the people who were here for it may be told (find, open, read, list). */
+const readsForTheGroup = (name: string): boolean => name === FIND_FILES_TOOL || name === OPEN_FILE_TOOL || name === READ_ARTIFACT_TOOL || name === LIST_ARTIFACTS_TOOL;
+/**
+ * The tool names an analytics event may carry (#1841): only the bot's own tools, which are named here and reviewed. The name of a tool
+ * from an App or another tool server is the server's to choose, and a name the model made up is the model's: a name that is a valid
+ * identifier (`medical_report.pdf`) is not thereby safe to send, so each of those is "other".
+ */
+export function telemetryToolNames(names: readonly string[], own: ReadonlySet<string>): string[] {
+    return names.filter(Boolean).map((name) => (own.has(name) ? name : 'other'));
+}
 const UNIVERSE_AI_REF = 'universe-ai';
 const OWN_KEY_PREFIX = 'key-';
 const needsBotRoute = (ref: string): boolean => ref === UNIVERSE_AI_REF || ref.startsWith(OWN_KEY_PREFIX);
@@ -282,7 +309,7 @@ export class AIService {
     private botCredentialVersion: Map<string, number> = new Map();
     private readonly BOT_CREDENTIAL_TTL = 30 * 1000;
     /** How each Brick's computer reaches its AI, kept for the same short time (relayRoute). */
-    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null; expiresAt: number }>();
+    private readonly relayRouteCache = new Map<string, { route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | { restingOwnKey: true } | null; expiresAt: number }>();
     /** How long the last answer is still used while Orbit cannot be reached, and how soon Orbit is tried again meanwhile */
     private readonly BOT_CREDENTIAL_STALE_GRACE = 10 * 60 * 1000;
     private readonly BOT_CREDENTIAL_RETRY = 15 * 1000;
@@ -516,6 +543,9 @@ export class AIService {
                     return refused;
                 }
             }
+            // A ready-made App is reached only through Orbit, which holds the key its link needs: with no route through Orbit (no address for it, or no
+            // check of who asks, as on a call a person approved on a card) its stored link is never called, whatever else is known about it
+            if (entry.readyMade && !(entry.orbitUrl && use)) return { error: appNotUsedLine('unavailable'), outcome: 'not_sent' };
             let sharedTry = !!shared && !!use;
             try {
                 const rawResult = await MCPConnector.executeToolCall(
@@ -713,20 +743,23 @@ export class AIService {
             if (!answer && forOthers && forOthers.asker !== this.ownerRefOf(botId) && !orbitServedThemAsOwner) return { resting: true, line: KEY_NOT_LENT_LINE };
             if (answer) {
                 const resolved = this.resolvedFromAnswer(answer);
-                // The Brick moved rooms (or changed hands) while Orbit was answering: that answer serves this one reply only
-                if ((this.botCredentialVersion.get(botId) ?? 0) === versionAtAsk) {
+                // The Brick moved rooms (or changed hands) while Orbit was answering: that answer serves this one reply only, and
+                // sets nothing the next replies read (the cache, the limits, the history window)
+                const current = (this.botCredentialVersion.get(botId) ?? 0) === versionAtAsk;
+                if (current) {
                     this.botCredentialCache.set(cacheKey, {
                         resolved,
                         expiresAt: Date.now() + this.BOT_CREDENTIAL_TTL,
                         staleUntil: Date.now() + this.BOT_CREDENTIAL_TTL + this.BOT_CREDENTIAL_STALE_GRACE,
                     });
                 }
-                if (!resolved.resting && resolved.config.limits) {
+                if (current && !resolved.resting && resolved.config.limits) {
                     this.botLimits.set(botId, resolved.config.limits);
                     if (this.botLimits.get(botId)?.files === true) this.orbitKeepsFiles = true;
                     this.conversationMemory?.setHistoryWindow?.(botId, resolved.config.limits.messages);
                 }
-                if (!resolved.resting) {
+                // Only an answer that is still current prices the shared ref: a lookup from before the Brick moved can finish after a fresh one
+                if (current && !resolved.resting) {
                     // Usage is priced by the provider that answered, and by the ref the bot is on ("universe-ai", "key-…")
                     this.botRoutePricing.set(resolved.config.providerId, resolved.config);
                     this.botRoutePricing.set(providerId, resolved.config);
@@ -754,15 +787,17 @@ export class AIService {
 
     /**
      * How a Brick's computer reaches its AI (the model relay): the same answer a reply gets from Orbit, by Brick, with the key still
-     * encrypted. Null when Orbit does not know the Brick or its key is resting (nothing is called then). Kept for the same short
+     * encrypted. Null when Orbit does not know the Brick; `restingOwnKey` when its own key is down and the owner chose Stop replying (nothing is called then). Kept for the same short
      * time as a reply's, so a run of calls does not ask Orbit each time; a Brick moved to another AI is followed within seconds.
      */
-    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null> {
+    async relayRoute(botId: string): Promise<{ config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | { restingOwnKey: true } | null> {
         const cacheKey = `relay:${botId}`;
         const cached = this.relayRouteCache.get(cacheKey);
         if (cached && Date.now() < cached.expiresAt) return cached.route;
         const answer = await this.adminApiService.getBotAiCredentials(botId);
-        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | null = null;
+        let route: { config: AIProviderConfig; source: 'universe-ai' | 'provider' | 'own-key'; keyOwnerId: string | null } | { restingOwnKey: true } | null = null;
+        // The owner's own key is down and they chose Stop replying: the person's, not ours (an answer with no owner is not that)
+        if (answer && answer.source === 'resting' && answer.keyOwnerId) route = { restingOwnKey: true };
         if (answer && answer.source !== 'resting') {
             const resolved = this.resolvedFromAnswer(answer);
             if ('config' in resolved) route = { config: resolved.config, source: resolved.source, keyOwnerId: answer.source === 'own-key' ? (answer.keyOwnerId ?? null) : null };
@@ -1039,7 +1074,7 @@ export class AIService {
         let said = '';
         let done: AIStreamChunk | null = null;
         const first = watch && usage ? { ...shared, rules: [...(shared?.rules ?? []), privateAnswerRule(name)], usage } : shared;
-        for await (const chunk of attempt(message, isRetry, turn, first)) {
+        for await (const chunk of this.heldForGroup(attempt(message, isRetry, turn, first), turn, abortSignal)) {
             // Callers stop at the first done: it is held until the reply is known to be honest
             if (chunk.done) {
                 done = chunk;
@@ -1102,13 +1137,49 @@ export class AIService {
         yield { content: `\n\n${NOTHING_SAVED_LINE}`, done: false };
         hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
         yield { content: '', done: false, reset: true, toolNames: [] };
-        const second: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false };
-        for await (const chunk of attempt(nothingSavedRetryMessage(message, said), true, second)) {
+        // What the first answer was made from is what this one is made from too: someone who walks up meanwhile is not sent it
+        const second: TurnFacts = { artifactTools: false, artifactSaved: false, guard: false, fileDerived: turn.fileDerived };
+        for await (const chunk of this.heldForGroup(attempt(nothingSavedRetryMessage(message, said), true, second), second, abortSignal)) {
             if (chunk.reset) hearing?.botClient.holdSpeech(hearing.spaceName, playerId);
             if (chunk.done) hearing?.botClient.releaseSpeech(hearing.spaceName, playerId);
             yield chunk;
             if (chunk.done) return;
         }
+    }
+
+    /**
+     * A reply other people read that is made from files or pages is held, round by round, until the provider call is over, and who is here is
+     * checked again just before it is said: someone who walked up while the provider was answering was not asked about, so what the
+     * reply found in the files is not said, and the fixed line is said instead (#1993). When nobody joined it is said as it was, only at
+     * the end of the round rather than word by word. Any other reply passes straight through.
+     */
+    private async *heldForGroup(chunks: AsyncIterable<AIStreamChunk>, turn: TurnFacts, abortSignal?: AbortSignal): AsyncGenerator<AIStreamChunk> {
+        let held = '';
+        let refused = false;
+        const release = function* (): Generator<AIStreamChunk> {
+            const text = held;
+            held = '';
+            // A reply that was cancelled says nothing of what it held
+            if (!text || refused || abortSignal?.aborted) return;
+            if (turn.fileDerived?.joined()) {
+                refused = true;
+                yield { content: SOMEONE_CAME_READING, done: false };
+                return;
+            }
+            yield { content: text, done: false };
+        };
+        for await (const chunk of chunks) {
+            if (chunk.content && turn.fileDerived && !chunk.done && !chunk.reset) {
+                held += chunk.content;
+                // Whatever else the chunk carries (usage, steps) is passed on without its words
+                const { content: _words, ...rest } = chunk;
+                if (Object.entries(rest).some(([key, value]) => key !== 'done' && value !== undefined)) yield { ...rest, content: '' } as AIStreamChunk;
+                continue;
+            }
+            if (chunk.done || chunk.reset) yield* release();
+            yield chunk;
+        }
+        yield* release();
     }
 
     /**
@@ -1314,11 +1385,23 @@ export class AIService {
         const ledger = options?.usage?.ledger ?? new UsageLedger();
         // Whether the reply's usage has been recorded, so a failure after that is not recorded with the same cost again
         let usageRecorded = false;
+        // The confirmations of the computer jobs an EARLIER answer named are dropped when a new answer is begun (a newer message, or this one asked again): only the answer that is delivered
+        // confirms what it said. This answer has a queue of its own, which whoever sends the reply delivers (`DmReplyService`)
+        if (playerId !== undefined) {
+            const chat = this.conversationMemory?.getMemory(botId, playerId);
+            if (chat) {
+                chat.computerConfirmations?.drop();
+                chat.computerConfirmations = new ConfirmationQueue();
+            }
+        }
         // A new turn starts clean: an artifact call is only the same as an earlier one while that turn is asked again
         if (!isRetry && playerId !== undefined) {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             memory?.artifactCalls?.clear();
             memory?.instantCalls?.clear();
+            forgetSettledStarts(memory?.computerStarts);
+            // A question Brick asked before cancelling or stopping a job is answered by this message only, and only when it is a clear yes (checked in code); this turn's controls start clean
+            startControlTurn(memory?.computerControls, message);
             memory?.sharedUncertain?.clear();
             memory?.sharedInFlight?.clear();
             memory?.sentAgain?.clear();
@@ -1426,7 +1509,11 @@ export class AIService {
             // The newest files line is asked for now, so it comes in while the map context is read
             // With other people reading, only what all of them were shown is named (#1993)
             const present = options?.shared ? options.present ?? [SOMEONE_UNKNOWN] : undefined;
-            const recentFiles = this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService, present);
+            const recentFiles = this.recentFilesFor(botId, playerId, botClient, spaceName, adminApiService, present).then((line) => {
+                // Files named in the prompt of a reply others read: who is here is checked again when its words are delivered
+                if (line && present !== undefined && turn) turn.fileDerived = { joined: () => this.someoneCameSince(botClient, spaceName, playerId, present) };
+                return line;
+            });
 
             // Fetch map context (location + areas) upfront so bot always knows where it is
             let mapContextInfo = '';
@@ -1579,6 +1666,8 @@ export class AIService {
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
+                    // "Try again" carries on the job that failed as ours or that we ended, only when the person asks for it (piece 8)
+                    computerOn && !forOthers && !options?.onlyForThem && botId && playerId !== undefined ? await this.tryAgainNoteFor(botId, playerId, adminApiService) : '',
                     instantListing ? instantToolsNote() : '',
                     // The owner, in their own Brick's direct messages: it can set reminders when they ask (#2002)
                     taskSettings ? taskToolsNote(taskSettings, Date.now()) : '',
@@ -1608,6 +1697,8 @@ export class AIService {
                       computerOn,
                       instantListing
                   );
+            // The bot's own tools, by name, at the moment an event is made (the list changes as tools are offered or taken away): the only names analytics may carry
+            const ownToolNames = (): Set<string> => new Set<string>((tools as Array<{ function?: { name?: string } }>).map((tool) => tool.function?.name ?? '').filter((name) => name && !toolServerMap.has(name) && !isInstantTool(name)));
             // A Brick standing in a room never uses its owner's apps, files or computer for anyone else (#2005), except a job from an App
             // its owner shared (#2006): only the jobs they picked, with only the inputs they picked. The rest of the App is not even listed.
             if (forOthers) {
@@ -1942,7 +2033,7 @@ export class AIService {
                                 sessionId: `conversation-${botId}-player-${playerId}`,
                                 model: config.model,
                                 provider: config.type,
-                                toolNames: Array.from(toolCallAccumulator.values()).map(tc => tc.name).filter(Boolean),
+                                toolNames: telemetryToolNames(Array.from(toolCallAccumulator.values()).map(tc => tc.name), ownToolNames()),
                                 inputTokens: promptTokens,
                                 cachedInputTokens: cachedPromptTokens,
                                 outputTokens: completionTokens,
@@ -2100,6 +2191,9 @@ export class AIService {
                         
                         // Execute tool calls and continue conversation in a loop for multi-round tool calling
                         let followUpIterations = 0;
+                        // Files or pages were read for the people who were here when this reply started (#1993): what the reply says of them goes to
+                        // everyone in the space when it is sent, so it is not said once someone has walked up since
+                        let readForTheGroup = false;
                         // Track URLs sent by autoSendMedia across tool call iterations.
                         // Local variable prevents cross-conversation contamination (AIService is shared).
                         let iterationSentUrls = new Set<string>();
@@ -2146,9 +2240,13 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, reviewedApps);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
-                            const sharedLine = sharedLineOf(toolResults);
+                            if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) {
+                                readForTheGroup = true;
+                                if (turn) turn.fileDerived = { joined: () => this.someoneCameSince(botClient, spaceName, playerId, present) };
+                            }
+                            const sharedLine = sharedLineOf(toolResults) || (readForTheGroup && this.someoneCameSince(botClient, spaceName, playerId, present) ? SOMEONE_CAME_READING : '');
                             const sharedLineIds = sharedLineIdsOf(toolResults);
                             // Which tool made each file, and what it was asked for, for the bot's list of files (#1508)
                             this.noteMadeMedia(pendingToolCalls, toolResults);
@@ -2197,7 +2295,7 @@ export class AIService {
                             // If the generator is cancelled before autoSendMedia runs
                             // (user leaves mid-turn), the URLs are already persisted
                             // and will be delivered by flushPendingMedia on re-entry.
-                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId, channel === 'dm');
+                            this.preQueueToolResults(toolResults, iterationSentUrls, botId, playerId, channel === 'dm', sentOnlyTo(options, playerId));
                             // Before the auto-send below replaces results that carried media with a short note
                             const turnMediaSoFar = this.noteTurnMedia(toolResults, turnMedia);
 
@@ -2229,7 +2327,7 @@ export class AIService {
                             );
                             stepRoom.add(step);
 
-                            turnToolNames.push(...pendingToolCalls.map(tc => tc.name).filter(Boolean));
+                            turnToolNames.push(...telemetryToolNames(pendingToolCalls.map(tc => tc.name), ownToolNames()));
                             pendingToolCalls = [];
                             toolCallAccumulator.clear();
                             hadToolCalls = true;
@@ -2393,7 +2491,7 @@ export class AIService {
                                             sessionId: `conversation-${botId}-player-${playerId}`,
                                             model: config.model,
                                             provider: config.type,
-                                            toolNames: pendingToolCalls.map(tc => tc.name).filter(Boolean),
+                                            toolNames: telemetryToolNames(pendingToolCalls.map(tc => tc.name), ownToolNames()),
                                             inputTokens: followUpPromptTokens,
                                             cachedInputTokens: followUpCachedPromptTokens,
                                             outputTokens: followUpCompletionTokens,
@@ -3649,7 +3747,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
-        if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions());
+        // With it, Brick's controls of those jobs: see them, pause, carry on, do first, cancel one, stop, pass words on (computers full plan, piece 5)
+        if (channel === 'dm' && computerOn && !botClient) tools.push(...computerToolDefinitions(), ...computerControlToolDefinitions());
         // Tools: Instant Apps, exactly the list Orbit gave for this Brick. Owner only, in their Brick's direct messages.
         if (channel === 'dm' && !botClient) {
             if (instant) tools.push(...instantToolDefinitions(instant));
@@ -3888,7 +3987,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
     /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000) or reminders (#2002). */
     private ownBricks = new Set<string>();
-    private computerOnCache = new Map<string, { on: boolean; at: number }>();
+    private computerOnCache = new Map<string, { on: boolean; at: number; retry?: RetryJob | null }>();
+    /** Where the key of a computer job's start waits while its outcome is open, so a restart of this server finds it (see `ComputerStartKeys`). Set by the server when it has a shared store. */
+    private computerStartKeys: StartKeyStore | undefined;
+    setComputerStartKeys(store: StartKeyStore | undefined): void {
+        this.computerStartKeys = store;
+    }
 
     /**
      * Whether this Brick's computer is on for the person in this direct message. Orbit answers; the answer is kept a short while so
@@ -3901,9 +4005,45 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const key = `${botId}|${userId}`;
         const known = this.computerOnCache.get(key);
         if (known && Date.now() - known.at < 30_000) return known.on;
-        const on = await admin.computerIsOn(botId, userId).catch(() => false);
-        this.computerOnCache.set(key, { on, at: Date.now() });
-        return on;
+        // The same one read also names the job "try again" would carry on (piece 8); an admin without that read says only whether it is on
+        const state = admin.computerState ? await admin.computerState(botId, userId).catch(() => ({ on: false, retry: null })) : { on: await admin.computerIsOn(botId, userId).catch(() => false), retry: undefined };
+        this.computerOnCache.set(key, { on: state.on, at: Date.now(), ...(state.retry !== undefined ? { retry: state.retry } : {}) });
+        return state.on;
+    }
+
+    /**
+     * "Try again" (piece 8), in the owner's direct messages while the computer is on: the line that names the job "try again" would carry on, for this turn only, when Orbit names one and
+     * the person's words ask to try again or this is their first message since Brick told them how it ended (`offersTryAgain`). The job is kept for this turn's `use_computer`. Words
+     * that ask for it with nothing named in the short-lived read are read again once, fresh (the job may have ended a moment ago). Never throws; nothing is said when it cannot tell.
+     */
+    private async tryAgainNoteFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<string> {
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        if (!memory) return '';
+        delete memory.computerRetry;
+        // They tapped "Start a new job" on the card for a job Orbit would not carry on (finding 6): this turn starts it afresh, so carrying one on is not offered in it
+        if (memory.newJobAsked) {
+            return '';
+        }
+        try {
+            const admin = adminApiService ?? this.adminApiService;
+            const userId = memory.userUuid;
+            if (!admin?.computerState || !userId) return '';
+            const people = memory.conversationHistory.filter((line) => line.sender === 'person');
+            const said = people.at(-1)?.message;
+            const previousAt = people.at(-2)?.timestamp;
+            const key = `${botId}|${userId}`;
+            let retry = this.computerOnCache.get(key)?.retry ?? null;
+            if (!retry && asksToTryAgain(said)) {
+                const fresh = await admin.computerState(botId, userId);
+                this.computerOnCache.set(key, { on: fresh.on, at: Date.now(), retry: fresh.retry });
+                retry = fresh.on ? fresh.retry : null;
+            }
+            if (!retry || !offersTryAgain(retry, said, previousAt)) return '';
+            memory.computerRetry = { id: retry.id, title: retry.title };
+            return tryAgainNote(retry);
+        } catch {
+            return '';
+        }
     }
 
     private instantOffers = new InstantOffers();
@@ -3960,13 +4100,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             let ran: Awaited<ReturnType<typeof runInstantTool>>;
             try {
                 const opened = await openInstantReceipt(admin, botId, userId, mine, instantReceiptTitle(tool));
-                ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: mine.key, receiptLink: opened?.link });
+                // A second run of the task: its receipt is alive (opening it the first time already renewed it)
+                if (mine.ended.length > 0 || (mine.running ?? 0) > 1) void renewInstantReceipt(admin, botId, userId, mine);
+                // Read when the answer comes, not before it is awaited: runs of one task can be in flight together, and one that lands first counts. A run
+                // of this task still out (it may have taken something, and is not confirmed yet) is checked on too: this one is not the only run in flight
+                ran = await runInstantTool({ admin, botId, who: { requesterKey: userId }, tool, arguments: args, taskKey: mine.key, receiptLink: opened?.link, taskUnsure: () => mine.ended.includes('unsure') || (mine.running ?? 0) > 1 });
+                // Steps of this task that already worked can be named on their own; the task is not said to have worked or failed as a whole.
+                // Every step landed so far counts, also those of runs that started after this one (this run is not in the list yet)
+                const mixed = mixedTaskNote(mine.ended, ran.ended);
+                if (mixed && typeof ran.result.note === 'string') ran = { ...ran, result: { ...ran.result, note: ran.result.note + mixed } };
                 mine.ended.push(ran.ended);
             } finally {
                 mine.running--;
             }
             // The turn this run belongs to ended while it was in flight (an update cut the reply short): nothing else will close its receipt
-            if (turn.over) void endInstantTask(admin, botId, userId, mine);
+            if (turn.over) {
+                void endInstantTask(admin, botId, userId, mine).then(() => {
+                    // Orbit did not take this late close: a turn that began meanwhile did not know of the task (it had nothing to close then), so it
+                    // is owed by that turn from now, and asked again by each turn that follows until it is taken
+                    const current = memory?.instantTurn;
+                    if (current && current !== turn && instantTaskPending(mine) && !(current.owed ?? []).includes(mine)) (current.owed ??= []).push(mine);
+                });
+            }
             // What Orbit offers may change with a run (credit spent, a pause): read it again next time
             if (ran.ended !== 'failed') this.instantOffers.forget(botId, userId);
             if (ran.stop) mine.stopped = ran.result;
@@ -4013,6 +4168,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             const admin = adminApiService ?? this.adminApiService;
             if (!turn || !admin || !userId) return;
             turn.over = true;
+            // A run still in flight holds its receipt open past the turn's end: Orbit is told it is alive, so its lease does not lapse under it
+            for (const task of turn.tasks) if (task.running) void renewInstantReceipt(admin, botId, userId, task);
             // What an earlier turn still owes is asked again without holding this reply up; this turn's own is awaited
             for (const task of turn.owed ?? []) void endInstantTask(admin, botId, userId, task);
             for (const task of [...turn.tasks]) await endInstantTask(admin, botId, userId, task);
@@ -4032,14 +4189,49 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             admin,
             botId,
             userId,
+            // Who the chat knows the speaker to be, sent with the id
+            ...(typeof memory?.isGuest === 'boolean' ? { isGuest: memory.isGuest } : {}),
             // The direct chat this was asked in: the result goes back to it, never to another chat
             ...(memory?.dmRoomId ? { origin: { kind: 'dm' as const, ref: memory.dmRoomId } } : {}),
+            // The inbound event this reply answers: a start made for it has a key made from it, so the same event delivered again makes no second job
+            ...(memory?.dmRoomId && memory.dmEventId ? { inbound: { roomId: memory.dmRoomId, eventId: memory.dmEventId, ...(memory.dmEventTs !== undefined ? { ts: memory.dmEventTs } : {}) } } : {}),
             apps: where.apps,
             reviewed: where.reviewed,
+            // The job "try again" carries on in this turn, when the person asked for it (piece 8)
+            ...(memory?.computerRetry ? { retry: memory.computerRetry } : {}),
+            // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two
+            ...(memory ? { startKeys: (memory.computerStarts ??= new Map()) } : {}),
+            ...(this.computerStartKeys ? { startKeyStore: this.computerStartKeys } : {}),
+            // Orbit refused to carry a job on: the reply carries a "Start a new job" button for it, and nothing is started here (finding 6)
+            ...(memory ? { offerNewJob: (title: string) => void (memory.pendingNewJob = { title }) } : {}),
+            // Confirmed to Orbit only once the reply that names the job reaches the person
+            ...(memory?.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
             onStarted: pretendRunnerOn() ? (jobId) => void runPretendJob(admin, botId, jobId) : undefined,
         });
         // A job started or queued changes what the bar says: read it fresh next time
         this.computerOnCache.delete(`${botId}|${userId}`);
+        return result;
+    }
+
+    /** Runs one of Brick's controls of its computer jobs for the person in this direct message. Orbit checks the owner and the job, as for a start. */
+    private async runComputerControlCall(name: string, args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        const userId = memory?.userUuid;
+        if (!admin || !where.botId || !userId || !memory || !this.ownBricks.has(where.botId)) return { error: "That can't be done in this chat right now." };
+        const result = await runComputerControlTool(name, args, {
+            admin,
+            botId: where.botId,
+            userId,
+            ...(typeof memory.isGuest === 'boolean' ? { isGuest: memory.isGuest } : {}),
+            state: (memory.computerControls ??= newControlState()),
+            // The fixed line of each control goes under the reply, and a question counts as asked once that reply reached them
+            ...(memory.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
+            // The message this control was asked in: every control of it goes to Orbit under an id made from that message, so one sent again is done once
+            ...(memory.dmEventId ? { inbound: { eventId: memory.dmEventId } } : {}),
+        });
+        // What the bar says has changed: read it fresh next time
+        this.computerOnCache.delete(`${where.botId}|${userId}`);
         return result;
     }
 
@@ -4128,7 +4320,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     for (const call of chunk.toolCalls ?? []) {
                         const known = call.id ? calls.get(call.id) : Array.from(calls.values()).pop();
                         if (known) {
-                            if (call.arguments && call.arguments !== '{}') known.arguments += call.arguments;
+                            // Every continuation is part of the arguments, a `{}` among them; only the placeholder a call is opened with is skipped
+                            if (call.arguments) known.arguments += call.arguments;
                             if (call.name) known.name = call.name;
                         } else if (call.id) {
                             calls.set(call.id, { id: call.id, name: call.name || '', arguments: call.arguments && call.arguments !== '{}' ? call.arguments : '' });
@@ -4492,6 +4685,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             retryCount: 0,
             again: true,
             name: file.name,
+            ...(only !== undefined ? { audience: only } : {}),
         });
         return null;
     }
@@ -4573,7 +4767,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // The same make or change asked again in the same turn is that turn being regenerated: answer with what it did
         const repeatKey = writesArtifact(name) ? `${name}:${JSON.stringify(args)}` : undefined;
         const earlier = repeatKey ? memory?.artifactCalls?.get(repeatKey) : undefined;
-        if (earlier) return earlier;
+        if (earlier) {
+            // The write is done and kept; only its card may still be owed (nobody was shown it, or the bubble closed): the retry places it, it never saves again
+            const owed = unshownCards.get(earlier);
+            if (!owed) return earlier;
+            if (this.someoneCameSince(botClient, spaceName, playerId, present)) return { ...earlier, notShown: SOMEONE_CAME };
+            if (!this.deliverArtifactCard(owed, botClient, spaceName, memory, present === undefined ? playerId : undefined)) {
+                return { ...earlier, notShown: ARTIFACT_NOT_PLACED };
+            }
+            unshownCards.delete(earlier);
+            return earlier;
+        }
 
         const limits = this.limitsFor(botId);
         const run = await runArtifactTool(name, args, {
@@ -4589,11 +4793,18 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             media: { turn: where.turnMedia ?? memory?.turnMedia ?? [], maxBytes: limits.artifactMediaBytes },
         });
         if (!run.card) return run.result;
+        // The write is kept whether or not its card goes out: a retry of the same turn places the card, and never saves a second copy
+        if (repeatKey && memory) (memory.artifactCalls ??= new Map()).set(repeatKey, run.result);
+        // Orbit allowed it for the people who were here when the reply started: someone who walked up while it was made was not asked about, so no card goes out
+        if (this.someoneCameSince(botClient, spaceName, playerId, present)) {
+            unshownCards.set(run.result, run.card);
+            return { ...run.result, notShown: SOMEONE_CAME };
+        }
         if (!this.deliverArtifactCard(run.card, botClient, spaceName, memory, present === undefined ? playerId : undefined)) {
             // The bubble closed while the file was being made: the file is saved, but nobody was shown it, so a retry may place it
-            return { ...run.result, notShown: 'The conversation ended before the card could be placed in chat. Say so; do not claim it was shown.' };
+            unshownCards.set(run.result, run.card);
+            return { ...run.result, notShown: ARTIFACT_NOT_PLACED };
         }
-        if (repeatKey && memory) (memory.artifactCalls ??= new Map()).set(repeatKey, run.result);
         return run.result;
     }
 
@@ -4643,8 +4854,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         taskToolsOffered = false,
         /** The reply is for someone but the Brick's owner (#2005): a call to anything of the owner's is not run, whatever the model asks for. */
         forOthers = false,
+        /** The reply is an answer for one person alone (#1993): it was offered no tools, so a call the model makes anyway is not run. */
+        noTools = false,
         /** The Apps a review in this reply said the computer could do better (the reply's own set, filled as it goes). */
-        reviewedApps?: ReadonlySet<string>
+        reviewedApps?: ReadonlySet<string>,
+        /** Where the reply is said: the memory tools (what is remembered, forgetting it) are the person's own and run only in their direct message, whatever the model asks for. */
+        channel: 'world' | 'dm' = 'world'
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -4660,6 +4875,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         
         // Execute all tool calls in parallel for better performance
         const toolPromises = validToolCalls.map(async (toolCall) => {
+            // A private answer was offered no tools: whatever the model asks for anyway would show its steps, cards and files to the whole space
+            if (noTools) return { id: toolCall.id, name: toolCall.name, result: { error: 'That cannot be used in an answer for one person alone. Answer in words.' }, endedAt: Date.now() };
             try {
                 if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] 🔧 Executing tool: ${toolCall.name}, id: ${toolCall.id}, botClient: ${botClient ? 'available' : 'missing'}`);
@@ -4674,7 +4891,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 const instantRun = isInstantTool(toolCall.name) && !toolServerMap?.has(toolCall.name);
                 // A visitor's turn never runs the owner's artifacts, files, computer, Apps, Instant Apps or reminders, even if the model calls one it was not offered
                 const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isKeyTool(toolCall.name) || isTaskTool(toolCall.name) || instantRun;
-                switch ((forOthers && ownersOnly) ? '' : instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && !this.memoryToolsOn(botId, botClient)) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
+                switch ((forOthers && ownersOnly) ? '' : instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && (channel !== 'dm' || !this.memoryToolsOn(botId, botClient))) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -4877,7 +5094,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, imageUrl, alt, 'image',
                                 () => botClient.sendImage(spaceName, imageUrl, alt, playerId, undefined, only),
-                                botId, playerId
+                                botId, playerId, only
                             );
                         } else {
                             result = { error: 'Bot client not available' };
@@ -4902,7 +5119,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, fileUrl, filename, 'file',
                                 () => botClient.sendFile(spaceName, fileUrl, filename, playerId, undefined, only),
-                                botId, playerId
+                                botId, playerId, only
                             );
                         } else {
                             result = { error: 'Bot client not available' };
@@ -4926,7 +5143,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, audioUrl, '', 'audio',
                                 () => botClient.sendAudio(spaceName, audioUrl, playerId, undefined, only),
-                                botId, playerId
+                                botId, playerId, only
                             );
                         } else {
                             result = { error: 'Bot client not available' };
@@ -4950,7 +5167,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             result = await this.sendMediaWithRetry(
                                 botClient, spaceName, videoUrl, '', 'video',
                                 () => botClient.sendVideo(spaceName, videoUrl, playerId, undefined, only),
-                                botId, playerId
+                                botId, playerId, only
                             );
                         } else {
                             result = { error: 'Bot client not available' };
@@ -5048,6 +5265,16 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId, reviewed: reviewedApps, apps: [...new Set([...(toolServerMap?.values() ?? [])].filter((entry) => entry.connectionId || entry.readyMade).map((entry) => entry.serverName).filter((name): name is string => !!name))] }
                         );
+                        break;
+
+                    case COMPUTER_JOBS_TOOL:
+                    case PAUSE_JOB_TOOL:
+                    case RESUME_JOB_TOOL:
+                    case JOB_FIRST_TOOL:
+                    case CANCEL_JOB_TOOL:
+                    case STOP_COMPUTER_TOOL:
+                    case TELL_JOB_TOOL:
+                        result = await this.runComputerControlCall(toolCall.name, typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {}, { adminApiService, botId, playerId });
                         break;
 
                     case ASK_PERSON_TOOL:
@@ -5437,7 +5664,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         alreadySentUrls: Set<string>,
         botId?: string,
         playerId?: number,
-        deliversReply = false
+        deliversReply = false,
+        /** The one person this reply is for, when it is for them alone (#1993): what is queued goes to them alone, whenever it is sent. */
+        only?: number
     ): void {
         if (!botId || playerId === undefined) return;
         const memory = this.conversationMemory?.getMemory(botId, playerId);
@@ -5471,7 +5700,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
                 // Skip URLs already queued for delivery — prevents duplicates from
                 // read-only tools (e.g., list_imagines) returning past results
-                if (memory.pendingMedia.some(p => p.url === url || p.originalUrl === url)) continue;
+                if (memory.pendingMedia.some(p => p.audience === only && (p.url === url || p.originalUrl === url))) continue;
 
                 if (full()) return;
 
@@ -5489,6 +5718,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     caption: '',
                     createdAt: Date.now(),
                     retryCount: 0,
+                    ...(only !== undefined ? { audience: only } : {}),
                 });
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[PM-TRACE] preQueueToolResults queued: url=${url.substring(0, 60)} totalPending=${memory.pendingMedia.length}`);
@@ -5633,8 +5863,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const memory = this.conversationMemory?.getMemory(botId, playerId);
                         if (memory) {
                             if (!memory.pendingMedia) memory.pendingMedia = [];
+                            // A private send and a group reply for the same URL are two entries: each goes to its own audience
                             const existingIdx = memory.pendingMedia.findIndex(
-                                p => p.url === imageUrlsToSend[0] || p.originalUrl === imageUrlsToSend[0] || p.url === cdnUrl
+                                p => p.audience === only && (p.url === imageUrlsToSend[0] || p.originalUrl === imageUrlsToSend[0] || p.url === cdnUrl)
                             );
                             if (existingIdx >= 0) {
                                 memory.pendingMedia[existingIdx] = {
@@ -5652,6 +5883,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     caption: '',
                                     createdAt: Date.now(),
                                     retryCount: 0,
+                                    ...(only !== undefined ? { audience: only } : {}),
                                 });
                             }
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -5694,7 +5926,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             // queued by preQueueToolResults, but the CDN URL is the
                             // reliable delivery URL. originalUrl is preserved for dedup.
                             const existingIdx = memory.pendingMedia.findIndex(
-                                p => p.url === url || p.originalUrl === url || p.url === cdnUrl
+                                p => p.audience === only && (p.url === url || p.originalUrl === url || p.url === cdnUrl)
                             );
                             if (existingIdx >= 0) {
                                 memory.pendingMedia[existingIdx] = {
@@ -5712,6 +5944,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     caption: '',
                                     createdAt: Date.now(),
                                     retryCount: 0,
+                                    ...(only !== undefined ? { audience: only } : {}),
                                 });
                             }
                             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -5767,7 +6000,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (botId && playerId !== undefined && sentUrls.size > 0) {
             const memory = this.conversationMemory?.getMemory(botId, playerId);
             if (memory?.pendingMedia) {
-                memory.pendingMedia = memory.pendingMedia.filter(p => !sentUrls.has(p.url));
+                memory.pendingMedia = memory.pendingMedia.filter(p => !(sentUrls.has(p.url) && p.audience === only));
                 if (process.env.ENABLE_BOT_DEBUG === 'true' && sentUrls.size > 0) {
                     console.log(`[PM-TRACE] autoSendMedia cleanup: removed ${sentUrls.size} sent URLs, remaining=${memory.pendingMedia.length} urls=[${memory.pendingMedia.map(p => p.url.substring(0, 60)).join(', ')}]`);
                 }
@@ -5805,6 +6038,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** The one person it goes to, for a reply written for them alone (#1993). */
         only?: number,
     ): void {
+        // An item made for one person goes to the person this memory is about, as they are in the space now: the id it was queued with is not
+        // trusted, because a memory restored for a person who came back carries the id they had before, which may be someone else's now.
         // generateBotResponseStream can be called without botClient or spaceName
         // (both are optional/undefined in its signature). Guard here prevents
         // a runtime TypeError on botClient.sendMediaMessage() below.
@@ -5830,13 +6065,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
             // Deduplicate by originalUrl — the same media may exist at both the
             // original URL and the CDN URL. originalUrl is the stable identity.
-            const isDuplicate = Array.from(seen).some(
-                seenUrl => seenUrl === item.url || seenUrl === item.originalUrl,
-            );
+            // The same media for another audience is another item: one for a person alone and one for the room are never merged
+            const audienceKey = item.audience === undefined ? '' : String(item.audience);
+            const isDuplicate = seen.has(`${audienceKey}|${item.url}`) || seen.has(`${audienceKey}|${item.originalUrl}`);
             if (isDuplicate) {
                 continue;
             }
-            seen.add(item.originalUrl || item.url);
+            seen.add(`${audienceKey}|${item.originalUrl || item.url}`);
 
             if (item.retryCount >= 3) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -5850,7 +6085,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 remaining.push(item);
                 continue;
             }
-            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '', undefined, playerId, only)) {
+            if (botClient.sendMediaMessage(spaceName, item.url, item.mediaType, item.mimeType || 'application/octet-stream', item.caption || '', undefined, playerId, item.audience !== undefined ? playerId : only)) {
                 if (process.env.ENABLE_BOT_DEBUG === 'true') {
                     console.log(`[AIService] ✅ Flushed pending ${item.mediaType} to ${spaceName}: ${item.url.substring(0, 60)}`);
                 }
@@ -6160,7 +6395,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         mediaType: 'image' | 'file' | 'audio' | 'video',
         sendFn: () => Promise<string>,
         botId?: string,
-        playerId?: number
+        playerId?: number,
+        /** The one person it is for (#1993): a retry later goes to them alone. */
+        only?: number
     ): Promise<any> {
         try {
             const location = await sendFn();
@@ -6175,8 +6412,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             if (memory) {
                 if (!memory.pendingMedia) memory.pendingMedia = [];
                 // Replace existing entry with CDN URL — preserves originalUrl for dedup
+                // A private send and a group reply for the same URL are two entries: each goes to its own audience
                 const existingIdx = memory.pendingMedia.findIndex(
-                    p => p.url === url || p.originalUrl === url || p.url === cdnUrl
+                    p => p.audience === only && (p.url === url || p.originalUrl === url || p.url === cdnUrl)
                 );
                 if (existingIdx >= 0) {
                     memory.pendingMedia[existingIdx] = {
@@ -6194,6 +6432,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         caption: caption || undefined,
                         createdAt: Date.now(),
                         retryCount: 0,
+                        ...(only !== undefined ? { audience: only } : {}),
                     });
                 }
             }

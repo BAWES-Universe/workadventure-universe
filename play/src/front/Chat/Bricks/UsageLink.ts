@@ -11,6 +11,9 @@ export interface UsageRequest {
     receiptId: string | undefined;
 }
 
+/** A request as the page takes it: each one has a number of its own, so the same receipt asked for twice is two requests. */
+export type NumberedUsageRequest = UsageRequest & { request: number };
+
 /**
  * What a link to Usage asks for, or undefined when it is not one. A task id that is not a plain id is no task: the page
  * still opens.

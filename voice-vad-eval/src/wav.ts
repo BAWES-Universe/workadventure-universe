@@ -19,7 +19,11 @@ export function readWav16k(path: string): Int16Array {
             bits = b.readUInt16LE(at + 22);
         } else if (id === 'data') {
             if (rate !== 16000 || channels !== 1 || bits !== 16 || (format !== 1 && format !== 0xfffe)) throw new Error(`need 16 kHz mono 16-bit PCM: ${path} (${rate} Hz, ${channels} ch, ${bits} bit)`);
-            const n = Math.floor(Math.min(size, b.length - at - 8) / 2);
+            // The whole payload the header declares has to be there, and in whole samples: a file cut short is refused, not read as a
+            // shorter recording that would be scored as a normal one
+            if (size % 2 !== 0) throw new Error(`the data chunk of ${path} holds a part of a sample (${size} bytes)`);
+            if (at + 8 + size > b.length) throw new Error(`truncated WAV: ${path} declares ${size} bytes of audio and has ${b.length - at - 8}`);
+            const n = size / 2;
             const out = new Int16Array(n);
             for (let i = 0; i < n; i++) out[i] = b.readInt16LE(at + 8 + i * 2);
             return out;

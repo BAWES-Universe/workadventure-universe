@@ -370,6 +370,28 @@ export function readBrickOffer(
     return read.topic && read.ask && read.name ? read : undefined;
 }
 
+/**
+ * On a Brick's own message after an answer: Orbit would not carry a computer job on, so the person is offered a new one (GPT's sixth answer, finding 6). The chat shows one
+ * button, "Start a new job"; why it cannot carry on is already in the answer's own words.
+ */
+export const COMPUTER_NEW_JOB_OFFER_KEY = "universe.computer_new_job_offer";
+/** On the person's message that a tap on "Start a new job" sends: the job's title, so the Brick starts that job and nothing else. */
+export const COMPUTER_NEW_JOB_KEY = "universe.computer_new_job";
+
+const JOB_TITLE_MAX = 200;
+
+/** The job a "Start a new job" card names; undefined for anyone else's message or one without a title. */
+export function readNewJobOffer(
+    sender: string | null | undefined,
+    content: Record<string, unknown>
+): { title: string } | undefined {
+    const offer = content[COMPUTER_NEW_JOB_OFFER_KEY];
+    if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text") return undefined;
+    if (!offer || typeof offer !== "object") return undefined;
+    const title = text((offer as Record<string, unknown>).title, JOB_TITLE_MAX);
+    return title ? { title } : undefined;
+}
+
 /** A Brick's offer to connect an App (game #2001), on its own message after an answer: "Connect your calendar?". */
 export const APP_OFFER_KEY = "universe.app_offer";
 /** What the game sends the room once the person connected an App from that card: the Brick carries on with what they asked. */

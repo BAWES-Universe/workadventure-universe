@@ -6,9 +6,41 @@
  */
 
 import { createClient, type RedisClientType, commandOptions } from 'redis';
+import type { ForgetQueueRedis } from '../memory/ForgetQueue';
+import type { EvidenceRedis } from './ComputerEvidenceStore';
+
+/** How long a stop waits for Redis to answer before it cuts the connection off. */
+const SHUTDOWN_WAIT_MS = 3_000;
 
 /** Where bot servers tell each other that a Brick changed (#1996). */
 const BRICK_CHANGED_CHANNEL = 'bots:brick-changed';
+
+/**
+ * Whether the connection can take a command now. `isOpen` stays true while node-redis reconnects, and a command sent then waits
+ * in its queue (and so does whoever awaits it) until Redis is back, so only a connection that is ready counts as up.
+ */
+function isUp(redis: RedisClientType | null | undefined): redis is RedisClientType {
+    return !!redis && redis.isOpen && redis.isReady !== false;
+}
+
+/** Waits for a promise for `ms` at most; false when the time ran out first. */
+async function inTime(work: Promise<unknown>, ms: number): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+        return await Promise.race([work.then(() => true), new Promise<boolean>((resolve) => (timer = setTimeout(() => resolve(false), ms)))]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/** Closes a connection: a ready one says goodbye (for a moment), one that is not ready, or that does not answer, is cut off, so a stop never hangs on it. */
+async function closeConnection(client: RedisClientType, ms: number): Promise<void> {
+    if (client.isReady !== false) {
+        const quit = client.quit().catch(() => undefined);
+        if (await inTime(quit, ms)) return;
+    }
+    await client.disconnect().catch(() => undefined);
+}
 
 export interface BotServerInfo {
     serverId: string;
@@ -39,12 +71,16 @@ export class BotRegistry {
      * that drops is an outage, not a server on its own.
      */
     private sharedStoreSeen = false;
+    /** Whether a shared store was named for this server (a host in its config or REDIS_HOST): one that is named and does not answer is an outage, not a server on its own. */
+    private sharedStoreNamed = false;
     /** The connection that hears Brick changes from other bot servers (#1996), once listening. */
     private brickListener: RedisClientType | null = null;
     private serverId: string;
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private readonly HEARTBEAT_INTERVAL = 5000; // 5 seconds
     private readonly CONVERSATION_TTL = 300; // 5 minutes
+    /** How long the first connection of the Brick-change listener may take before it is given up (the caller tries again later). */
+    private brickListenerConnectMs = 10_000;
 
     constructor(
         serverId: string,
@@ -56,6 +92,7 @@ export class BotRegistry {
         }
     ) {
         this.serverId = serverId;
+        this.sharedStoreNamed = !!(redisConfig?.host || process.env.REDIS_HOST);
         
         const host = redisConfig?.host || process.env.REDIS_HOST || 'redis';
         const port = redisConfig?.port || parseInt(process.env.REDIS_PORT || '6379');
@@ -68,6 +105,9 @@ export class BotRegistry {
                     host,
                     port,
                 },
+                // A command sent while the connection is down fails at once (callers treat that as the store being down), instead of
+                // waiting in a queue, with the person's chat behind it, until Redis is back
+                disableOfflineQueue: true,
             };
 
             if (password) {
@@ -115,17 +155,22 @@ export class BotRegistry {
             this.heartbeatInterval = null;
         }
 
-        if (this.brickListener?.isOpen) await this.brickListener.quit().catch(() => undefined);
+        const listener = this.brickListener;
         this.brickListener = null;
+        if (listener?.isOpen) await closeConnection(listener, SHUTDOWN_WAIT_MS);
 
-        if (this.redis && this.redis.isOpen) {
-            // Mark server as shutting down
-            await this.markServerShuttingDown();
-            
-            // Unassign all bots from this server
-            await this.unassignAllBotsFromServer();
-            
-            await this.redis.quit();
+        if (this.redis?.isOpen) {
+            if (isUp(this.redis)) {
+                // Neither may hold the shutdown: a Redis that is ready but does not answer would keep either pending for ever, and the
+                // connection below would never be closed. Each has the same bound as closing it.
+                // Mark server as shutting down
+                await inTime(this.markServerShuttingDown(), SHUTDOWN_WAIT_MS).catch(() => undefined);
+
+                // Unassign all bots from this server
+                await inTime(this.unassignAllBotsFromServer(), SHUTDOWN_WAIT_MS).catch(() => undefined);
+            }
+            // A connection that is not ready (Redis went away) is cut off: asking it to quit would wait for Redis
+            await closeConnection(this.redis, SHUTDOWN_WAIT_MS);
         }
     }
 
@@ -134,7 +179,7 @@ export class BotRegistry {
      * Without Redis this is a no-op and the caller keeps its own in-process copy.
      */
     async rememberDmRoom(roomId: string, botId: string): Promise<void> {
-        if (!this.redis?.isOpen) {
+        if (!isUp(this.redis)) {
             // A store that was in use and is down did not keep it: said, so the caller writes it again (no store at all is not a failure)
             if (this.sharedStoreSeen) throw new Error('The shared store is down');
             return;
@@ -142,15 +187,27 @@ export class BotRegistry {
         await this.redis.hSet('bots:matrix:dm-rooms', roomId, botId);
     }
 
-    /** The bot a Matrix direct message room belongs to, or null when unknown. */
+    /**
+     * The bot a Matrix direct message room belongs to, or null when unknown. Throws while a Redis that was in use is down: "unknown" would
+     * read as a room nobody is in any more, and a message waiting for it would be thrown away; a caller that must be certain waits instead.
+     */
     async getDmRoomBot(roomId: string): Promise<string | null> {
-        if (!this.redis?.isOpen) return null;
+        if (!isUp(this.redis)) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return null;
+        }
         return (await this.redis.hGet('bots:matrix:dm-rooms', roomId)) ?? null;
     }
 
-    /** Forget a Matrix direct message room once its bot has left it. */
+    /**
+     * Forget a Matrix direct message room once its bot has left it. Throws while a store that was in use is down: the purge of a room
+     * drops this link strictly and tries again, and a silent return would leave the room linked to the Brick for good.
+     */
     async forgetDmRoom(roomId: string): Promise<void> {
-        if (!this.redis?.isOpen) return;
+        if (!isUp(this.redis)) {
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
         await this.redis.hDel('bots:matrix:dm-rooms', roomId);
     }
 
@@ -159,7 +216,7 @@ export class BotRegistry {
      * without a message from them first. Without Redis this is a no-op and the caller keeps its own in-process copy.
      */
     async rememberDmRoomOf(botId: string, matrixUserId: string, roomId: string): Promise<void> {
-        if (!this.redis?.isOpen) {
+        if (!isUp(this.redis)) {
             if (this.sharedStoreSeen) throw new Error('The shared store is down');
             return;
         }
@@ -171,16 +228,32 @@ export class BotRegistry {
      * "unknown" would be a guess then, and a caller that must be certain (a reminder that says it has no chat) waits instead.
      */
     async getDmRoomOf(botId: string, matrixUserId: string): Promise<string | null> {
-        if (!this.redis?.isOpen) {
+        if (!isUp(this.redis)) {
             if (this.sharedStoreSeen) throw new Error('The shared store is down');
             return null;
         }
         return (await this.redis.hGet('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`)) ?? null;
     }
 
-    async forgetDmRoomOf(botId: string, matrixUserId: string): Promise<void> {
-        if (!this.redis?.isOpen) return;
-        await this.redis.hDel('bots:matrix:dm-room-of', `${botId}|${matrixUserId}`);
+    /**
+     * Forgets the direct chat of a bot and a person. With the room that was seen, only while the store still points at that
+     * room: a newer chat that another device or bot server noted since is never forgotten with the old one.
+     */
+    async forgetDmRoomOf(botId: string, matrixUserId: string, roomId?: string): Promise<void> {
+        if (!isUp(this.redis)) {
+            // Throws while a store that was in use is down, as forgetDmRoom does: a purge drops this link strictly and tries again
+            if (this.sharedStoreSeen) throw new Error('The shared store is down');
+            return;
+        }
+        const key = `${botId}|${matrixUserId}`;
+        if (roomId === undefined) {
+            await this.redis.hDel('bots:matrix:dm-room-of', key);
+            return;
+        }
+        await this.redis.eval("if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then return redis.call('HDEL', KEYS[1], ARGV[1]) end return 0", {
+            keys: ['bots:matrix:dm-room-of'],
+            arguments: [key, roomId],
+        });
     }
 
     /**
@@ -242,7 +315,7 @@ export class BotRegistry {
      * go of this claim only, never one another device took since.
      */
     async claimDirectChat(botId: string, matrixUserId: string, forMs: number, token?: string): Promise<boolean | null> {
-        if (!this.redis?.isOpen) {
+        if (!isUp(this.redis)) {
             if (this.sharedStoreSeen) throw new Error('The shared store is down');
             return null;
         }
@@ -256,7 +329,7 @@ export class BotRegistry {
      * takes it back from a device that claimed it since. Without a token, it is held whoever has it.
      */
     async holdDirectChat(botId: string, matrixUserId: string, forMs: number, token?: string, takeOver = true): Promise<void> {
-        if (!this.redis?.isOpen) return;
+        if (!isUp(this.redis)) return;
         const key = `bots:matrix:dm-claim:${botId}|${matrixUserId}`;
         if (!token) {
             await this.redis.set(key, this.serverId, { PX: forMs });
@@ -273,7 +346,7 @@ export class BotRegistry {
      * a claim this invite still holds is let go, never one another device took since.
      */
     async releaseDirectChat(botId: string, matrixUserId: string, token?: string): Promise<void> {
-        if (!this.redis?.isOpen) return;
+        if (!isUp(this.redis)) return;
         const key = `bots:matrix:dm-claim:${botId}|${matrixUserId}`;
         if (!token) {
             await this.redis.del(key);
@@ -290,7 +363,7 @@ export class BotRegistry {
      * instead of within the minute its cache lasts. Without Redis this is a no-op: this server is then the only one.
      */
     async tellBrickChanged(botId: string, ownerId: string): Promise<void> {
-        if (!this.redis?.isOpen) return;
+        if (!isUp(this.redis)) return;
         await this.redis.publish(BRICK_CHANGED_CHANNEL, JSON.stringify({ botId, ownerId, from: this.serverId }));
     }
 
@@ -304,27 +377,71 @@ export class BotRegistry {
         const listener = this.redis.duplicate();
         listener.on('error', (err) => console.error('[BotRegistry] Redis error (Brick changes):', err));
         this.brickListener = listener;
+        const onMessage = (message: string) => {
+            try {
+                const said = JSON.parse(message) as { botId?: unknown; ownerId?: unknown; from?: unknown };
+                if (said.from === this.serverId || typeof said.botId !== 'string' || typeof said.ownerId !== 'string') return;
+                heard(said.botId, said.ownerId);
+            } catch (err) {
+                console.warn('[BotRegistry] Ignored a Brick change that could not be read:', err);
+            }
+        };
         try {
-            await listener.connect();
-            await listener.subscribe(BRICK_CHANGED_CHANNEL, (message) => {
-                try {
-                    const said = JSON.parse(message) as { botId?: unknown; ownerId?: unknown; from?: unknown };
-                    if (said.from === this.serverId || typeof said.botId !== 'string' || typeof said.ownerId !== 'string') return;
-                    heard(said.botId, said.ownerId);
-                } catch (err) {
-                    console.warn('[BotRegistry] Ignored a Brick change that could not be read:', err);
-                }
-            });
+            // node-redis keeps trying to connect for as long as Redis is away, so an unbounded wait would hold up whoever starts this:
+            // connecting and subscribing are held to one deadline (a SUBSCRIBE that is never answered would leave the listener set for good)
+            if (!(await inTime(listener.connect().then(() => listener.subscribe(BRICK_CHANGED_CHANNEL, onMessage)), this.brickListenerConnectMs))) {
+                throw new Error('Redis did not answer for the Brick changes in time');
+            }
         } catch (err) {
             this.brickListener = null;
-            if (listener.isOpen) await listener.quit().catch(() => undefined);
+            // It has nothing to say goodbye to (it never subscribed): it is cut off, not asked to quit, which a silent connection would not answer
+            await listener.disconnect().catch(() => undefined);
             throw err;
         }
     }
 
+    /** A goal's saved step with no card (the card could not be shown and the step could not be closed): kept a while, for every bot server. */
+    async markTaskCardUnshown(actionId: string): Promise<void> {
+        // Not written is not marked: the caller keeps its own note until a store that answers can take it
+        if (!isUp(this.redis)) throw new Error('shared store not connected');
+        await this.redis.set(`bots:task-card-unshown:${actionId}`, '1', { EX: 3 * 24 * 60 * 60 });
+    }
+
+    async taskCardUnshown(actionId: string): Promise<boolean> {
+        // A store that cannot answer is not an answer of "no card was missed"
+        if (!isUp(this.redis)) throw new Error('shared store not connected');
+        return (await this.redis.exists(`bots:task-card-unshown:${actionId}`)) > 0;
+    }
+
+    async clearTaskCardUnshown(actionId: string): Promise<void> {
+        // Not cleared is not cleared: the caller knows the old marker may still be there
+        if (!isUp(this.redis)) throw new Error('shared store not connected');
+        await this.redis.del(`bots:task-card-unshown:${actionId}`);
+    }
+
+    /** Whether the shared store has ever been reached: on one machine without Redis it never is, and nothing is kept in it. */
+    forgetQueueInUse(): boolean {
+        return this.sharedStoreSeen || !!isUp(this.redis);
+    }
+
+    /** Whether a shared store is expected to hold things for this server: it was named for it, or it has been reached. A store that is expected and does not answer is down. */
+    sharedStoreExpected(): boolean {
+        return this.sharedStoreNamed || this.sharedStoreSeen;
+    }
+
+    /** The shared store's client while it is connected (and ready), null while it is not: where the forgets Orbit has not taken yet are kept for every bot server. */
+    forgetQueueClient(): ForgetQueueRedis | null {
+        return isUp(this.redis) ? (this.redis as unknown as ForgetQueueRedis) : null;
+    }
+
+    /** The shared store's client while it is connected (and ready), null while it is not: where the evidence of failed computer jobs waits for Orbit (it survives a restart). */
+    evidenceClient(): EvidenceRedis | null {
+        return isUp(this.redis) ? (this.redis as unknown as EvidenceRedis) : null;
+    }
+
     /** Whether Redis is up, so messages waiting for a resting bot survive a restart and reach every bot server. */
     hasSharedStore(): boolean {
-        return !!this.redis?.isOpen;
+        return !!isUp(this.redis);
     }
 
     /**
@@ -333,7 +450,7 @@ export class BotRegistry {
      */
     async rememberWaitingDm(botId: string, roomId: string, message: string): Promise<void> {
         // Throws rather than drop the message, so the caller can keep it somewhere else.
-        if (!this.redis?.isOpen) throw new Error('Shared store is not connected');
+        if (!isUp(this.redis)) throw new Error('Shared store is not connected');
         const key = `bots:matrix:dm-waiting:${botId}`;
         // One transaction, so a message is never stored without its bot being listed as waiting.
         await this.redis
@@ -346,7 +463,7 @@ export class BotRegistry {
 
     /** Bots that have messages waiting for them. A bot whose messages all expired is dropped from the list. */
     async waitingDmBots(): Promise<string[]> {
-        if (!this.redis?.isOpen) return [];
+        if (!isUp(this.redis)) return [];
         const waiting: string[] = [];
         for (const botId of await this.redis.sMembers('bots:matrix:dm-waiting')) {
             if (await this.redis.exists(`bots:matrix:dm-waiting:${botId}`)) {
@@ -363,7 +480,7 @@ export class BotRegistry {
      * message stored in between keeps its bot listed. Returns whether the bot was dropped.
      */
     private async unlistIfNothingWaits(botId: string): Promise<boolean> {
-        if (!this.redis?.isOpen) return false;
+        if (!isUp(this.redis)) return false;
         const dropped = await this.redis.eval(
             "if redis.call('HLEN', KEYS[1]) == 0 then return redis.call('SREM', KEYS[2], ARGV[1]) end return 0",
             { keys: [`bots:matrix:dm-waiting:${botId}`, 'bots:matrix:dm-waiting'], arguments: [botId] }
@@ -372,7 +489,7 @@ export class BotRegistry {
     }
 
     async hasWaitingDms(botId: string): Promise<boolean> {
-        if (!this.redis?.isOpen) return false;
+        if (!isUp(this.redis)) return false;
         return this.redis.sIsMember('bots:matrix:dm-waiting', botId);
     }
 
@@ -382,7 +499,7 @@ export class BotRegistry {
      * and a dropped connection can't leave some messages deleted but never handed back.
      */
     async takeWaitingDms(botId: string): Promise<string[]> {
-        if (!this.redis?.isOpen) return [];
+        if (!isUp(this.redis)) return [];
         const taken = await this.redis.eval(
             "local all = redis.call('HVALS', KEYS[1]) redis.call('DEL', KEYS[1]) redis.call('SREM', KEYS[2], ARGV[1]) return all",
             { keys: [`bots:matrix:dm-waiting:${botId}`, 'bots:matrix:dm-waiting'], arguments: [botId] }
@@ -394,7 +511,7 @@ export class BotRegistry {
      * Register this bot server with its capacity
      */
     async registerServer(capacity: number): Promise<void> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             throw new Error('Redis not connected');
         }
 
@@ -429,7 +546,7 @@ export class BotRegistry {
         }
 
         this.heartbeatInterval = setInterval(async () => {
-            if (this.redis && this.redis.isOpen) {
+            if (isUp(this.redis)) {
                 try {
                     await this.redis.hSet(
                         `bot:server:${this.serverId}`,
@@ -448,7 +565,7 @@ export class BotRegistry {
      * Assign a bot to this server
      */
     async assignBot(botId: string): Promise<void> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             throw new Error('Redis not connected');
         }
 
@@ -467,7 +584,7 @@ export class BotRegistry {
      * Unassign a bot from this server
      */
     async unassignBot(botId: string): Promise<void> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return;
         }
 
@@ -483,7 +600,7 @@ export class BotRegistry {
      * Unassign all bots from this server (on shutdown)
      */
     private async unassignAllBotsFromServer(): Promise<void> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return;
         }
 
@@ -502,7 +619,7 @@ export class BotRegistry {
      * Mark server as shutting down
      */
     private async markServerShuttingDown(): Promise<void> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return;
         }
 
@@ -513,7 +630,7 @@ export class BotRegistry {
      * Find a server with available capacity
      */
     async findServerWithCapacity(): Promise<string | null> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return null;
         }
 
@@ -551,7 +668,7 @@ export class BotRegistry {
      * Get server info
      */
     async getServerInfo(serverId: string): Promise<BotServerInfo | null> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return null;
         }
 
@@ -574,7 +691,7 @@ export class BotRegistry {
      * Get which server a bot is assigned to
      */
     async getBotServer(botId: string): Promise<string | null> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return null;
         }
 
@@ -589,7 +706,7 @@ export class BotRegistry {
         botId: string,
         spaceName: string
     ): Promise<void> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return;
         }
 
@@ -612,7 +729,7 @@ export class BotRegistry {
      * Update conversation last message time
      */
     async updateConversation(playerId: number): Promise<void> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return;
         }
 
@@ -633,7 +750,7 @@ export class BotRegistry {
      * End a conversation
      */
     async endConversation(playerId: number): Promise<void> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return;
         }
 
@@ -644,7 +761,7 @@ export class BotRegistry {
      * Check if a player is in a conversation
      */
     async isPlayerInConversation(playerId: number): Promise<boolean> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return false;
         }
 
@@ -655,7 +772,7 @@ export class BotRegistry {
      * Get conversation state for a player
      */
     async getConversation(playerId: number): Promise<ConversationState | null> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return null;
         }
 
@@ -671,7 +788,7 @@ export class BotRegistry {
      * Check if a bot can start a conversation with a player
      */
     async canBotStartConversation(botId: string, playerId: number): Promise<boolean> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return false;
         }
 
@@ -690,7 +807,7 @@ export class BotRegistry {
      * Get all active servers
      */
     async getActiveServers(): Promise<BotServerInfo[]> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return [];
         }
 
@@ -727,7 +844,7 @@ export class BotRegistry {
      * Get total bot count across all servers
      */
     async getTotalBotCount(): Promise<number> {
-        if (!this.redis || !this.redis.isOpen) {
+        if (!isUp(this.redis)) {
             return 0;
         }
 

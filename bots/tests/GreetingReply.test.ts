@@ -44,7 +44,7 @@ function botWith(options: { voice?: boolean; access?: 'allowed' | 'refused' } = 
     inner.spaces.set(SPACE, 'room_1');
     inner.speech = speech;
     inner.send = vi.fn();
-    return { bot, behavior, speech };
+    return { bot, behavior, speech, send: inner.send as ReturnType<typeof vi.fn> };
 }
 
 describe('a bot deciding whether to greet someone who walks up', () => {
@@ -72,14 +72,23 @@ describe('a bot deciding whether to greet someone who walks up', () => {
 
 describe('a greeting is never a voice reply', () => {
     it('stays in the chat and is never handed to the voice, while an ordinary reply still is', () => {
-        const { bot, speech } = botWith({ voice: true });
+        const { bot, speech, send } = botWith({ voice: true });
+        const chatPieces = () =>
+            send.mock.calls
+                .map((call) => (call[0] as { message?: { publicEvent?: { spaceEvent?: { event?: { spaceStreamMessage?: { responseId: string; finalContent?: string } } } } } })?.message?.publicEvent?.spaceEvent?.event?.spaceStreamMessage)
+                .filter((piece): piece is { responseId: string; finalContent?: string } => !!piece);
         const greeting = greetingReplyId('bot-1', 7);
         bot.sendStreamMessage(SPACE, greeting, 'Hello ', false);
         bot.sendStreamMessage(SPACE, greeting, '', true, 'Hello Sara.');
+        // It reached the chat in full: the final piece carries the greeting
+        expect(chatPieces().filter((piece) => piece.responseId === greeting).map((piece) => piece.finalContent)).toContain('Hello Sara.');
         expect(speech.begin).not.toHaveBeenCalled();
         expect(speech.final).not.toHaveBeenCalled();
         const reply = `bot-bot-1-player-7-${crypto.randomUUID()}`;
         bot.sendStreamMessage(SPACE, reply, '', true, 'Here you go.');
+        // The ordinary reply goes to the chat after the greeting, and is also handed to the voice
+        const order = chatPieces().map((piece) => piece.responseId);
+        expect(order.lastIndexOf(greeting)).toBeLessThan(order.indexOf(reply));
         expect(speech.final).toHaveBeenCalledWith(SPACE, reply, 'Here you go.');
     });
 });

@@ -206,26 +206,31 @@ async function closesForGood(w: Watched, people: string[], path: 'lane' | 'room'
     expect(w.observer()).toMatchObject({ status: 'on', streams: people.length });
 
     const hold = holdTheVoice(r);
-    r.link().send({ type: 'session.end', sessionId: sessionId(r) });
-    await hold.reached;
-    // The session has told the observer it is over, and is now waiting for its voice: nothing of anyone's is held
-    expect(w.observer()).toMatchObject({ streams: 0, queuedMs: 0, lined: 0 });
-    const kept = w.verdicts.length;
-    const accepted = n.get('observer_windows_accepted');
-    const started = n.get('observer_streams');
-    const arrived = w.heard.length;
+    let kept = 0;
+    let accepted = 0;
+    // The gate is let go however an assertion below ends: a failure here must not be followed by a teardown that waits on it
+    try {
+        r.link().send({ type: 'session.end', sessionId: sessionId(r) });
+        await hold.reached;
+        // The session has told the observer it is over, and is now waiting for its voice: nothing of anyone's is held
+        expect(w.observer()).toMatchObject({ streams: 0, queuedMs: 0, lined: 0 });
+        kept = w.verdicts.length;
+        accepted = n.get('observer_windows_accepted');
+        const started = n.get('observer_streams');
+        const arrived = w.heard.length;
 
-    await sleep(700);
-    // Microphones kept arriving at the session all that time (its connections are still up), and every frame was turned away
-    expect(w.heard.length - arrived).toBeGreaterThan(15 * people.length);
-    expect(n.get('observer_refused_closed')).toBe(w.heard.length - arrived);
-    expect(w.verdicts.length).toBe(kept);
-    expect(n.get('observer_windows_accepted')).toBe(accepted);
-    expect(n.get('observer_streams')).toBe(started);
-    expect(w.observer()).toMatchObject({ status: 'on', streams: 0, queuedMs: 0, lined: 0, callOut: false });
-    expect(n.get(`observer_offered_ms_${path}`)).toBeGreaterThan(0);
-
-    hold.release();
+        await sleep(700);
+        // Microphones kept arriving at the session all that time (its connections are still up), and every frame was turned away
+        expect(w.heard.length - arrived).toBeGreaterThan(15 * people.length);
+        expect(n.get('observer_refused_closed')).toBe(w.heard.length - arrived);
+        expect(w.verdicts.length).toBe(kept);
+        expect(n.get('observer_windows_accepted')).toBe(accepted);
+        expect(n.get('observer_streams')).toBe(started);
+        expect(w.observer()).toMatchObject({ status: 'on', streams: 0, queuedMs: 0, lined: 0, callOut: false });
+        expect(n.get(`observer_offered_ms_${path}`)).toBeGreaterThan(0);
+    } finally {
+        hold.release();
+    }
     await waitFor('the session to finish closing', () => r.worker.laneCount() === 0);
     expect(w.verdicts.length).toBe(kept);
     expect(n.get('observer_windows_accepted')).toBe(accepted);

@@ -85,13 +85,16 @@
         APP_CONNECT,
         APP_OTHER,
         BRICK_APP_CARD,
+        BRICK_NEW_JOB_CARD,
         BRICK_OFFER_CARD,
         BRICK_STARTERS_CARD,
+        NEW_JOB_START,
         STARTER_APPS,
         STARTER_GOAL,
         STARTER_MAKE,
         OFFER_MAKE,
         brickAppCard,
+        brickNewJobCard,
         brickHello,
         brickIdeaWords,
         brickIdeasCard,
@@ -126,6 +129,7 @@
     import { brickHelloMessage } from "../../Bricks/BrickHelloMessage";
     import {
         appCardKey,
+        newJobCardKey,
         closeBrickCard,
         closedBrickCards,
         ideasCardKey,
@@ -133,7 +137,12 @@
         offerCardKey,
         startersCardKey,
     } from "../../Bricks/ClosedBrickCards";
-    import { loadMyBricks, myBricksByChatId, myBricksStore, withMyBricks } from "../../Bricks/MyBricksStore";
+    import {
+        loadMyBricksAfterPending,
+        myBricksByChatId,
+        myBricksStore,
+        withMyBricks,
+    } from "../../Bricks/MyBricksStore";
     import { openDirectChatRoom } from "../../Utils";
     import BrickComputerBar from "../../Bricks/Computer/BrickComputerBar.svelte";
     import Message from "./Message.svelte";
@@ -654,12 +663,16 @@
         ? offerCardKey(newestLive.id)
         : newestLive?.appOffer
         ? appCardKey(newestLive.id)
+        : newestLive?.newJobOffer
+        ? newJobCardKey(newestLive.id)
         : undefined;
     // A Brick's suggestion (#1996) is a card only while it is the newest message: once the person wrote on, tapped
     // or closed it, its question stays in the chat as the Brick's words.
     $: shownOffer = newestLive?.brickOffer && brickCardKey === offerCardKey(newestLive.id) ? newestLive : undefined;
     // A Brick's offer to connect an App (#2001) is a card the same way: only while it is the newest message
     $: shownApp = newestLive?.appOffer && brickCardKey === appCardKey(newestLive.id) ? newestLive : undefined;
+    // "Start a new job", after an answer that says Orbit would not carry a job on (finding 6): the same way again
+    $: shownNewJob = newestLive?.newJobOffer && brickCardKey === newJobCardKey(newestLive.id) ? newestLive : undefined;
     $: brickCard =
         brickCardKey === undefined || !brickAnswers || shownAsk || $closedBrickCards.has(brickCardKey)
             ? undefined
@@ -673,6 +686,8 @@
             ? brickOfferCard(shownOffer.brickOffer, $LL)
             : shownApp?.appOffer
             ? brickAppCard(shownApp.appOffer, $LL)
+            : shownNewJob?.newJobOffer
+            ? brickNewJobCard(shownNewJob.newJobOffer, $LL)
             : brickIdeasCard($LL);
     // The App being connected from the card: the card stays, and a second tap does nothing, until it ends
     let connectingApp = false;
@@ -686,7 +701,16 @@
     function readBricksOnceFor(messageId: string | undefined) {
         if (!messageId || bricksReadFor === messageId) return;
         bricksReadFor = messageId;
-        loadMyBricks().catch((error) => console.error(error));
+        // A read already out may have started before the Brick was made: this one starts after it, and the message counts as
+        // read only when that read listed the Bricks (when it could not, the next change asks again)
+        loadMyBricksAfterPending()
+            .then((listed) => {
+                if (!listed && bricksReadFor === messageId) bricksReadFor = undefined;
+            })
+            .catch((error) => {
+                console.error(error);
+                if (bricksReadFor === messageId) bricksReadFor = undefined;
+            });
     }
     async function tapBrickCard(card: BotAsk, tap: BotAskTap): Promise<boolean> {
         if (tap.action === "close") {
@@ -697,6 +721,16 @@
         if (tap.action !== "pick" || !matrixRoom) return false;
         try {
             if (card.id === BRICK_APP_CARD) return tapAppCard(tap.choices[0]);
+            if (card.id === BRICK_NEW_JOB_CARD) {
+                const job = shownNewJob?.newJobOffer;
+                // The card that was tapped: a message that arrives meanwhile changes brickCardKey, not which card closes
+                const tappedKey = brickCardKey;
+                if (!job || !tappedKey || tap.choices[0] !== NEW_JOB_START) return false;
+                // The person's own words, carrying the job's title: the Brick starts THAT job afresh, with a key of its own
+                await matrixRoom.sendNewJob($LL.chat.brick.newJobCard.start(), job);
+                closeBrickCard(tappedKey);
+                return true;
+            }
             if (card.id === BRICK_OFFER_CARD) {
                 const offer = shownOffer?.brickOffer;
                 // The card that was tapped: a message that arrives meanwhile changes brickCardKey, not which card closes
@@ -771,7 +805,7 @@
         const text = $LL.chat.brick.appCard;
         return connectFromCard(offer, brickId, {
             connectListedApp: (key) => botApiService.connectListedApp(key),
-            signIn: (appId) => signInInPopup(appId),
+            signIn: (makeApp, alreadyConnected) => signInInPopup(makeApp, { alreadyConnected }),
             connectReadyMade: ({ key, name }) =>
                 connectApp({ kind: "readyMade", key, name, blurb: "", connectionId: null }),
             isConnected: async (appId) => {
@@ -784,7 +818,11 @@
         })
             .then((result) => {
                 if (result === "connected") closeBrickCard(tappedKey);
-                else if (result === "stopped")
+                // Connected and let use it, but the Brick could not be told to carry on: said, and only that is left to ask
+                else if (result === "not_resumed") {
+                    warningMessageStore.addWarningMessage(text.couldNotResume({ name: offer.name }));
+                    closeBrickCard(tappedKey);
+                } else if (result === "stopped")
                     warningMessageStore.addWarningMessage(text.signInStopped({ name: offer.name }));
                 else if (result === "unchecked")
                     warningMessageStore.addWarningMessage(text.signInUnchecked({ name: offer.name }));

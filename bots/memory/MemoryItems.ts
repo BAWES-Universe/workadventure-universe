@@ -55,6 +55,18 @@ const positive = (value: unknown): number | null => {
     return typeof number === 'number' && Number.isFinite(number) && number > 0 ? number : null;
 };
 
+/** When a stored birthday was said: where it was drawn from, else the time noted with it, else its event. Listing and dropping use the same one. */
+function birthdayAt(memory: BotPlayerMemory): number | null {
+    const info = memory.personalInfo;
+    const event = memory.relationship.importantEvents.find((one) => one.event.startsWith('birthday'));
+    return positive(info.drawnFrom?.birthday) ?? positive(info.facts.get('birthday_mentioned_at')) ?? positive(event?.timestamp);
+}
+
+/** When a stored fact was said: where it was drawn from, else (for how someone feels) the time noted with it. Listing and dropping use the same one. */
+function factAt(info: BotPlayerMemory['personalInfo'], name: string, value: string): number | null {
+    return positive(info.drawnFrom?.[`fact:${name}`]) ?? (name === 'current_state' ? positive(info.facts.get(`${value}_mentioned_at`)) : null);
+}
+
 /** The things in one person's memory, newest first where a date is known. */
 export function memoryItemsOf(memory: BotPlayerMemory): MemoryItem[] {
     const info = memory.personalInfo;
@@ -65,8 +77,7 @@ export function memoryItemsOf(memory: BotPlayerMemory): MemoryItem[] {
         items.push({ id: memoryItemKey('name', null, info.name), kind: 'name', value: info.name, label: null, at: drawn('name'), private: privateOf('name') });
     }
     if (info.birthday?.trim()) {
-        const event = memory.relationship.importantEvents.find((one) => one.event.startsWith('birthday'));
-        const at = drawn('birthday') ?? positive(info.facts.get('birthday_mentioned_at')) ?? positive(event?.timestamp);
+        const at = birthdayAt(memory);
         items.push({ id: memoryItemKey('birthday', null, info.birthday), kind: 'birthday', value: info.birthday, label: null, at, private: privateOf('birthday') });
     }
     for (const preference of info.preferences ?? []) {
@@ -77,7 +88,7 @@ export function memoryItemsOf(memory: BotPlayerMemory): MemoryItem[] {
     for (const [name, value] of info.facts) {
         if (isInternalFact(name) || !String(value).trim()) continue;
         const key = `fact:${name}`;
-        const at = drawn(key) ?? (name === 'current_state' ? positive(info.facts.get(`${value}_mentioned_at`)) : null);
+        const at = factAt(info, name, String(value));
         items.push({ id: memoryItemKey('fact', name, String(value)), kind: 'fact', value: String(value), label: name, at, private: privateOf(key) });
     }
     return items
@@ -100,6 +111,8 @@ export function visibleItems(memory: BotPlayerMemory, view: MemoryView): MemoryI
 
 /** The shortest a phrase may be for lines of the chat to be taken out by the words they hold, when no line was noted. */
 const MIN_PHRASE = 4;
+/** Matches nothing: an echo that is only looked for in the reply right after its line. */
+const NEVER = /(?!)/;
 
 /** These words as their own words, not a piece of a longer one. */
 function wholeWords(text: string, exactCase = false): RegExp {
@@ -170,7 +183,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         }
     }
     if (info.birthday) {
-        const at = positive(info.drawnFrom?.birthday);
+        const at = birthdayAt(memory);
         if (goes(memoryItemKey('birthday', null, info.birthday), at)) {
             takeLines(at, info.birthday);
             delete info.birthday;
@@ -195,9 +208,14 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     for (const [name, value] of [...info.facts]) {
         if (isInternalFact(name)) continue;
         const key = `fact:${name}`;
-        const at = positive(info.drawnFrom?.[key]);
+        const at = factAt(info, name, String(value));
         if (!goes(memoryItemKey('fact', name, String(value)), at)) continue;
         takeLines(at, name === 'current_state' ? String(value) : '');
+        // The bot's reply right after the line this fact came from, when it says the value back, goes with it (a general fact's
+        // value is never taken out of every line, so only that one reply is looked for)
+        if (name !== 'current_state' && String(value).trim() && at !== null) {
+            echoes.push({ at, ownName: false, words: wholeWords(String(value).trim()), toldBack: NEVER });
+        }
         forgetPlace(key);
         info.facts.delete(name);
         // "tired" and when it was said

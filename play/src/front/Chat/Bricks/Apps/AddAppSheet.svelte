@@ -6,6 +6,7 @@
     import {
         DISCOVERY_DEADLINE_MS,
         NO_DISCOVERY,
+        destinationOf,
         looksLikeLink,
         newAppBody,
         newRequestKey,
@@ -22,6 +23,7 @@
         type SentAs,
         type SignIn,
     } from "./AddApp";
+    import { findAndRemove, removeApp, settledCleanups } from "./AppCleanup";
     import AppSheet from "./AppSheet.svelte";
     import { loadMyApps } from "./AppsStore";
     import { signInInPopup } from "./Reconnect";
@@ -49,7 +51,7 @@
     export let onDone: (appId: string) => void;
 
     type Phase = "empty" | "checking" | "found" | "pick" | "connected";
-    type Trouble = "" | "failed" | "stopped" | "blocked" | "reserved";
+    type Trouble = "" | "failed" | "unsure" | "stopped" | "blocked" | "reserved";
 
     $: text = $LL.chat.brick.apps.addOwn;
     let phase: Phase = "empty";
@@ -64,6 +66,8 @@
     let headers: HeaderRow[] = [];
     let headersOpen = false;
     let nextHeaderId = 0;
+    /** Where the last link went: a key or header typed for one app is not sent to another */
+    let destination = "";
     let busy = false;
     let trouble: Trouble = "";
     let reserved = "";
@@ -85,6 +89,8 @@
     let uncertain: NewApp[] = [];
     /** The sheet was closed: an app that is still being made is taken away again when Orbit answers */
     let closed = false;
+    /** The open sign-in window's way to be closed when the sheet goes away */
+    let signInAbort: AbortController | undefined;
     /** The app is connected: from here on closing the sheet keeps it, even while the list of what it can do is still loading */
     let signedIn = false;
     let things: string[] | undefined;
@@ -109,6 +115,7 @@
         closed = true;
         if (checkTimer) clearTimeout(checkTimer);
         checkAbort?.abort();
+        signInAbort?.abort();
         dropUnfinished();
         void settleUncertain();
     });
@@ -130,33 +137,32 @@
         // The next app is a new one for Orbit too (the key of an app being taken away would still answer with it)
         keyFrom = "";
         if (signedIn || phase === "connected") return;
-        botApiService
-            .disconnectMyApp(id)
-            .catch((error: unknown) => console.warn("Could not drop the unfinished app", error));
+        // The clean-up outlives the sheet and tries again until Orbit says the app is gone (or was never there)
+        void removeApp(id);
     }
 
     /**
-     * Finds the app an unanswered try may have made, by trying again with its own key (Orbit answers that with the app it
-     * made, or makes it now), and takes it away. Never throws: when Orbit still does not answer there is nothing more to do.
+     * Finds the app each unanswered try may have made, by trying again with its own key (Orbit answers that with the app it
+     * made, or makes it now), and takes it away. The work is done by the clean-up that outlives the sheet; this ends when its
+     * first attempts have, so an app that replaces the old ones is never made before they have been looked for.
      */
     async function settleUncertain(): Promise<void> {
         const pending = uncertain;
         uncertain = [];
-        if (pending.length === 0) return;
-        // Those keys are about to be freed (their apps taken away): a form that goes back to the same content makes a new app with a new key
-        keyFrom = "";
-        await Promise.all(
-            pending.map(async (body) => {
-                try {
-                    const id = parseNewAppId(await botApiService.addMyApp(body));
-                    if (id) await botApiService.disconnectMyApp(id);
-                } catch (error) {
-                    console.warn("Could not find out whether the earlier try made an app", error);
-                    // Orbit did not answer: the try stays to be found the next time the sheet settles (a change, closing it)
-                    uncertain = [...uncertain, body];
-                }
-            })
-        );
+        if (pending.length > 0) {
+            // Those keys are about to be freed (their apps taken away): a form that goes back to the same content makes a new app with a new key
+            keyFrom = "";
+            for (const body of pending) void findAndRemove(body);
+        }
+        await settledCleanups();
+    }
+
+    /** A key, how it is sent, and extra headers belong to the app they were typed for */
+    function forgetSecrets() {
+        key = "";
+        sentAs = "bearer";
+        headers = [];
+        headersOpen = false;
     }
 
     function onLinkInput(event: Event) {
@@ -168,6 +174,10 @@
         trouble = "";
         // `linkOk` is only brought up to date after this handler, so the link itself is looked at
         if (!looksLikeLink(link)) return;
+        // Another app (a link to another place): what was typed for the first one is not sent to it. The same place again keeps it.
+        const goesTo = destinationOf(link);
+        if (destination !== "" && goesTo !== destination) forgetSecrets();
+        destination = goesTo;
         // A pasted link is checked at once; a typed one when the person stops for a moment
         const pasted = (event as InputEvent).inputType === "insertFromPaste";
         checkTimer = setTimeout(() => void check(), pasted ? 0 : 600);
@@ -265,9 +275,7 @@
             known = true;
             if (closed) {
                 // The sheet was closed while Orbit was making it: nobody is left to finish it
-                botApiService
-                    .disconnectMyApp(id)
-                    .catch((error: unknown) => console.warn("Could not drop the app", error));
+                void removeApp(id);
                 throw new Error("The sheet was closed");
             }
             createdId = id;
@@ -287,8 +295,15 @@
             if (known || status === 409) uncertain = others;
             else if (!refused) uncertain = [...others, body];
             // A closed sheet has nobody left to try again: look for it now
-            if (closed) void settleUncertain();
-            else trouble = "failed";
+            if (closed) {
+                void settleUncertain();
+                throw error;
+            }
+            // "Nothing was added" is only said for an Orbit that refused, with no earlier try of this key still unanswered. A wait that
+            // ran out, an answer that could not be read, an Orbit that failed, or "try later" do not say what became of the app.
+            const confirmed = refused && status !== 408 && status !== 429;
+            const earlier = uncertain.some((pendingTry) => pendingTry.requestKey === body.requestKey);
+            trouble = confirmed && !earlier ? "failed" : "unsure";
             throw error;
         }
     }
@@ -313,19 +328,22 @@
         const creating = theApp();
         // If the window can't open the rejection is not awaited anywhere else; it has already been said on the sheet
         creating.catch(() => undefined);
+        const controller = new AbortController();
+        signInAbort = controller;
         try {
-            const result = await signInInPopup(creating);
+            const result = await signInInPopup(creating, { signal: controller.signal });
             // A window that could not open answers before the app is made: the sheet stays busy until Orbit has answered, so a
             // second tap cannot make a second app
             await creating.catch(() => undefined);
             // `create()` said so on the sheet while the window was open: the type system cannot see that
-            if ((trouble as Trouble) === "failed") return;
-            if (result === "done") await connected();
+            if ((trouble as Trouble) === "failed" || (trouble as Trouble) === "unsure") return;
+            if (result === "done") connected();
             else trouble = result === "blocked" ? "blocked" : "stopped";
         } catch (error) {
             console.warn("The sign-in did not finish", error);
             if (trouble === "") trouble = "failed";
         } finally {
+            if (signInAbort === controller) signInAbort = undefined;
             // eslint-disable-next-line require-atomic-updates
             busy = false;
         }
@@ -338,7 +356,7 @@
         trouble = "";
         try {
             await theApp();
-            await connected();
+            connected();
         } catch {
             // said on the sheet by create()
         } finally {
@@ -347,19 +365,26 @@
         }
     }
 
-    async function connected() {
+    function connected() {
         const id = createdId;
         if (!id) return;
         signedIn = true;
-        // What it can do, from the app itself. Orbit may not say (yet): the sheet then just says "Connected".
-        things = parseThings(await botApiService.getMyAppThings(id).catch(() => undefined));
+        // Done is there and the Apps are read again at once: what the app can do is asked for apart, and only said when it
+        // comes back while the sheet still shows this app. Orbit may not say (yet): the sheet then just says "Connected".
         phase = "connected";
         loadMyApps(true).catch((error: unknown) => console.warn("Could not read your apps", error));
+        void botApiService
+            .getMyAppThings(id)
+            .catch(() => undefined)
+            .then((answer) => {
+                if (!closed && createdId === id) things = parseThings(answer);
+            });
     }
 
     function close() {
         closed = true;
         forgetCheck();
+        signInAbort?.abort();
         dropUnfinished();
         void settleUncertain();
         onClose();
@@ -634,6 +659,8 @@
 
     {#if trouble === "failed"}
         <p class="bad" data-testid="addAppFailed">{text.failed()}</p>
+    {:else if trouble === "unsure"}
+        <p class="bad" data-testid="addAppUnsure">{text.unsure()}</p>
     {:else if trouble === "stopped"}
         <p class="bad" data-testid="addAppStopped">{text.signInStopped()}</p>
     {:else if trouble === "blocked"}

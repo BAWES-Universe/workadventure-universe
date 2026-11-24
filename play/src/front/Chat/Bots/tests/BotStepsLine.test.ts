@@ -128,6 +128,21 @@ describe("the steps line: waiting, times and what a step did (#2061)", () => {
         expect(target.querySelector('[data-testid="botStepShows"]')?.textContent).toContain("Review draft");
     });
 
+    it("keeps a lone step that sent something openable when the reply was stopped, and still says it was stopped", async () => {
+        mount({
+            state: "stopped",
+            line: "Used Update a draft",
+            startedAt: 0,
+            steps: [{ ...read, secs: 2, shows: [{ label: "Subject", text: "Review draft" }] }],
+        });
+        expect(target.querySelector('[data-testid="botStepsSingleOpen"]')).not.toBeNull();
+        expect(target.querySelector('[data-testid="botStepsSingle"]')).toBeNull();
+        expect(target.querySelector('[data-testid="botStepsStopped"]')).not.toBeNull();
+        target.querySelector<HTMLButtonElement>('[data-testid="botStepOpen"]')!.click();
+        await tick();
+        expect(target.querySelector('[data-testid="botStepShows"]')?.textContent).toContain("Review draft");
+    });
+
     it("shows the total time on the folded line and each step's time once opened", async () => {
         mount({
             state: "done",

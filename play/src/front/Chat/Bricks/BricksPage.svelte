@@ -61,6 +61,7 @@
     // The Usage page, open over the list. A link in a Brick's answer ("What it used") asks for it, with one receipt open.
     let usageOpen = false;
     let usageReceiptId: string | undefined;
+    let usageReceiptRequest = 0;
     // The Apps page, open over the list. A link or a card elsewhere (a Brick's "Connect my apps") asks for it to open.
     let appsOpen = false;
     // The Goals and tasks page, open over the list. A Brick's own page opened from it goes back to it.
@@ -83,6 +84,7 @@
         goalsOpen = false;
         pageOfId = undefined;
         usageReceiptId = $usagePageRequest.receiptId;
+        usageReceiptRequest = $usagePageRequest.request;
         usageOpen = true;
         takeUsagePageRequest();
     }
@@ -214,7 +216,12 @@
 {#if appsOpen}
     <AppsPage onBack={() => (appsOpen = false)} />
 {:else if usageOpen}
-    <UsagePage onBack={() => (usageOpen = false)} receiptId={usageReceiptId} looks={brickLooks} />
+    <UsagePage
+        onBack={() => (usageOpen = false)}
+        receiptId={usageReceiptId}
+        receiptRequest={usageReceiptRequest}
+        looks={brickLooks}
+    />
 {:else if pageOf}
     <BrickPage brick={pageOf} onBack={() => (pageOfId = undefined)} onDeleted={() => (pageOfId = undefined)} />
 {:else if goalsOpen}
