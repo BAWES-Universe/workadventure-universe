@@ -229,6 +229,28 @@ describe('a visiting Brick on the map', () => {
         vi.useRealTimers();
     });
 
+    it('does not start a second search for a way while the first is still working it out', async () => {
+        vi.useFakeTimers();
+        const { behavior, bot } = brickAt({ x: 100, y: 100 }, { x: 500, y: 100 });
+        let finish!: (started: boolean) => void;
+        bot.moveToWithPathfinding.mockImplementationOnce(() => new Promise<boolean>((resolve) => void (finish = resolve)));
+        behavior.update(16);
+        // Longer than it looks around, and the path has not started yet
+        vi.advanceTimersByTime(5000);
+        behavior.update(16);
+        vi.advanceTimersByTime(5000);
+        behavior.update(16);
+        expect(bot.moveToWithPathfinding).toHaveBeenCalledTimes(1);
+        // Once the search is over, it may search again
+        finish(false);
+        await Promise.resolve();
+        await Promise.resolve();
+        vi.advanceTimersByTime(VISIT_RETRY_AFTER_MS + 1000);
+        behavior.update(16);
+        expect(bot.moveToWithPathfinding).toHaveBeenCalledTimes(2);
+        vi.useRealTimers();
+    });
+
     it('does not search again at once for a spot it cannot reach, and tries another side of its person next (Sentry on #2023)', async () => {
         vi.useFakeTimers();
         const person = { x: 500, y: 100 };
@@ -335,6 +357,25 @@ describe('putting the Brick on the map', () => {
         });
         return { botManager, orbit, spawn, despawn, internals };
     }
+
+    it('waits for a start of the same bot that is under way (its home start), and starts nothing a second time when that one connected it', async () => {
+        const { botManager, orbit, spawn, internals } = manager();
+        orbit.answer = [visitingConfig('brick-1', ROOM_A)];
+        const lock = botManager as unknown as { withBotStartLock: <T>(id: string, run: (waited: boolean) => Promise<T>) => Promise<T> };
+        let finishHomeStart!: () => void;
+        const homeStart = lock.withBotStartLock('brick-1', async () => {
+            await new Promise<void>((resolve) => (finishHomeStart = resolve));
+            // The home start connects the bot while the visit waits
+            internals.bots.set('brick-1', { botId: 'brick-1', client: { setFullConfig: () => undefined }, config: visitingConfig('brick-1', ROOM_A), status: 'connected', lastHeartbeat: 0 });
+        });
+        const visit = botManager.syncVisitingBrick(ROOM_A, { uuid: KHALID }, { x: 40, y: 50 });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(spawn).not.toHaveBeenCalled();
+        finishHomeStart();
+        await homeStart;
+        expect(await visit).toEqual({ botId: 'brick-1' });
+        expect(spawn).not.toHaveBeenCalled();
+    });
 
     it('spawns the Brick Orbit names beside the person, once however often it is asked', async () => {
         const { botManager, orbit, spawn } = manager();

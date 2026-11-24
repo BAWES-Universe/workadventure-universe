@@ -4,7 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const game = vi.hoisted(() => ({
     getBrickComputer: vi.fn<(brickId: string) => Promise<unknown>>(),
     brickComputerAction:
-        vi.fn<(brickId: string, action: string, shown?: { what: string; where: string }) => Promise<unknown>>(),
+        vi.fn<
+            (
+                brickId: string,
+                action: string,
+                shown?: { what: string; where: string },
+                commandId?: string,
+                confirmedJobIds?: string[]
+            ) => Promise<unknown>
+        >(),
     dismissBrickComputerNotice: vi.fn<(brickId: string, jobId: string) => Promise<unknown>>(),
 }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: game }));
@@ -49,6 +57,48 @@ describe("the Bricks' computers store (#2000)", () => {
         expect(view?.machine).toBe("resting");
         expect(get(brickComputers).get(BRICK)?.on).toBe(true);
         expect(game.brickComputerAction).not.toHaveBeenCalled();
+    });
+
+    // GPT's seventh note, D2: Stop names the jobs the person saw; Orbit ends only those
+    it("sends Stop with the jobs the person saw, and never a Stop that names none (the computer is read again instead)", async () => {
+        game.brickComputerAction.mockResolvedValue(computer({ machine: "resting", job: null }));
+        expect(await brickComputerAction(BRICK, "stop", undefined, ["j1", "j2"])).toBe(true);
+        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop", undefined, expect.any(String), [
+            "j1",
+            "j2",
+        ]);
+        game.brickComputerAction.mockClear();
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: runningJob }));
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        expect(await brickComputerAction(BRICK, "stop")).toBe(false);
+        expect(await brickComputerAction(BRICK, "stop", undefined, [])).toBe(false);
+        expect(game.brickComputerAction).not.toHaveBeenCalled();
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(2);
+        expect(brickComputerOf(BRICK)?.job?.id).toBe("j1");
+        warn.mockRestore();
+    });
+
+    it("reads the computer again after a Stop that left jobs (they began after the tap), so they show as running", async () => {
+        game.brickComputerAction.mockResolvedValue({
+            ...computer({ machine: "resting", job: null }),
+            stopped: 1,
+            left: [{ id: "j2", title: "Hotel" }],
+        });
+        game.getBrickComputer.mockResolvedValue(
+            computer({ machine: "working", job: { ...runningJob, id: "j2", title: "Hotel" } })
+        );
+        expect(await brickComputerAction(BRICK, "stop", undefined, ["j1"])).toBe(true);
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
+        expect(brickComputerOf(BRICK)?.job?.id).toBe("j2");
+        // Nothing left: the answer is the picture, no second read
+        game.getBrickComputer.mockClear();
+        game.brickComputerAction.mockResolvedValue({
+            ...computer({ machine: "resting", job: null }),
+            stopped: 1,
+            left: [],
+        });
+        expect(await brickComputerAction(BRICK, "stop", undefined, ["j2"])).toBe(true);
+        expect(game.getBrickComputer).not.toHaveBeenCalled();
     });
 
     it("keeps what it had when a read fails", async () => {
@@ -226,7 +276,7 @@ describe("the Bricks' computers store (#2000)", () => {
             game.getBrickComputer.mockReturnValueOnce(poll.promise);
             const reading = loadBrickComputer(OTHER);
             game.brickComputerAction.mockResolvedValue(computer({ machine: "resting", job: null }));
-            expect(await brickComputerAction(OTHER, "stop")).toBe(true);
+            expect(await brickComputerAction(OTHER, "stop", undefined, ["j1"])).toBe(true);
             expect(brickComputerOf(OTHER)?.job).toBeNull();
             // The read, sent before the tap, now answers with the job still running
             poll.settle(computer({ machine: "working", job: runningJob }));
@@ -251,7 +301,7 @@ describe("the Bricks' computers store (#2000)", () => {
         it("shows a read that was sent after a tap even when the tap's answer comes last", async () => {
             const tap = later<unknown>();
             game.brickComputerAction.mockReturnValueOnce(tap.promise);
-            const tapping = brickComputerAction(OTHER, "stop");
+            const tapping = brickComputerAction(OTHER, "stop", undefined, ["j1"]);
             game.getBrickComputer.mockResolvedValueOnce(computer({ machine: "working", job: runningJob }));
             await loadBrickComputer(OTHER);
             expect(brickComputerOf(OTHER)?.machine).toBe("working");
@@ -266,7 +316,7 @@ describe("the Bricks' computers store (#2000)", () => {
             await loadBrickComputer(OTHER);
             expect(brickComputerOf(OTHER)?.machine).toBe("working");
             game.brickComputerAction.mockResolvedValue(computer({ machine: "resting", job: null }));
-            await brickComputerAction(OTHER, "stop");
+            await brickComputerAction(OTHER, "stop", undefined, ["j1"]);
             expect(brickComputerOf(OTHER)?.machine).toBe("resting");
         });
 

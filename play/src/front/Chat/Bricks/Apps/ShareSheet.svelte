@@ -171,8 +171,13 @@
                     {/if}
                     <div class="ss-sub">
                         <span class="ss-lab">{words.getBack()}</span>
-                        {#if job.returns.names === null}
+                        {#if job.returns.names === null && choice.returns === null}
                             <span class="ss-m" data-testid="appShareGetBackAll">{words.getBackAll({ app })}</span>
+                        {:else if job.returns.names === null}
+                            <!-- The app no longer names its fields, but the owner's saved choice is a restricted list: it is shown, never read as the whole answer -->
+                            {#each choice.returns ?? [] as field (field)}
+                                <span class="ss-n" data-testid="appShareGetBackKept">{field}</span>
+                            {/each}
                         {:else}
                             {#each job.returns.names as field (field)}
                                 {@const on = (choice.returns ?? job.returns.names).includes(field)}

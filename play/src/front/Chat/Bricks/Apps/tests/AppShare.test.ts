@@ -6,6 +6,7 @@ import {
     parseShare,
     pickedTitles,
     shareRefusal,
+    shareRefused,
     startingChoice,
     toggled,
 } from "../AppShare";
@@ -134,6 +135,11 @@ describe("reading what Orbit says is shared (#2006)", () => {
         expect(shareRefusal(refused(500, "boom"), "plain")).toBe("plain");
         expect(shareRefusal(refused(400, "API error 400: {...}"), "plain")).toBe("plain");
         expect(shareRefusal(new Error("offline"), "plain")).toBe("plain");
+        // Only a definite refusal leaves the share as it was; a timeout, an offline browser or a server fault may have gone through
+        for (const status of [400, 409, 503]) expect(shareRefused(refused(status, "no"))).toBe(true);
+        for (const status of [500, 502, 504, 408, 429]) expect(shareRefused(refused(status, "boom"))).toBe(false);
+        expect(shareRefused(new Error("offline"))).toBe(false);
+        expect(shareRefused("nope")).toBe(false);
     });
 });
 

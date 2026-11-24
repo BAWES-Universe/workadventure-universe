@@ -78,6 +78,7 @@ ORT_DISABLE_TELEMETRY=1 VOICE_TEST_SPEECH_OBSERVER_MODEL=$PWD/speech-observer/si
 | `worker-load/` | per run: the container's own memory and CPU figures, event-loop delay, the observer's counters, and what the load generator did |
 | `worker-soak/` | the long run of the built image, observer on and off: the worker's summary, its 5-second trace (memory, sessions, event-loop delay), what each load generator did, how closing went, how the container ended |
 | `image-check/` | the built image traced with the observer off, on, off again, and on without the telemetry switch: only the calls that leave the machine, the worker's own statistics, and one summary line each |
+| `PROVENANCE.md` | what produced the older result files and what they do not record (not regenerated; no number edited) |
 | `room-rehear.jsonl` | the side finding about hearing a person again in a LiveKit room |
 | `worker-load-first-build/` | the same for the first build of the observer (one window per call), which fell behind at 20 people; kept as it was measured |
 | `batch-parity.json` | one by one against several in one call, on real recordings |

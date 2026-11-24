@@ -21,7 +21,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
-import { buildManifest, type Item } from './fixtures.ts';
+import { buildManifest, replayProvidersOf, type Item } from './fixtures.ts';
 
 // ---- Simulated time, installed before any of the worker's code runs ----
 interface SimTimer {
@@ -411,7 +411,7 @@ for (const item of manifest) {
     const built = item.build();
     const onsetMs = built.onset !== undefined ? Math.round(built.onset * 1000) : undefined;
     const offsetMs = built.offset !== undefined ? Math.round(built.offset * 1000) : undefined;
-    const providers: Provider[] = item.kind === 'speech' ? ['words'] : ['empty', 'words'];
+    const providers: Provider[] = replayProvidersOf(item);
     for (const kind of providers) {
         const result: Record<string, Outcome> = {};
         for (const behaviour of BEHAVIOURS) result[behaviour] = replay(built.pcm, probs, behaviour, kind, wordOf(item), onsetMs ?? 0, silenceMs);

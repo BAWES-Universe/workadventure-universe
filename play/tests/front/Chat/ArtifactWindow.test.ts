@@ -29,13 +29,15 @@ const api = vi.hoisted(() => {
     };
 });
 vi.mock("../../../src/front/Artifacts/ArtifactApi", () => api);
+// The window reads whether the person is signed in (for the guest receipt line); the real store needs the browser's env
+vi.mock("../../../src/front/Connection/LocalUserStore", () => ({ localUserStore: { isLogged: vi.fn(() => false) } }));
 // Who is in the nearby chat with you now, as the Share menu names them
 const nearby = vi.hoisted(() => ({ nearbyPeopleNames: vi.fn() }));
 vi.mock("../../../src/front/Artifacts/nearbyPeople", () => nearby);
 // Every text is the key it comes from, so the test reads the parts by their test ids.
 vi.mock("../../../src/i18n/i18n-svelte", () => {
     const deep = (): unknown => new Proxy(() => "", { get: () => deep() });
-    return { default: readable(deep()) };
+    return { default: readable(deep()), locale: readable("en") };
 });
 
 import ArtifactCowebsiteComponent from "../../../src/front/Components/Cowebsites/ArtifactCowebsiteComponent.svelte";

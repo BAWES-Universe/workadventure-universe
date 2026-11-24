@@ -162,7 +162,7 @@ export async function callKeyApp(
     args: Record<string, unknown>,
     use: KeyAppUse,
     /** The turn's stop signal: a turn that was stopped while it waited sends nothing */
-    abortSignal?: AbortSignal,
+    abortSignal: AbortSignal | undefined,
     /** How long the bot waits for the answer: its Patience, or the same default as for every other tool */
     timeoutMs: number
 ): Promise<unknown> {
@@ -188,7 +188,7 @@ export async function callKeyApp(
     } catch (error) {
         console.warn('[KeyApps] A key app could not be reached:', error instanceof Error ? error.message : error);
         // The request may have reached Orbit and the service: there is no proof either way
-        return { error: "I couldn't tell whether that worked. Don't try it again without asking the person." };
+        return { error: "I couldn't tell whether that worked. Don't try it again without asking the person.", outcome: 'uncertain' };
     }
     return answerOf(response.status, response.data);
 }
@@ -216,10 +216,11 @@ export function answerOf(status: number, data: unknown): unknown {
     }
     if (status === 400) return { error: `${text(body.error, 300) || 'Those details did not fit.'} This was not done. Fix the details and try once more.`, outcome: 'not_sent' };
     if (status === 429) return { error: 'Too many requests to Apps for now. This was not done. Tell the person to try again in a while.', outcome: 'not_sent' };
-    if (status === 502) {
+    // Any server error is uncertain, not only 502: Orbit or a proxy in front of it can answer 500, 503 or 504 after the request was sent on
+    if (status >= 500 && status < 600) {
         if (body.code === 'key_rejected') return { error: "The service did not accept the key, so it may have stopped working. This was not done. Tell the person to open Apps and tap Replace key.", outcome: 'failed' };
         // Orbit may have sent it and lost the answer (a timeout): there is no proof either way, so it is never said to be undone
-        return { error: "I couldn't tell whether that worked. Don't try it again without asking the person." };
+        return { error: "I couldn't tell whether that worked. Don't try it again without asking the person.", outcome: 'uncertain' };
     }
     return { error: "That App can't be used right now. This was not done.", outcome: 'not_sent' };
 }

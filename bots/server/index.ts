@@ -12,6 +12,7 @@
 import "./instrument";
 import { installAxiosErrorRedaction } from "./redactAxiosErrors";
 
+import { randomUUID } from 'crypto';
 import { BotManager } from './BotManager';
 import { BotAPI } from './BotAPI';
 import { AdminApiService } from './AdminApiService';
@@ -34,11 +35,16 @@ import { verifyMatrixRegistration } from '../matrix/verifyMatrixRegistration';
 import { MatrixAppServiceClient } from '../matrix/MatrixAppServiceClient';
 import { MatrixDmBridge, type CarriedPart, type DirectChatAnswer, type GuestChatNote } from '../matrix/MatrixDmBridge';
 import { createComputerModelRelay, relayOrbitFor } from './ComputerModelRelay';
-import { createComputerRunner, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
+import { createFaultReplayRoute } from './ComputerFaultReplayRoute';
+import { createRefusalNotes, FAULT_EVIDENCE_MESSAGES, startAgedEvidence } from './ComputerRefusals';
+import { RedisEvidenceStore, RedisSharedCalls } from './ComputerEvidenceStore';
+import { wireComputerStartKeys } from './ComputerStartKeys';
+import { createComputerRunner, probeRelay, relayUrlFromEnv, runnerOrbitFor, type ComputerRunner } from './ComputerRunner';
 import { createScreenGateway, screenOrbitFor, type ScreenGateway } from './ComputerScreenGateway';
 import { pretendRunnerOn } from '../ai/ComputerPretendRunner';
 import { ChatPurgeSweeper } from '../services/ChatPurges';
 import { createMatrixAppServiceRouter, type MatrixAppServiceRouter } from '../matrix/MatrixAppServiceRouter';
+import { createEventInbox, RECOVER_EVERY_MS } from '../matrix/MatrixEventInbox';
 import { uploadAttachment } from '../matrix/uploadAttachment';
 import { botWokaPicture } from '../matrix/wokaPicture';
 import type { BotAvailability } from '../matrix/BotStatusNotes';
@@ -88,8 +94,33 @@ let dmCards: CardSurface | undefined;
 // bubble to the person who asked alone, with one plain line for everyone (#1658). Built before direct messages, so a bubble
 // has its cards with or without them.
 const aiService = botManager.getAIService();
+// The key of a computer job's start waits in the shared store while its outcome is open, so a restart between a start and its answer never makes a second job (a second charge)
+wireComputerStartKeys(aiService, () => botRegistry.evidenceClient(), () => botRegistry.sharedStoreExpected());
 // The address a Brick's computer calls for its AI (OpenAI format, /v1): Orbit checks the key and the room, the provider's key stays here
-preRouters.push(createComputerModelRelay({ orbit: relayOrbitFor(adminApiService), routeFor: (botId) => aiService.relayRoute(botId) }));
+// The relay notes what it refused for a person's allowance or rules, and the runner of the same job reads it to tell whose failure a turn was
+// and records how each model call ended in Orbit's durable fault record, which Orbit judges a failed job's refund by (never held up for it)
+// The rows Orbit has not taken yet are also kept in the shared store (Redis), so a restart of this server does not lose the evidence a failed job's
+// refund rests on: they are sent again, unchanged, when the server is back (see resumeEvidence)
+const computerRefusals = createRefusalNotes(Date.now, {
+    sink: (botId, jobId, rows) => adminApiService.computerJobFaults(botId, jobId, rows as unknown as Array<Record<string, unknown>>),
+    store: new RedisEvidenceStore(() => botRegistry.evidenceClient()),
+    // A machine's calls reach whichever bot server the load balancer picks (a rolling deploy runs two for a while), the runner of its job lives on one:
+    // the servers tell each other where a call arrived, so a runner never concludes "no call reached the relay" from its own notes alone
+    shared: new RedisSharedCalls(() => botRegistry.evidenceClient(), randomUUID()),
+    // Whether this process's runner is working the job this moment (a server that lost the job to another one, or has no runner, runs nothing)
+    runsHere: (jobId) => computerRunner?.active().includes(jobId) === true,
+    // Told once: a row the shared store could not keep (it is still in memory and still sent), a row Orbit has not taken for an hour, and a row Orbit
+    // refused alone while it took others (set aside, kept 30 days), and one Orbit refused with none taken lately (kept, sent again). Ids only.
+    report: (what, info) =>
+        Sentry.captureMessage(FAULT_EVIDENCE_MESSAGES[what], {
+            level: 'warning',
+            tags: { area: 'computer-fault-evidence', what },
+            extra: info,
+        }),
+});
+preRouters.push(createComputerModelRelay({ orbit: relayOrbitFor(adminApiService), routeFor: (botId) => aiService.relayRoute(botId), refusals: computerRefusals }));
+// The operator's way to send the dead letters of the fault record again now (bot service token; counts only)
+preRouters.push(createFaultReplayRoute({ token: () => process.env.BOT_SERVICE_TOKEN, replay: (jobId) => computerRefusals.replayDeadLetters(jobId) }));
 // Every bot hears voice notes (plan v3): what a bot's reply would run on decides whether the note is checked against the person's
 // replies before it is heard, and what the hearing provider still holds is deleted until it confirms
 {
@@ -163,6 +194,12 @@ const approvals = new ToolApprovals({
         },
     },
     roomStillTheirs: (botId, roomId, matrixUserId) => matrixBridge?.roomStillTheirs(botId, roomId, matrixUserId) ?? false,
+    directRoomIs: async (botId, roomId, matrixUserId) => (await matrixBridge?.isDirectRoomOf(botId, roomId, matrixUserId)) ?? false,
+    unshownCards: {
+        mark: (actionId) => botRegistry.markTaskCardUnshown(actionId),
+        marked: (actionId) => botRegistry.taskCardUnshown(actionId),
+        clear: (actionId) => botRegistry.clearTaskCardUnshown(actionId),
+    },
     followUp: (outcome) => matrixBridge?.sayHowItEnded(outcome) ?? Promise.resolve(),
 });
 aiService.useApprovals(approvals);
@@ -178,6 +215,7 @@ const BRICK_SWEEP_EVERY_MS = 60 * 60 * 1000;
 const COMPUTER_SWEEP_EVERY_MS = 60 * 1000;
 const COMPUTER_RUNNER_EVERY_MS = 10 * 1000;
 let brickSweepInterval: NodeJS.Timeout | undefined;
+let matrixRecoverInterval: NodeJS.Timeout | undefined;
 let computerSweepInterval: NodeJS.Timeout | undefined;
 let computerRunner: ComputerRunner | undefined;
 /** Clears the chat rooms of Bricks Orbit purged for good (register R29). */
@@ -193,7 +231,33 @@ const COMPUTER_REPORTS_EVERY_MS = 10 * 1000;
 
 /** Turns direct messages on once Synapse accepts this bot server's registration; leaves them off otherwise. */
 /** Real computers: Orbit's sweep, and the runner that works the jobs Orbit says are running. They need no Matrix, so they start whether or not direct messages are set up. */
+/** Replays the evidence of failed computer jobs that Orbit has not taken, kept in the shared store, every 5 minutes (and at start). */
+const EVIDENCE_REPLAY_EVERY_MS = 5 * 60 * 1000;
+/** Dead letters are offered again once a day. */
+const DEAD_LETTER_REPLAY_EVERY_MS = 24 * 60 * 60 * 1000;
+/** Sends again the evidence of failed computer jobs that was kept when this server stopped. The shared store may not be up yet: it is asked again a few times. */
+function resumeEvidence(attempt = 0): void {
+    const delays = [0, 2000, 10_000, 30_000, 120_000, 300_000];
+    void computerRefusals.resume().then((read) => {
+        if (read || attempt + 1 >= delays.length) {
+            if (!read) console.warn('[BotServer] The evidence kept for failed computer jobs could not be read; rows made from now on are still kept.');
+            return;
+        }
+        const timer = setTimeout(() => resumeEvidence(attempt + 1), delays[attempt + 1]);
+        timer.unref?.();
+    });
+}
+
 function startComputers(): void {
+    resumeEvidence();
+    // Again every 5 minutes: only evidence is sent (under the same call ids, Orbit keeps one row per job and call); nothing is ever run again
+    const evidenceReplay = setInterval(() => void computerRefusals.resume(), EVIDENCE_REPLAY_EVERY_MS);
+    evidenceReplay.unref?.();
+    // The dead letters (rows Orbit refused alone) are offered again once a day under the same ids: one Orbit takes leaves them, one it refuses again stays
+    const deadLetterReplay = setInterval(() => void computerRefusals.replayDeadLetters(), DEAD_LETTER_REPLAY_EVERY_MS);
+    deadLetterReplay.unref?.();
+    // Rows close to the end of the time they are kept are told to the operators (Sentry) in time to replay them: at start (the store may not be up yet) and then every hour
+    startAgedEvidence(computerRefusals);
     computerSweepInterval = setInterval(() => void adminApiService.sweepComputers(), COMPUTER_SWEEP_EVERY_MS);
     computerSweepInterval.unref?.();
     // A development server that pretends (COMPUTER_PRETEND_RUNNER=yes) has no runner
@@ -201,7 +265,7 @@ function startComputers(): void {
     const relayUrl = relayUrlFromEnv();
     // The host only: never a path, a token or anything after it
     console.log(`[BotServer] Computer model address for machines: ${relayUrl ? new URL(relayUrl).host : 'none (a job will end with a clear line)'}`);
-    computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl });
+    computerRunner = createComputerRunner({ orbit: runnerOrbitFor(adminApiService), relayUrl, refusals: computerRefusals, relayProbe: (relay) => probeRelay(relay) });
     computerRunner.start(COMPUTER_RUNNER_EVERY_MS);
 }
 
@@ -229,6 +293,7 @@ async function setupMatrix(): Promise<void> {
         approvals,
         getBotConfig: (botId, fresh) => dmReplyService.getBotConfig(botId, fresh),
         checkAccess: (botId, chatId) => adminApiService.checkDmAccess(botId, chatId),
+        appConnected: async (botId, userUuid, app) => (await adminApiService.appsOfferableFor(botId, userUuid)).some((one) => one.key.toLowerCase() === app.toLowerCase() && one.connected),
         reply: (botId, person, text, attachments, hooks) => dmReplyService.reply(botId, person, text, attachments, hooks),
         rooms: botRegistry,
         uploadAttachment,
@@ -243,8 +308,13 @@ async function setupMatrix(): Promise<void> {
         keep: (botId, chatId, text) => void answersBridge.keepNearbyAnswer(botId, chatId, text),
         opened: (botId, chatId, roomId) => void answersBridge.openedFromNearby(botId, chatId, roomId),
     });
-    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge);
+    // Every event is KEPT in the shared store before Matrix is answered (the durable inbox): an event Matrix sends again is handled once, and one whose server died is taken up here
+    // instead of being lost behind a marker (GPT's sixth answer, finding 9)
+    matrixRouter = createMatrixAppServiceRouter(matrixConfig, matrixBridge, { inbox: createEventInbox(() => botRegistry.evidenceClient(), { expected: () => botRegistry.sharedStoreExpected() }) });
     preRouters.push(matrixRouter);
+    // Every half minute: the events whose server went away are taken up here, oldest first
+    matrixRecoverInterval = setInterval(() => void matrixRouter?.recover(), RECOVER_EVERY_MS);
+    matrixRecoverInterval.unref?.();
     // The game shows a bot's state in its chat header and the People list. Same cached lookup the replies use.
     const bridge = matrixBridge;
     dmStatus = async (botIds) =>
@@ -568,6 +638,7 @@ function stopGameLoop(): void {
     if (gameLoopInterval) {
         clearInterval(gameLoopInterval);
         if (brickSweepInterval) clearInterval(brickSweepInterval);
+        if (matrixRecoverInterval) clearInterval(matrixRecoverInterval);
         if (computerSweepInterval) clearInterval(computerSweepInterval);
         computerRunner?.stop();
         screenGateway?.close();

@@ -9,6 +9,7 @@ import type { GateDecision } from '../mcp/ToolGate';
 import type { DueRun } from '../server/BrickRunner';
 import { TaskApps, type TaskAppsDeps } from '../server/BrickTaskApps';
 import { ModelTaskRunner } from '../server/BrickTaskModel';
+import type { AIService } from '../ai/AIService';
 import { FINISH_CHECK_TOOL, READ_PAGE_TOOL, taskPrompt, type ToolDefinition } from '../server/BrickTaskRun';
 
 const run = (over: Partial<DueRun> = {}): DueRun => ({
@@ -40,9 +41,9 @@ const RUN = (heading: 'looksUp' | 'changesThings' | 'makesNew' | 'deletesOrSends
 function setUp(verdicts: Record<string, GateDecision>, over: Partial<TaskAppsDeps> = {}) {
     const names = Object.keys(verdicts);
     const decide = vi.fn(async (call: { toolName: string }) => verdicts[call.toolName]);
-    const propose = vi.fn(async () => ({ kind: 'waiting' as const, result: { status: 'waiting_for_ok', message: 'A card was put in their chat.' } }));
-    const call = vi.fn(async () => [{ type: 'text', text: 'Found 3 issues' }]);
-    const room = vi.fn(async () => ({ ok: true as const, roomId: '!dm:matrix.test' }));
+    const propose = vi.fn<TaskAppsDeps['approvals']['propose']>(async () => ({ kind: 'waiting' as const, result: { status: 'waiting_for_ok', message: 'A card was put in their chat.' } }));
+    const call = vi.fn<TaskAppsDeps['call']>(async () => [{ type: 'text', text: 'Found 3 issues' }]);
+    const room = vi.fn<TaskAppsDeps['room']>(async () => ({ ok: true as const, roomId: '!dm:matrix.test' }));
     const deps: TaskAppsDeps = {
         discover: async () => ({ tools: names.map(tool), servers: new Map(names.map((name) => [name, entry(name)])) }),
         gate: { decide } as never,
@@ -240,7 +241,7 @@ describe('the model of a check with Apps', () => {
     });
 
     it('is the web alone, as before, when there are no Apps or they cannot be listed', async () => {
-        const ai = { runBrickTask: vi.fn(async () => ({ ended: 'final' })) };
+        const ai = { runBrickTask: vi.fn<AIService['runBrickTask']>(async () => ({ ended: 'final' }) as never) };
         for (const apps of [undefined, { open: async () => null }, { open: async () => Promise.reject(new Error('down')) }]) {
             const runner = new ModelTaskRunner({ ai: ai as never, brick: async () => brick, readPage: vi.fn(), apps: apps as never });
             await runner.run(run(), async () => true);

@@ -16,7 +16,7 @@ const game = vi.hoisted(() => ({
     addMyApp: vi.fn<(app: unknown) => Promise<unknown>>(),
     getMyAppThings: vi.fn<(id: string) => Promise<unknown>>(),
     disconnectMyApp: vi.fn<(id: string) => Promise<unknown>>(),
-    reconnect: vi.fn<(app: string | Promise<string>) => Promise<string>>(),
+    reconnect: vi.fn<(app: string | Promise<string>, options?: { signal?: AbortSignal }) => Promise<string>>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing
 // eslint-disable-next-line svelte/no-svelte-internal
@@ -46,6 +46,7 @@ import { setLocale } from "../../../../../i18n/i18n-svelte";
 import AddAppSheet from "../AddAppSheet.svelte";
 import { DISCOVERY_DEADLINE_MS } from "../AddApp";
 import { forgetMyApps } from "../AppsStore";
+import { cleanupsInProgress, resetCleanupsForTests, setCleanupDelaysForTests } from "../AppCleanup";
 
 const ZAPIER = "https://mcp.zapier.com/api/mcp/mcp";
 const found = {
@@ -85,6 +86,16 @@ async function type(id: string, value: string, inputType = "insertText"): Promis
     input.dispatchEvent(new InputEvent("input", { inputType, bubbles: true }));
     await settle();
 }
+/** A sign-in window that stays open until it is told to close */
+function stoppedBy(signal: AbortSignal | undefined): Promise<string> {
+    return new Promise<string>((resolve) => {
+        const onAbort = () => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve("stopped");
+        };
+        signal?.addEventListener("abort", onAbort);
+    });
+}
 const paste = (value: string) => type("addAppLink", value, "insertFromPaste");
 
 describe("Add your own app (#2001, mock Part 13)", () => {
@@ -106,6 +117,9 @@ describe("Add your own app (#2001, mock Part 13)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         forgetMyApps();
+        // a clean-up that outlives its sheet waits long before trying again, unless a test says otherwise
+        resetCleanupsForTests();
+        setCleanupDelaysForTests([600_000]);
         target = document.createElement("div");
         document.body.appendChild(target);
         game.getMyApps.mockResolvedValue({ apps: [], bricks: [] });
@@ -513,13 +527,17 @@ describe("Add your own app (#2001, mock Part 13)", () => {
     });
 
     it("says that nothing was added when Orbit refuses, and makes no second try on its own", async () => {
-        game.addMyApp.mockRejectedValue(new Error("400"));
+        game.addMyApp.mockRejectedValue(Object.assign(new Error("API error: 400"), { status: 400 }));
         await open();
         await paste(ZAPIER);
         await click("addAppSignIn");
         expect(words(byId("addAppFailed"))).toBe("That didn't go through. Nothing was added.");
-        expect(game.addMyApp).toHaveBeenCalledTimes(1);
+        expect(byId("addAppUnsure")).toBeNull();
         expect(byId("addAppConnected")).toBeNull();
+        // closing the sheet must not replay a refused try
+        await click("addAppCancel");
+        await settle();
+        expect(game.addMyApp).toHaveBeenCalledTimes(1);
         expect(game.disconnectMyApp).not.toHaveBeenCalled();
     });
 
@@ -565,7 +583,7 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         await open();
         await paste(ZAPIER);
         await click("addAppSignIn");
-        expect(words(byId("addAppFailed"))).toBe("That didn't go through. Nothing was added.");
+        expect(words(byId("addAppUnsure"))).toContain("couldn't tell whether that went through");
         expect(game.addMyApp).toHaveBeenCalledTimes(1);
         // the next tap: Orbit answers the repeated key with the app the first try made
         await click("addAppSignIn");
@@ -656,7 +674,9 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         await click("addAppHowKey");
         await type("addAppKey", "sk-1");
         await click("addAppAdd");
-        expect(words(byId("addAppFailed"))).toBe("That didn't go through. Nothing was added.");
+        expect(words(byId("addAppUnsure"))).toBe(
+            "We couldn't tell whether that went through. Try again in a moment; it won't be added twice."
+        );
         // the person changes the key and tries again
         await type("addAppKey", "sk-2");
         await click("addAppAdd");
@@ -686,14 +706,23 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         expect(onDone).toHaveBeenCalledWith("app-2");
     });
 
-    it("keeps looking for an earlier try whose look got no answer, even after a later try also never answered", async () => {
+    it("keeps looking, on its own, for an earlier try whose look got no answer, even after a later try also never answered", async () => {
+        setCleanupDelaysForTests([1]);
         game.discoverMcpOAuthEndpoints.mockResolvedValue({ discovered: false });
-        game.addMyApp
-            .mockRejectedValueOnce(new Error("Orbit did not answer in time")) // sk-1
-            .mockRejectedValueOnce(new Error("Orbit did not answer in time")) // the look for sk-1
-            .mockRejectedValueOnce(new Error("Orbit did not answer in time")) // sk-2
-            .mockResolvedValueOnce({ id: "app-1" }) // the look for sk-1 when the sheet closes
-            .mockResolvedValueOnce({ id: "app-2" }); // the look for sk-2
+        const tries: Record<string, number> = {};
+        game.addMyApp.mockImplementation((app) => {
+            const key = (app as { authConfig: string }).authConfig;
+            tries[key] = (tries[key] ?? 0) + 1;
+            // sk-1: the try, the first look: no answer; the look after that finds the app. sk-2: the try: no answer, then found.
+            if (key === "sk-1") {
+                return tries[key] < 3
+                    ? Promise.reject(new Error("Orbit did not answer in time"))
+                    : Promise.resolve({ id: "app-1" });
+            }
+            return tries[key] < 2
+                ? Promise.reject(new Error("Orbit did not answer in time"))
+                : Promise.resolve({ id: "app-2" });
+        });
         await open();
         await paste("https://tools.example.com/mcp");
         await click("addAppHowKey");
@@ -701,13 +730,15 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         await click("addAppAdd");
         await type("addAppKey", "sk-2");
         await click("addAppAdd");
-        expect(game.addMyApp).toHaveBeenCalledTimes(3);
         await click("addAppCancel");
-        expect(game.addMyApp).toHaveBeenCalledTimes(5);
-        expect(keyOfCall(3)).toBe(keyOfCall(0));
-        expect(keyOfCall(4)).toBe(keyOfCall(2));
-        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
-        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-2");
+        await vi.waitFor(() => {
+            expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+            expect(game.disconnectMyApp).toHaveBeenCalledWith("app-2");
+        });
+        // every look used the key of the try it was for
+        const keys = game.addMyApp.mock.calls.map((call) => (call[0] as { requestKey: string }).requestKey);
+        expect(new Set(keys).size).toBe(2);
+        await vi.waitFor(() => expect(cleanupsInProgress()).toBe(0));
     });
 
     it("does not look for an app when Orbit refused the try, since nothing was made", async () => {
@@ -750,7 +781,7 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         await open();
         await paste(ZAPIER);
         await click("addAppSignIn");
-        expect(words(byId("addAppFailed"))).toBe("That didn't go through. Nothing was added.");
+        expect(words(byId("addAppUnsure"))).toContain("couldn't tell whether that went through");
         await click("addAppCancel");
         expect(game.addMyApp).toHaveBeenCalledTimes(2);
         expect(keyOfCall(1)).toBe(keyOfCall(0));
@@ -805,6 +836,209 @@ describe("Add your own app (#2001, mock Part 13)", () => {
         await settle();
         expect(game.addMyApp).toHaveBeenCalledTimes(2);
         expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+    });
+
+    it("does not send a key, how it is sent, or a header typed for one app to another app", async () => {
+        game.discoverMcpOAuthEndpoints.mockResolvedValue({ discovered: false });
+        await open();
+        await paste("https://tools.example.com/mcp");
+        await click("addAppHowKey");
+        await click("addAppSentApiKey");
+        await type("addAppKey", "sk-for-a");
+        await click("addAppExtra");
+        await click("addAppAddHeader");
+        await type("addAppHeaderName", "X-Team");
+        await type("addAppHeaderValue", "team-a");
+        // the same place again (another path) keeps what was typed
+        await paste("https://tools.example.com/other");
+        await click("addAppHowKey");
+        expect((byId("addAppKey") as HTMLInputElement).value).toBe("sk-for-a");
+        // another app: none of it goes along
+        await paste("https://other.example.org/mcp");
+        await click("addAppHowNone");
+        await click("addAppAdd");
+        expect(game.addMyApp).toHaveBeenCalledTimes(1);
+        expect(game.addMyApp.mock.calls[0][0]).toEqual({
+            name: "My app",
+            serverUrl: "https://other.example.org/mcp",
+            authType: "none",
+            requestKey: expect.stringMatching(/^[0-9a-f]{32}$/),
+        });
+        expect(JSON.stringify(game.addMyApp.mock.calls)).not.toMatch(/sk-for-a|X-Team|team-a/);
+    });
+
+    it("starts the next app with a key sent as a bearer token, not as the first app's way", async () => {
+        game.discoverMcpOAuthEndpoints.mockResolvedValue({ discovered: false });
+        await open();
+        await paste("https://tools.example.com/mcp");
+        await click("addAppHowKey");
+        await click("addAppSentApiKey");
+        await paste("https://other.example.org/mcp");
+        await click("addAppHowKey");
+        expect(byId("addAppSentBearer")?.getAttribute("aria-checked")).toBe("true");
+        expect((byId("addAppKey") as HTMLInputElement).value).toBe("");
+    });
+
+    it("keeps trying to take an unfinished app away after the sheet is gone, until Orbit confirms it", async () => {
+        setCleanupDelaysForTests([1]);
+        game.reconnect.mockImplementationOnce(async (app) => {
+            await app;
+            return "stopped";
+        });
+        game.disconnectMyApp
+            .mockRejectedValueOnce(new Error("Orbit did not answer in time"))
+            .mockRejectedValueOnce(Object.assign(new Error("API error: 503"), { status: 503 }))
+            .mockResolvedValueOnce(undefined);
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        await click("addAppCancel");
+        sheet?.$destroy();
+        sheet = undefined;
+        await vi.waitFor(() => expect(game.disconnectMyApp).toHaveBeenCalledTimes(3));
+        expect(game.disconnectMyApp).toHaveBeenCalledWith("app-1");
+        await vi.waitFor(() => expect(cleanupsInProgress()).toBe(0));
+        expect(game.disconnectMyApp).toHaveBeenCalledTimes(3);
+    });
+
+    it("counts an app Orbit says is not there as taken away, and does not ask again", async () => {
+        setCleanupDelaysForTests([1]);
+        game.reconnect.mockImplementationOnce(async (app) => {
+            await app;
+            return "stopped";
+        });
+        game.disconnectMyApp.mockRejectedValue(Object.assign(new Error("API error: 404"), { status: 404 }));
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        await click("addAppCancel");
+        await vi.waitFor(() => expect(cleanupsInProgress()).toBe(0));
+        expect(game.disconnectMyApp).toHaveBeenCalledTimes(1);
+    });
+
+    it("makes a replacement app only after the look for the earlier try has ended, even when the link was changed meanwhile", async () => {
+        game.discoverMcpOAuthEndpoints.mockResolvedValue({ discovered: false });
+        const order: string[] = [];
+        let release: (answer: unknown) => void = () => undefined;
+        game.addMyApp.mockImplementation((app) => {
+            const sent = app as { serverUrl: string };
+            order.push(`add:${sent.serverUrl}`);
+            if (order.length === 1) return Promise.reject(new Error("Orbit did not answer in time"));
+            if (order.length === 2) {
+                // the look for the first try: Orbit is slow to answer it
+                return new Promise((resolve) => {
+                    release = resolve;
+                });
+            }
+            return Promise.resolve({ id: "app-2" });
+        });
+        game.disconnectMyApp.mockImplementation((id) => {
+            order.push(`drop:${id}`);
+            return Promise.resolve(undefined);
+        });
+        await open();
+        await paste("https://tools.example.com/mcp");
+        await click("addAppHowKey");
+        await type("addAppKey", "sk-1");
+        await click("addAppAdd");
+        // the link moves to another app: the look starts, and is slow
+        await paste("https://other.example.org/mcp");
+        await click("addAppHowNone");
+        void click("addAppAdd");
+        await settle();
+        // nothing is made while the earlier try is still being looked for
+        expect(order).toEqual(["add:https://tools.example.com/mcp", "add:https://tools.example.com/mcp"]);
+        release({ id: "app-1" });
+        await settle();
+        expect(order).toEqual([
+            "add:https://tools.example.com/mcp",
+            "add:https://tools.example.com/mcp",
+            "drop:app-1",
+            "add:https://other.example.org/mcp",
+        ]);
+    });
+
+    it("shows Done and reads the Apps again as soon as it is connected, without waiting for what the app can do", async () => {
+        game.getMyAppThings.mockImplementationOnce(() => new Promise(() => {}));
+        await open();
+        await paste(ZAPIER);
+        const reads = game.getMyApps.mock.calls.length;
+        await click("addAppSignIn");
+        expect(byId("addAppConnected")).not.toBeNull();
+        expect(byId("addAppDone")).not.toBeNull();
+        expect(game.getMyApps.mock.calls.length).toBeGreaterThan(reads);
+        expect(words(byId("addAppConnected"))).toContain("Connected");
+        expect(words(byId("addAppConnected"))).not.toContain("it can do");
+    });
+
+    it("says what the app can do when that comes back after Done is already there", async () => {
+        let answer: (value: unknown) => void = () => undefined;
+        game.getMyAppThings.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        answer({ things: ["Find music"] });
+        await settle();
+        expect(words(byId("addAppConnected"))).toContain("Connected · it can do 1 thing");
+    });
+
+    it("closes the sign-in window when the sheet is cancelled or goes away", async () => {
+        const signals: Array<AbortSignal | undefined> = [];
+        game.reconnect.mockImplementation(async (app, options) => {
+            await app;
+            signals.push(options?.signal);
+            return await stoppedBy(options?.signal);
+        });
+        await open();
+        await paste(ZAPIER);
+        void click("addAppSignIn");
+        await settle();
+        expect(signals).toHaveLength(1);
+        expect(signals[0]?.aborted).toBe(false);
+        await click("addAppCancel");
+        expect(signals[0]?.aborted).toBe(true);
+    });
+
+    it("closes the sign-in window when the sheet goes away without its own close", async () => {
+        const signals: Array<AbortSignal | undefined> = [];
+        game.reconnect.mockImplementation(async (app, options) => {
+            await app;
+            signals.push(options?.signal);
+            return await stoppedBy(options?.signal);
+        });
+        await open();
+        await paste(ZAPIER);
+        void click("addAppSignIn");
+        await settle();
+        sheet?.$destroy();
+        sheet = undefined;
+        expect(signals[0]?.aborted).toBe(true);
+    });
+
+    it("says it could not tell, not that nothing was added, when Orbit fails with a server error", async () => {
+        game.addMyApp.mockRejectedValueOnce(Object.assign(new Error("API error: 502"), { status: 502 }));
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        expect(byId("addAppFailed")).toBeNull();
+        expect(words(byId("addAppUnsure"))).toContain("couldn't tell whether that went through");
+    });
+
+    it("says it could not tell when a refusal follows an earlier try of the same key that never answered", async () => {
+        game.addMyApp
+            .mockRejectedValueOnce(new Error("Orbit did not answer in time"))
+            .mockRejectedValueOnce(Object.assign(new Error("API error: 400"), { status: 400 }));
+        await open();
+        await paste(ZAPIER);
+        await click("addAppSignIn");
+        await click("addAppSignIn");
+        expect(byId("addAppFailed")).toBeNull();
+        expect(byId("addAppUnsure")).not.toBeNull();
     });
 
     it("never writes the key into the page's words", async () => {

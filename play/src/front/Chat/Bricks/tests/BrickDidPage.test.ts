@@ -125,6 +125,20 @@ describe("Everything Brick did page (#2002, mock t-5-closed)", () => {
         expect(all("brickDidRun")).toHaveLength(1);
     });
 
+    it("still offers More when the first page held only runs that could not be read but Orbit has older ones", async () => {
+        await show({ runs: [{ runId: "", state: "nonsense" }], next: "cursor-1" });
+        expect(all("brickDidRun")).toHaveLength(0);
+        expect(byId("brickDidNone")).not.toBeNull();
+        expect(byId("brickDidMore")).not.toBeNull();
+        game.getBrickDid.mockResolvedValueOnce({ runs: [run({ runId: "r1", words: "Older one" })], next: null });
+        byId("brickDidMore")?.click();
+        await settle();
+        expect(game.getBrickDid).toHaveBeenLastCalledWith(BOT, "cursor-1");
+        expect(all("brickDidRun")).toHaveLength(1);
+        expect(byId("brickDidNone")).toBeNull();
+        expect(byId("brickDidMore")).toBeNull();
+    });
+
     it("says what it shows when there are no runs, and offers Try again when it cannot read", async () => {
         await show({ runs: [], next: null });
         expect(text(byId("brickDidNone"))).toBe(

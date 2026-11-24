@@ -8,7 +8,7 @@
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { loadMyBricks, myBricksStore } from "../MyBricksStore";
     import BrickPicture from "../BrickPicture.svelte";
-    import { dayOf, parseMyAppPage, THINGS, type Lend, type MyAppPage, type Thing } from "./Apps";
+    import { dayOf, namesLine, parseMyAppPage, THINGS, type Lend, type MyAppPage, type Thing } from "./Apps";
     import { appIcon } from "./AppIcon";
     import AppBrickScreen from "./AppBrickScreen.svelte";
     import type { GitHubWhere } from "./GitHub";
@@ -105,7 +105,10 @@
                 warningMessageStore.addWarningMessage(text.workFailed());
                 return false;
             }
-            await Promise.all([load(), loadMyApps(true)]);
+            // The change is made: a read that fails afterwards is not the change failing
+            await Promise.all([load(), loadMyApps(true)]).catch((error: unknown) =>
+                console.warn("Could not read the page again after a change", error)
+            );
             return true;
         } finally {
             // eslint-disable-next-line require-atomic-updates
@@ -129,6 +132,7 @@
         usesPerDay: number | null;
     }): Promise<boolean> {
         const current = sheet?.kind === "change" ? sheet.lend : undefined;
+        const submitting = sheet;
         const done = await change(() =>
             current
                 ? botApiService.changeAppLend(appId, choice.universeId, {
@@ -137,8 +141,9 @@
                   })
                 : botApiService.lendApp(appId, choice)
         );
-        // eslint-disable-next-line require-atomic-updates
-        if (done) sheet = undefined;
+        // Only its own sheet is closed: one opened since (after a cancel) keeps what is typed in it
+
+        if (done && sheet === submitting) sheet = undefined;
         return done;
     }
 
@@ -200,6 +205,7 @@
     }
 
     async function saveKey(key: string): Promise<"saved" | "refused" | "failed"> {
+        const submitting = sheet;
         try {
             await botApiService.saveGitHubKey(key);
         } catch (error) {
@@ -207,7 +213,9 @@
             console.warn("The GitHub key was not saved", error);
             return code === "refused" ? "refused" : "failed";
         }
-        sheet = undefined;
+        // Only the sheet that saved it is closed: one opened since (after a cancel) keeps what is typed in it
+
+        if (sheet === submitting) sheet = undefined;
         await Promise.all([load(), loadMyApps(true)]);
         return "saved";
     }
@@ -518,9 +526,18 @@
         lines={[
             {
                 text:
-                    lendOf.bots.length === 1
+                    lendOf.bots.length === 0
+                        ? text.takeBackBotsNone({ app: app.name })
+                        : lendOf.bots.length === 1
                         ? text.takeBackBots({ bots: lendOf.bots[0].botName, app: app.name })
-                        : text.takeBackBotsNone({ app: app.name }),
+                        : text.takeBackSeveral({
+                              bots: namesLine(
+                                  lendOf.bots.map((bot) => bot.botName),
+                                  text.and(),
+                                  (count) => text.more({ count })
+                              ),
+                              app: app.name,
+                          }),
                 bold: [text.atOnce()],
             },
             { text: text.takeBackAgain(), bold: [] },

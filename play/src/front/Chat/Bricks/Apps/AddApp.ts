@@ -91,6 +91,19 @@ export function looksLikeLink(link: string): boolean {
     }
 }
 
+/**
+ * Where a link goes (its host and port, lower case), or "" when it is not a link. A key or header typed for one app is only for
+ * that destination: when the link moves to another one, they are not carried over.
+ */
+export function destinationOf(link: string): string {
+    if (!looksLikeLink(link)) return "";
+    try {
+        return new URL(link.trim()).host.toLowerCase();
+    } catch {
+        return "";
+    }
+}
+
 /** Orbit refuses these as extra headers, because the way in is kept apart and locked */
 const RESERVED_HEADERS = ["authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key"];
 

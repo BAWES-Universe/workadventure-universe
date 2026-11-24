@@ -165,6 +165,38 @@ describe('a note for a bot', () => {
         expect(hearer.remove).toHaveBeenCalledWith(expect.objectContaining({ key: 'key-of-enc' }), 'file', 'f-1');
     });
 
+    it('keeps what neither Orbit nor the provider took, and offers it to Orbit as a cleanup job again until Orbit takes it', async () => {
+        orbit.addVoiceNoteCleanup.mockImplementation(async (job: { kind: string }) => {
+            if (job.kind === 'file') throw new Error('orbit down');
+        });
+        hearer.remove.mockRejectedValue(new Error('provider down'));
+        const t = turns();
+        await t.hear('bot-1', 'event-1', { bytes: new Uint8Array([1]) }, SENDER);
+        expect(hearer.remove).toHaveBeenCalledWith(expect.anything(), 'file', 'f-1');
+        orbit.addVoiceNoteCleanup.mockClear();
+        // Orbit is still down: the file waits, and nothing is dropped
+        await t.cleanNow();
+        expect(orbit.addVoiceNoteCleanup).toHaveBeenCalledWith(expect.objectContaining({ kind: 'file', objectId: 'f-1' }), expect.any(Number));
+        orbit.addVoiceNoteCleanup.mockClear();
+        // Orbit is back: it takes the job once, and it is not offered again
+        orbit.addVoiceNoteCleanup.mockImplementation(async () => undefined);
+        await t.cleanNow();
+        expect(orbit.addVoiceNoteCleanup).toHaveBeenCalledTimes(1);
+        orbit.addVoiceNoteCleanup.mockClear();
+        await t.cleanNow();
+        expect(orbit.addVoiceNoteCleanup).not.toHaveBeenCalled();
+    });
+
+    it('treats a delete that the provider answered with "gone" or success as confirmed, and keeps one it refused', async () => {
+        orbit.addVoiceNoteCleanup.mockRejectedValue(new Error('orbit down'));
+        for (const [status, kept] of [[204, false], [404, false], [500, true]] as const) {
+            hearer.remove.mockResolvedValue(status);
+            const t = turns();
+            await t.hear('bot-1', `event-${status}`, { bytes: new Uint8Array([1]) }, SENDER);
+            expect((t as unknown as { unconfirmed: Map<string, unknown> }).unconfirmed.size > 0).toBe(kept);
+        }
+    });
+
     it('measures only as many notes at once as the server takes, and says busy for one more instead of queueing it', async () => {
         const finish: Array<() => void> = [];
         measure.mockImplementation(

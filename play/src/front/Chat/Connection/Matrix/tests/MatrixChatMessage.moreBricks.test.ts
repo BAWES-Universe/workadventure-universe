@@ -80,6 +80,32 @@ describe("more Bricks in a Brick's chat (#1996)", () => {
         expect(get(card.content).body).toBe(offer.ask);
     });
 
+    // GPT's sixth answer, finding 6
+    it("knows the job a Brick could not carry on, so the card can offer starting it afresh", () => {
+        const card = message(BRICK, {
+            msgtype: "m.text",
+            body: "Visa form",
+            "universe.computer_new_job_offer": { title: "Visa form" },
+        });
+        expect(card.newJobOffer).toEqual({ title: "Visa form" });
+        // A person's own message never carries one, and neither does a notice
+        expect(
+            message(ME, {
+                msgtype: "m.text",
+                body: "Visa form",
+                "universe.computer_new_job_offer": { title: "Visa form" },
+            }).newJobOffer
+        ).toBeUndefined();
+        expect(
+            message(BRICK, {
+                msgtype: "m.notice",
+                body: "Visa form",
+                "universe.computer_new_job_offer": { title: "Visa form" },
+            }).newJobOffer
+        ).toBeUndefined();
+        expect(message(BRICK, { msgtype: "m.text", body: "All done." }).newJobOffer).toBeUndefined();
+    });
+
     it("takes neither from a person's own message", () => {
         const mine = message(ME, {
             msgtype: "m.text",

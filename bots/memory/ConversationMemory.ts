@@ -115,6 +115,8 @@ export interface PendingMedia {
     again?: boolean;
     /** What the file is called, when it has a name of its own (a file sent again); otherwise the link's last part. */
     name?: string;
+    /** Set when it was made for the one person this memory is about (an answer for them alone, #1993): whatever turn sends it later, it goes to them alone, as they are in the space then. The id is only a marker; it is not used to address it, since a player id can belong to someone else after a restore. */
+    audience?: number;
 }
 
 export interface BotPlayerMemory {
@@ -152,8 +154,22 @@ export interface BotPlayerMemory {
     // turn is in. Runtime only: nothing here is saved.
     pendingArtifacts?: Array<{ id: string; version: number; title: string; kind: 'app' | 'page' | 'markdown' | 'svg'; maker: string }>;
     dmRoomId?: string;
+    /** The Matrix event of the message this turn answers (the start of a computer job is keyed by it). Runtime only. */
+    dmEventId?: string;
+    /** When that message was written (its `origin_server_ts`). Runtime only. */
+    dmEventTs?: number;
     /** What a direct-message turn did about Bricks (game #1996): one it made, a suggestion to show. Goes out with the reply. Runtime only. */
     pendingBricks?: import('../ai/BrickTools').BrickNote[];
+    /**
+     * Orbit refused to carry a job on in this turn and a new job is a sensible next step (GPT's sixth answer, finding 6): the reply carries a separate "Start a new job" button for
+     * the job of this title. Nothing is started by it. Runtime only.
+     */
+    pendingNewJob?: { title: string };
+    /**
+     * This turn is the person's tap on "Start a new job" (GPT's sixth answer, finding 6): the job is started afresh, so "try again" is NOT offered to the model in it (a
+     * continuation would be refused again). Set for the turn only. Runtime only.
+     */
+    newJobAsked?: { title: string };
     /** The artifacts the person pointed at by replying to their card in the turn being answered (game #1781), from the
      * chat app. Their pasted links come from the history. Started fresh with each turn. Runtime only. */
     pointedArtifacts?: string[];
@@ -163,6 +179,18 @@ export interface BotPlayerMemory {
     /** The Instant App runs of the turn being answered, by tool and arguments, so asking the model again for the same turn (a repeated
      * reply is regenerated) never runs or pays a second time. Cleared when the next turn starts. Runtime only. */
     instantCalls?: Map<string, Promise<Record<string, unknown>>>;
+    /** The start keys of the computer jobs asked for in this chat, by chat and title, so asking again (a reply written again, a tool call retried, the person asking again) sends
+     * the key of the first ask and Orbit answers with the job it made, never a second. An ask whose outcome is open keeps its key for ten minutes; a settled one is cleared when the
+     * next turn starts. Runtime only. */
+    computerStarts?: Map<string, { key: string; at: number; open: boolean }>;
+    /** The confirmations of the computer jobs the reply being written names (see `ConfirmationQueue`): sent once that reply is delivered to the person's chat, dropped when it is not or
+     * a newer message replaces it. Runtime only. */
+    computerConfirmations?: import('../ai/ComputerTools').ConfirmationQueue;
+    /** Brick's controls of its computer jobs in this chat (see `ComputerControlTools`): the question it asked before cancelling or stopping, which only the person's next message can
+     * answer, and this turn's controls, so a reply asked again never pauses, cancels or passes a message on twice. Runtime only. */
+    computerControls?: import('../ai/ComputerControlTools').ControlState;
+    /** "Try again" (piece 8): the ended job Orbit named for THIS turn, when the person asked to try it again (`ComputerTryAgain`); `use_computer` with `try_again` carries it on. Set fresh each turn. Runtime only. */
+    computerRetry?: { id: string; title: string };
     /** The jobs of an App that someone else asked for in the turn being answered and that may have run (no answer came back), by job and
      * inputs: the same one is not sent again in this turn (#2006). Cleared when the next turn starts. Runtime only. */
     sharedUncertain?: Set<string>;
@@ -357,7 +385,7 @@ export class ConversationMemory {
      */
     forgetThings?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<number>;
     /** As forgetThings, and how many of them Orbit has not taken yet: those are tried again, but not if this process restarts. */
-    forgetThingsReported?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<{ went: number; waiting: number }>;
+    forgetThingsReported?(botId: string, playerId: number, keys: ReadonlySet<string>, kinds: ReadonlyMap<string, string>): Promise<{ went: number; waiting: number; durable?: boolean }>;
 
     /**
      * A reply only this person read, in a space where other people were (#1993): kept as said with nobody else there,

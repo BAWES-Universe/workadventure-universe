@@ -18,10 +18,20 @@ export const openingBrickChats: Readable<ReadonlySet<string>> = { subscribe: ope
 const running = new Map<string, Promise<ChatRoom | undefined>>();
 const makeIt: MakeItMemory = new Map();
 
+/** Whether a folder, or a folder inside one, holds a room with that id. Each folder is read once, so a folder that holds itself ends. */
+function inFolders(folders: readonly RoomFolder[], roomId: string, seen: Set<string> = new Set()): boolean {
+    return folders.some((folder) => {
+        if (seen.has(folder.id)) return false;
+        seen.add(folder.id);
+        return get(folder.rooms).some((room) => room.id === roomId) || inFolders(get(folder.folders), roomId, seen);
+    });
+}
+
 function listed(connection: ChatConnectionInterface, roomId: string): boolean {
     return (
         get(connection.directRooms).some((room) => room.id === roomId) ||
-        get(connection.rooms).some((room) => room.id === roomId)
+        get(connection.rooms).some((room) => room.id === roomId) ||
+        inFolders(get(connection.folders), roomId)
     );
 }
 

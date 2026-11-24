@@ -253,6 +253,11 @@ export interface ChatMessage {
     brickOffer?: BrickOffer;
     /** Set on a Brick's offer to connect an App (#2001): while it is the newest message it is a card above the message box. */
     appOffer?: AppOffer;
+    /**
+     * Set on a Brick's offer of a new computer job, after an answer that says Orbit would not carry one on (GPT's sixth answer, finding 6): while it is the newest message it is a
+     * card above the message box with one button, "Start a new job". Nothing was started.
+     */
+    newJobOffer?: { title: string };
     /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while
      * it waits, then drawn in the chat as it ended. The bot server edits the same notice. */
     ask?: Readable<BotAsk | undefined>;

@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { botApiService } from "../../external-modules/bots/services/BotApiService";
 import { refreshBrickHome } from "./BrickHomeStore";
@@ -122,6 +122,12 @@ export async function bringBrickAlong(brickId: string): Promise<BringAlongOutcom
 export async function endBrickVisit(brickId: string): Promise<boolean> {
     try {
         await botApiService.endBrickVisit(brickId);
+        // The visit is over in Orbit, so the page stops saying the Brick walks here whatever the next read does
+        if (forBrick === brickId) {
+            const before = get(visit);
+            newest++;
+            visit.set({ state: "none", place: before?.place ? before.place : null });
+        }
         // Read again rather than guess: the answer to an ended visit names no place, and the page says where it would walk
         await readBrickVisit(brickId);
         // The visit is over in Orbit; the Brick is taken off the map, asked once more when the bot server did not answer

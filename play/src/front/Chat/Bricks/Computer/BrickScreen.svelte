@@ -3,13 +3,14 @@
     // mouse and keyboard and hand back. In control, Brick names what it is ready to put in and where, and one tap fills in
     // exactly that; paying and submitting are always yours. Watching only looks: it never wakes a computer, and a computer
     // that is resting has no screen to show.
-    import { onMount } from "svelte";
+    import { onDestroy, onMount } from "svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import PanelHeader from "../../../Components/MapEditor/EditMode/PanelHeader.svelte";
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
     import { canWatch, holdsComputer, sentenceStart } from "./BrickComputer";
+    import { askToEnd } from "./OpenComputerJobs";
     import type { BrickRef } from "./BrickScreenStore";
     import BrickScreenView from "./BrickScreenView.svelte";
     import { IconCircleCheck, IconHandFinger, IconId, IconLoader2 } from "@wa-icons";
@@ -24,6 +25,11 @@
     $: lastStep = job?.waitingFor === "pay" || job?.waitingFor === "submit";
 
     let busy = false;
+    // Set when this screen goes away: what an action of it answers after that is nobody's to close or change
+    let gone = false;
+    onDestroy(() => {
+        gone = true;
+    });
     // The person tapped "Fill in my details" for what Brick named: once Brick has put it in, the tray says so
     let tapped = false;
     // Each new request for details is a round: the first sight of it, or the same words seen again after a gap, or other
@@ -45,20 +51,37 @@
 
     function act(action: "stop" | "take-over" | "hand-back" | "fill-details") {
         if (busy) return;
+        // Stop ends every job on the computer (asking first when that is several): the screen closes once something has ended
+        if (action === "stop") {
+            const brickAtTap = brick.id;
+            // Pending until the request is over, whatever came of it (a question hands the next tap to its sheet): a second tap never sends a second Stop
+            busy = true;
+            void askToEnd(brick, { stop: true }, () => {
+                if (!gone && brick.id === brickAtTap) onClose();
+            }).finally(() => {
+                busy = false;
+            });
+            return;
+        }
         busy = true;
         // The tap approves what is on screen: what Brick named is sent back, so Orbit refuses it if Brick named something else since
         const shown =
             action === "fill-details" && job?.ready ? { what: job.ready.what, where: job.ready.where } : undefined;
         // The round the tap was made in, kept now: the answer can come after a read has moved on to another request
         const roundAtTap = round;
+        // And the Brick it was made for: an answer after this screen went away, or turned to another Brick, closes nothing there
+        const brickAtTap = brick.id;
         brickComputerAction(brick.id, action, shown)
             .then((ok) => {
+                if (gone || brick.id !== brickAtTap) {
+                    if (!ok) warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
+                    return;
+                }
                 if (!ok) warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
                 else if (action === "fill-details") {
                     tapped = true;
                     tappedRound = roundAtTap;
-                } else if (action === "stop") onClose();
-                else if (action === "hand-back") tapped = false;
+                } else if (action === "hand-back") tapped = false;
             })
             .catch((error) => console.error(error))
             .finally(() => {
@@ -110,6 +133,12 @@
             on:click={() => act("fill-details")}
             >{busy ? $LL.chat.brick.computer.filling() : $LL.chat.brick.computer.fillIn()}</button
         >
+    {:else if inControl && lastStep}
+        <!-- Paying and submitting are always the person's: that is said before anything of what was filled in -->
+        <div class="bs-last" data-testid="brickScreenLast">
+            <span class="bs-h">{$LL.chat.brick.computer.lastStepYours()}</span>
+            <span class="bs-l">{$LL.chat.brick.computer.lastStepLine({ name: brick.name })}</span>
+        </div>
     {:else if inControl && tapped && !job?.ready}
         <div class="bs-tray" data-testid="brickScreenFilled">
             <span class="bs-ic ok"><IconCircleCheck font-size="22" /></span>
@@ -118,11 +147,6 @@
                     >{$LL.chat.brick.computer.filledLine()}</span
                 ></span
             >
-        </div>
-    {:else if inControl && lastStep}
-        <div class="bs-last" data-testid="brickScreenLast">
-            <span class="bs-h">{$LL.chat.brick.computer.lastStepYours()}</span>
-            <span class="bs-l">{$LL.chat.brick.computer.lastStepLine({ name: brick.name })}</span>
         </div>
     {/if}
 

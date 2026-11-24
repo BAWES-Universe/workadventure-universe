@@ -66,3 +66,22 @@ describe('BotRegistry: every chat link of a purged bot', () => {
         await expect(registry.forgetDmRoomsOfBot('bot1')).rejects.toThrow('shared store is down');
     });
 });
+
+describe('BotRegistry: a goal step\'s card that was not shown', () => {
+    it('says the shared store is unavailable instead of marking or answering "none" when it is down', async () => {
+        const registry = registryWith(undefined);
+        await expect(registry.markTaskCardUnshown('act_1')).rejects.toThrow('not connected');
+        await expect(registry.taskCardUnshown('act_1')).rejects.toThrow('not connected');
+        // Clearing says so too: the caller must know the old marker may still be there
+        await expect(registry.clearTaskCardUnshown('act_1')).rejects.toThrow('not connected');
+    });
+
+    it('marks, reads and clears it when the store is up', async () => {
+        const keys = new Set<string>();
+        const registry = registryWith({ isOpen: true, isReady: true, set: async (k: string) => void keys.add(k), exists: async (k: string) => (keys.has(k) ? 1 : 0), del: async (k: string) => void keys.delete(k) });
+        await registry.markTaskCardUnshown('act_1');
+        expect(await registry.taskCardUnshown('act_1')).toBe(true);
+        await registry.clearTaskCardUnshown('act_1');
+        expect(await registry.taskCardUnshown('act_1')).toBe(false);
+    });
+});

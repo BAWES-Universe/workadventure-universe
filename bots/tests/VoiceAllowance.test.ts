@@ -347,8 +347,14 @@ describe('a person who chose text only', () => {
         await b.connect();
         choose(b, 'off');
         await b.say(reply(1), 'Hello.');
+        // They leave: the visit ends and what the bot held for it goes. They come back, and the game sends their choice again
+        b.calls.spaceUserLeft(SPACE, 'room_7');
+        await b.connect();
+        choose(b, 'off');
         await b.say(reply(2), 'Hello again.');
+        expect(b.says()).toEqual([]);
         expect(b.orbit.checkVoiceAllowance).not.toHaveBeenCalled();
+        expect(b.orbit.releaseVoiceReply).not.toHaveBeenCalled();
     });
 
     it('does not reconnect anyone, and asks nothing of Orbit, for a reply it keeps in text', async () => {

@@ -56,6 +56,25 @@ describe("the Bricks of the room being edited (#2005)", () => {
         expect(api.getRoomBricks).toHaveBeenCalledTimes(1);
     });
 
+    it("forgets the Bricks of the room before when there is no room any more, and a read still on its way for it puts nothing back", async () => {
+        api.getRoomBricks.mockResolvedValueOnce(answer());
+        await loadRoomBricks();
+        expect(get(roomBricksStore)).toBeDefined();
+        let late: (value: unknown) => void = () => undefined;
+        api.getRoomBricks.mockReturnValueOnce(
+            new Promise((resolve) => {
+                late = resolve;
+            })
+        );
+        const reading = loadRoomBricks();
+        api.getRoomId.mockReturnValue(null);
+        await loadRoomBricks();
+        expect(get(roomBricksStore)).toBeUndefined();
+        late(answer());
+        await reading;
+        expect(get(roomBricksStore)).toBeUndefined();
+    });
+
     it("never shows one room's Bricks in another room", async () => {
         api.getRoomBricks.mockResolvedValueOnce(answer());
         await loadRoomBricks();
@@ -76,14 +95,93 @@ describe("the Bricks of the room being edited (#2005)", () => {
     it("gives a Brick a home at the picked spot, reads the room again and has the bot server put it on the map", async () => {
         api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
         api.getRoomBricks.mockResolvedValue(answer());
-        const spot = {
-            behaviorType: "idle",
-            behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } },
-        };
+        const spot = { behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } };
         await expect(placeBrickHere({ id: "m1" }, spot)).resolves.toEqual({ ok: true, keyNotLent: false });
+        // The spot alone: a first home is idle by Orbit's default, and an idle is never made up and sent
         expect(api.placeBrickHome).toHaveBeenCalledWith("m1", ROOM, spot);
+        expect(api.placeBrickHome.mock.calls[0][2]).not.toHaveProperty("behaviorType");
         expect(api.getRoomBricks).toHaveBeenCalled();
         expect(api.notifyRoomEnter).toHaveBeenCalledWith(ROOM);
+    });
+
+    it("does not take how a Brick behaved in the room before for how it behaves here, after walking into another room", async () => {
+        api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
+        const patrol = {
+            behaviorType: "patrol",
+            behaviorConfig: {
+                assignedSpace: { center: { x: 10, y: 20 }, radius: 80 },
+                patrolRoute: [{ x: 1, y: 2 }],
+                wanderSpeed: 3,
+            },
+        };
+        api.getRoomBricks.mockResolvedValueOnce(
+            answer({ here: [{ ...answer().here[0], id: "m1", mine: true, ...patrol }] })
+        );
+        await loadRoomBricks();
+        // Another room now, and nothing has read its Bricks yet
+        api.getRoomId.mockReturnValue("/@/team/universe/other");
+        api.getRoomBricks.mockResolvedValue(answer({ here: [] }));
+        const spot = { behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } };
+        await placeBrickHere({ id: "m1" }, spot);
+        expect(api.placeBrickHome).toHaveBeenCalledWith("m1", "/@/team/universe/other", spot);
+    });
+
+    it("moves a Brick that already stands here with how it behaves kept: only its spot changes", async () => {
+        api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
+        const patrol = {
+            behaviorType: "patrol",
+            behaviorConfig: {
+                assignedSpace: { center: { x: 10, y: 20 }, radius: 80 },
+                patrolRoute: [{ x: 1, y: 2 }],
+                wanderSpeed: 3,
+            },
+        };
+        api.getRoomBricks.mockResolvedValue(
+            answer({ here: [{ ...answer().here[0], id: "m1", mine: true, ...patrol }] })
+        );
+        await loadRoomBricks();
+        await placeBrickHere(
+            { id: "m1" },
+            { behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } }
+        );
+        expect(api.placeBrickHome).toHaveBeenCalledWith("m1", ROOM, {
+            behaviorType: "patrol",
+            behaviorConfig: {
+                assignedSpace: { center: { x: 64, y: 96 }, radius: 80 },
+                patrolRoute: [{ x: 1, y: 2 }],
+                wanderSpeed: 3,
+            },
+        });
+    });
+
+    it("reads how the Brick behaves here after waiting to learn where it lived, so a list reloaded meanwhile is the one used", async () => {
+        api.placeBrickHome.mockResolvedValue({ home: HOME, keyNote: null });
+        const patrol = {
+            behaviorType: "patrol",
+            behaviorConfig: {
+                assignedSpace: { center: { x: 10, y: 20 }, radius: 80 },
+                patrolRoute: [{ x: 1, y: 2 }],
+                wanderSpeed: 3,
+            },
+        };
+        api.getRoomBricks.mockResolvedValueOnce(
+            answer({ here: [{ ...answer().here[0], id: "m1", mine: true, ...patrol }] })
+        );
+        await loadRoomBricks();
+        let learned: (home: unknown) => void = () => undefined;
+        api.getBrickHome.mockReturnValueOnce(
+            new Promise((resolve) => {
+                learned = resolve;
+            })
+        );
+        const spot = { behaviorConfig: { assignedSpace: { center: { x: 64, y: 96 }, radius: 0 } } };
+        const placing = placeBrickHere({ id: "m1" }, spot);
+        // Meanwhile the Brick was taken out here (another tab): the list no longer has it
+        api.getRoomBricks.mockResolvedValue(answer({ here: [] }));
+        await loadRoomBricks();
+        learned({ home: null });
+        await placing;
+        expect(api.placeBrickHome).toHaveBeenCalledWith("m1", ROOM, spot);
     });
 
     it("says when others cannot talk to it yet because its key is not lent", async () => {

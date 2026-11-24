@@ -11,13 +11,31 @@ describe('a forget that removed nothing, as the line shows it (CodeRabbit)', () 
         expect(steps.field().steps[0].done).toBe('Forgot');
         steps.finish([resultOf('f', { forgotten: [], unclear: true })]);
         const step = steps.field().steps[0];
-        expect(step).toMatchObject({ state: 'failed', done: 'Forgot nothing yet' });
+        // Asking which memory is meant changed nothing, and is not a failed step
+        expect(step).toMatchObject({ state: 'done', done: 'Forgot nothing yet' });
         expect(step.note).toContain('Nothing forgotten');
+        steps.end(1000);
+        expect(steps.text()).not.toContain("didn't work");
         // Forgot for real: the label stays
         const again = new ReplySteps(0);
         again.start([describeStep({ id: 'g', name: 'forget_memory', arguments: { about: 'coffee' } })]);
         again.finish([resultOf('g', { forgotten: ['x'], count: 1 })]);
         expect(again.field().steps[0]).toMatchObject({ state: 'done', done: 'Forgot' });
+    });
+});
+
+describe('the summary of forgets that ended in different words (Sentry)', () => {
+    it('counts a forget that removed something apart from one that found nothing, instead of one label over both', () => {
+        const steps = new ReplySteps(0);
+        steps.start([
+            describeStep({ id: 'a', name: 'forget_memory', arguments: { about: 'coffee' } }),
+            describeStep({ id: 'b', name: 'forget_memory', arguments: { about: 'tea' } }),
+        ]);
+        steps.finish([resultOf('a', { forgotten: ['x'], count: 1 }), resultOf('b', { forgotten: [], unclear: true })]);
+        steps.end(1000);
+        const line = steps.field().line;
+        expect(line).toBe('Forgot · Forgot nothing yet');
+        expect(line).not.toMatch(/2 times/);
     });
 });
 
@@ -258,7 +276,8 @@ describe('waiting, times and what a step did (#2061)', () => {
     it('lists what a call sent as plain lines, keeping an address but never a key, a token or data', () => {
         const lines = stepDetails(
             { to: 'info@meetingcpp.com', subject: 'Review draft', api_key: 'abc', note: 'x'.repeat(30) + '1', options: { a: 1 }, tags: ['a', 'b'], link: 'https://x.test/p?token=zz#h' },
-            [{ type: 'text', text: 'Draft updated' }]
+            [{ type: 'text', text: 'Draft updated' }],
+            true
         );
         expect(lines).toEqual([
             { label: 'To', text: 'info@meetingcpp.com' },
@@ -274,8 +293,15 @@ describe('waiting, times and what a step did (#2061)', () => {
     });
 
     it('shows no result that is data, and nothing when there is nothing to show', () => {
-        expect(stepDetails({}, [{ type: 'text', text: '{"data":{"id":"r1"}}' }])).toBeUndefined();
+        expect(stepDetails({}, [{ type: 'text', text: '{"data":{"id":"r1"}}' }], true)).toBeUndefined();
         expect(stepDetails('{"subject":"Hi"}', undefined)).toEqual([{ label: 'Subject', text: 'Hi' }]);
+    });
+
+    it('leaves out what a tool answered unless its answer is known to be a safe summary, so a password in plain text never reaches a step', () => {
+        const answer = [{ type: 'text', text: 'Your new password is correct horse battery' }];
+        expect(stepDetails({ subject: 'Hi' }, answer)).toEqual([{ label: 'Subject', text: 'Hi' }]);
+        expect(stepDetails({}, answer)).toBeUndefined();
+        expect(stepDetails({ subject: 'Hi' }, answer, true)).toEqual([{ label: 'Subject', text: 'Hi' }, { label: 'Result', text: 'Your new password is correct horse battery' }]);
     });
 
     it('carries what a step did into the field it sends', () => {

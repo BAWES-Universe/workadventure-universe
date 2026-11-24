@@ -109,44 +109,48 @@ export function bringGuestChatInto(brickId: string): void {
     const myChatId = localUserStore.getChatId();
     const own = get(myBricksStore)?.find((brick) => brick.id === brickId);
     if (!get(userIsConnected) || !myChatId || !own?.isDefault) return;
-    bringGuestChat({
-        read: () => {
-            const chat = parseGuestChat(localUserStore.getGuestBrickChat(), null, Date.now());
-            if (!chat) return chat;
-            // Taken only when Orbit handed it to this very account: a mark left by an earlier account on this device is not theirs
-            const mark = takenMark(chat.guestId, myChatId);
-            const rest = { ...chat };
-            delete rest.carryTaken;
-            return takenThisPage.has(mark) || localUserStore.getGuestBrickChatTaken() === mark
-                ? { ...rest, carryTaken: true as const }
-                : rest;
-        },
-        keep: (chat) => {
-            const rest = { ...chat };
-            delete rest.carryTaken;
-            if (chat.carryTaken) {
+    bringGuestChat(
+        {
+            current: () => get(userIsConnected) && localUserStore.getChatId() === myChatId,
+            read: () => {
+                const chat = parseGuestChat(localUserStore.getGuestBrickChat(), null, Date.now());
+                if (!chat) return chat;
+                // Taken only when Orbit handed it to this very account: a mark left by an earlier account on this device is not theirs
                 const mark = takenMark(chat.guestId, myChatId);
-                takenThisPage.add(mark);
-                localUserStore.setGuestBrickChatTaken(mark);
-            }
-            localUserStore.setGuestBrickChat(serializeGuestChat(rest));
+                const rest = { ...chat };
+                delete rest.carryTaken;
+                return takenThisPage.has(mark) || localUserStore.getGuestBrickChatTaken() === mark
+                    ? { ...rest, carryTaken: true as const }
+                    : rest;
+            },
+            keep: (chat) => {
+                const rest = { ...chat };
+                delete rest.carryTaken;
+                if (chat.carryTaken) {
+                    const mark = takenMark(chat.guestId, myChatId);
+                    takenThisPage.add(mark);
+                    localUserStore.setGuestBrickChatTaken(mark);
+                }
+                localUserStore.setGuestBrickChat(serializeGuestChat(rest));
+            },
+            drop: () => localUserStore.dropGuestBrickChat(),
+            take: (guestId) => botApiService.takeGuestChat(guestId),
+            parts: () => botApiService.botServerCarriesParts(),
+            carry: async (carryId, lines, part) => {
+                try {
+                    return await botApiService.carryGuestChat(brickId, myChatId, carryId, lines, part);
+                } catch (error) {
+                    // Not this person's chat or Brick: it is not theirs to bring
+                    if ((error as { status?: number }).status === 403) return "refused";
+                    throw error;
+                }
+            },
+            sleep: (ms) =>
+                new Promise((resolve) => {
+                    setTimeout(resolve, ms);
+                }),
+            now: () => Date.now(),
         },
-        drop: () => localUserStore.dropGuestBrickChat(),
-        take: (guestId) => botApiService.takeGuestChat(guestId),
-        parts: () => botApiService.botServerCarriesParts(),
-        carry: async (carryId, lines, part) => {
-            try {
-                return await botApiService.carryGuestChat(brickId, myChatId, carryId, lines, part);
-            } catch (error) {
-                // Not this person's chat or Brick: it is not theirs to bring
-                if ((error as { status?: number }).status === 403) return "refused";
-                throw error;
-            }
-        },
-        sleep: (ms) =>
-            new Promise((resolve) => {
-                setTimeout(resolve, ms);
-            }),
-        now: () => Date.now(),
-    }).catch((error) => console.error(error));
+        myChatId
+    ).catch((error) => console.error(error));
 }

@@ -101,6 +101,20 @@ export function brickAppCard(offer: AppOffer, ll: TranslationFunctions): BotAsk 
     return ownCard(BRICK_APP_CARD, offer.ask || text.askByName({ name: offer.name }), choices);
 }
 
+export const BRICK_NEW_JOB_CARD = "brick.new_job";
+export const NEW_JOB_START = "start";
+
+/**
+ * The one button under a Brick's answer that Orbit would not carry a job on (GPT's sixth answer, finding 6): starting it
+ * afresh. Why it cannot carry on is in the answer's own words, so the card only offers the next step.
+ */
+export function brickNewJobCard(job: { title: string }, ll: TranslationFunctions): BotAsk {
+    const text = ll.chat.brick.newJobCard;
+    return ownCard(BRICK_NEW_JOB_CARD, text.ask({ title: job.title }), [
+        { id: NEW_JOB_START, label: text.start(), line: text.startLine() },
+    ]);
+}
+
 export const BRICK_IDEAS = ["brief", "watch", "goal", "write", "web", "file", "think"] as const;
 export type BrickIdea = (typeof BRICK_IDEAS)[number];
 

@@ -37,13 +37,17 @@ export function usageFromMetadata(metadata: CallMetadata | undefined): CallUsage
     };
 }
 
+/** Counts nobody gave: they read as missing (not as zero) to the pricing. */
+const NO_COUNTS: CallUsage = { inputTokens: NaN, cachedTokens: NaN, cacheWriteTokens: NaN, outputTokens: NaN, reasoningTokens: NaN };
+
 /** Prices one finished call from what its last chunk said. */
 export function priceMetadata(config: PricedConfig, metadata: CallMetadata | undefined, at: Date): { cost: CallCost; usage: CallUsage } {
     const split = usageFromMetadata(metadata);
     const usage = split ?? emptyUsage();
     // Priced from the split when there is one; an own computer is free and a cost the provider reported stands, with or without it
     if (split || config.type === 'lmstudio' || typeof metadata?.costUsd === 'number') {
-        return { cost: priceCall({ config, usage, at, reportedCostUsd: metadata?.costUsd }), usage };
+        // With no split the counts are not zero, they are not known: a rate per token must not turn a cost the provider reported into a free call
+        return { cost: priceCall({ config, usage: split ?? NO_COUNTS, at, reportedCostUsd: metadata?.costUsd }), usage };
     }
     // A call that failed before it said what it used was not billed
     if (metadata?.error) return { cost: { basis: 'priced', micros: 0, source: null, version: null }, usage };
