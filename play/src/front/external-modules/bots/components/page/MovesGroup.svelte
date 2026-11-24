@@ -81,7 +81,10 @@
     />
     {#if model.moves === "route"}
         <PageRow icon={IconRoute} on title={page.moves.stops({ count: stops })} hint={page.moves.stopsHint()}>
-            <PageButton testId="bot-edit-route" on:click={onEditRoute}>{page.moves.editRoute()}</PageButton>
+            <!-- A Brick is on no map of its own: its saved route is shown, and only a room's bot edits one on the map -->
+            {#if !brick}
+                <PageButton testId="bot-edit-route" on:click={onEditRoute}>{page.moves.editRoute()}</PageButton>
+            {/if}
         </PageRow>
         <PageField title={page.moves.direction()} hint={page.moves.directionHint()}>
             <PageChips

@@ -28,12 +28,12 @@ const callerUuid = (): string => localUserStore.getLocalUser()?.uuid ?? "";
 
 export const callConnection = createCallConnection({
     store: botCallStore,
-    startCall: (botId) => {
+    startCall: (botId, callId) => {
         if (callerUuid() === "") return Promise.resolve({ started: false as const, failure: "sign_in" as const });
         callScene = get(gameSceneStore) ?? undefined;
-        return botApiService.startCall(botId, callerUuid());
+        return botApiService.startCall(botId, callerUuid(), callId);
     },
-    endCall: (botId) => botApiService.endCall(botId, callerUuid()),
+    endCall: (botId, callId) => botApiService.endCall(botId, callerUuid(), callId),
     // Audio and nothing else: the call's space is no bubble on the map, and the gate keeps the camera out of it
     joinSpace: (spaceName, signal) => {
         const scene = currentScene();

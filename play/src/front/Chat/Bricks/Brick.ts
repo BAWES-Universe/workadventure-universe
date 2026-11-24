@@ -370,6 +370,28 @@ export function readBrickOffer(
     return read.topic && read.ask && read.name ? read : undefined;
 }
 
+/**
+ * On a Brick's own message after an answer: Orbit would not carry a computer job on, so the person is offered a new one (GPT's sixth answer, finding 6). The chat shows one
+ * button, "Start a new job"; why it cannot carry on is already in the answer's own words.
+ */
+export const COMPUTER_NEW_JOB_OFFER_KEY = "universe.computer_new_job_offer";
+/** On the person's message that a tap on "Start a new job" sends: the job's title, so the Brick starts that job and nothing else. */
+export const COMPUTER_NEW_JOB_KEY = "universe.computer_new_job";
+
+const JOB_TITLE_MAX = 200;
+
+/** The job a "Start a new job" card names; undefined for anyone else's message or one without a title. */
+export function readNewJobOffer(
+    sender: string | null | undefined,
+    content: Record<string, unknown>
+): { title: string } | undefined {
+    const offer = content[COMPUTER_NEW_JOB_OFFER_KEY];
+    if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text") return undefined;
+    if (!offer || typeof offer !== "object") return undefined;
+    const title = text((offer as Record<string, unknown>).title, JOB_TITLE_MAX);
+    return title ? { title } : undefined;
+}
+
 /** A Brick's offer to connect an App (game #2001), on its own message after an answer: "Connect your calendar?". */
 export const APP_OFFER_KEY = "universe.app_offer";
 /** What the game sends the room once the person connected an App from that card: the Brick carries on with what they asked. */
@@ -382,6 +404,8 @@ export interface AppOffer {
     /** The App on Orbit's list: its key and the name people see. */
     app: string;
     name: string;
+    /** Which call connects it: "listed" (an App of Orbit's list, and GitHub) or "readyMade". Older messages carry none: "listed". */
+    connectKind: "listed" | "readyMade";
     /** "new": nothing is connected. "connected": they connected it already, and this Brick may not use it yet. */
     state: "new" | "connected";
     /** Their connection to it, when they have one. */
@@ -405,11 +429,12 @@ export function readAppOffer(
     const offer = content[APP_OFFER_KEY];
     if (botIdFromChatId(sender) === undefined || content.msgtype !== "m.text") return undefined;
     if (!offer || typeof offer !== "object") return undefined;
-    const { topic, app, name, state, connectionId, ask, asked, other } = offer as Record<string, unknown>;
+    const { topic, app, name, connectKind, state, connectionId, ask, asked, other } = offer as Record<string, unknown>;
     const read: AppOffer = {
         topic: text(topic, TOPIC_MAX),
         app: text(app, 80),
         name: text(name, APP_NAME_MAX),
+        connectKind: connectKind === "readyMade" ? "readyMade" : "listed",
         state: state === "connected" ? "connected" : "new",
         connectionId: typeof connectionId === "string" && connectionId ? connectionId : null,
         ask: text(ask, APP_ASK_MAX),

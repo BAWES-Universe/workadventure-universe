@@ -271,6 +271,38 @@ describe('a Brick that lives in a room, moved and returned by Orbit', () => {
         expect(order).toEqual(['first start waited=false', 'other bot', 'first end', 'second start waited=true']);
     });
 
+    it('keeps the room listed when Orbit cannot be asked again before a Brick is started, so the room check reads it again', async () => {
+        let down = false;
+        const { botManager, spawn, internals } = manager((_roomUrl, call) => {
+            if (call > 1) down = true;
+            if (down) throw new Error('down');
+            return [homed('brick-1', ROOM)];
+        });
+        await botManager.handlePlayerEnterRoom(ROOM);
+        expect(spawn).not.toHaveBeenCalled();
+        expect(internals.roomsWithBots.has(ROOM)).toBe(true);
+        expect((botManager as unknown as { homedReadFailed: Set<string> }).homedReadFailed.has(ROOM)).toBe(true);
+    });
+
+    it('leaves the only Brick of an occupied room alone when a home sync connected it again while the game was being asked', async () => {
+        const { botManager, despawn, internals } = manager(() => [homed()]);
+        await botManager.handlePlayerEnterRoom(ROOM);
+        expect(internals.bots.has('brick-1')).toBe(true);
+        // The game counts 1 user (the Brick) when it answers, but while it was being asked a sync replaced the Brick by a new connection
+        internals.queryWorkAdventureRooms = async () => {
+            const old = internals.bots.get('brick-1')!;
+            internals.bots.set('brick-1', { ...old, client: { setFullConfig: () => undefined } });
+            return new Map([[ROOM, 1]]);
+        };
+        await botManager.verifyRoomOccupancy();
+        expect(despawn).not.toHaveBeenCalled();
+        expect(internals.bots.has('brick-1')).toBe(true);
+        // Asked again with nothing changing meanwhile, the room that is empty of people is taken down as before
+        internals.queryWorkAdventureRooms = async () => new Map([[ROOM, 1]]);
+        await botManager.verifyRoomOccupancy();
+        expect(despawn).toHaveBeenCalledWith('brick-1');
+    });
+
     it('does not take a room twice in one check when a read of Orbit drops it and puts it back', async () => {
         // The game says 2 users: the Brick and one person. Reading Orbit renames the Brick (it is started again, which drops the
         // room's entry for a moment) and adds a second Brick: the room comes back with two bots, and the same count of 2
@@ -339,6 +371,20 @@ describe('a Brick that lives in a room, moved and returned by Orbit', () => {
         internals.queryWorkAdventureRooms = async () => new Map([[ROOM, 1]]);
         await botManager.verifyRoomOccupancy();
         expect(internals.bots.get('brick-1')?.config.roomUrl).toBe(ROOM);
+    });
+
+    it('is read again by the room check when a person is there, a Brick of the room is not connected, and Orbit could not say which Bricks live there', async () => {
+        const { botManager, admin, internals } = manager(() => [homed()]);
+        await botManager.handlePlayerEnterRoom(ROOM);
+        // The Brick dropped its connection, so the game counts one user: the person. An earlier read of Orbit had failed
+        internals.bots.get('brick-1')!.status = 'disconnected';
+        (botManager as unknown as { homedReadFailed: Set<string> }).homedReadFailed.add(ROOM);
+        const before = admin.getHomedBricks.mock.calls.length;
+        internals.queryWorkAdventureRooms = async () => new Map([[ROOM, 1]]);
+        await botManager.verifyRoomOccupancy();
+        expect(admin.getHomedBricks.mock.calls.length).toBeGreaterThan(before);
+        // The bot is kept meanwhile, as before
+        expect(internals.bots.has('brick-1')).toBe(true);
     });
 
     it('stops listing a room with no Bricks once nobody is in it', async () => {

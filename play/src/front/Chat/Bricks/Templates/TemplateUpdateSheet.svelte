@@ -26,9 +26,9 @@
     export let update: TemplateUpdate;
     /**
      * Called with the Brick's page data once the owner has chosen (and the parts that were taken), or when the offer
-     * turned out to be gone.
+     * turned out to be gone. `noTemplate` is Orbit saying this Brick is not made from a template any more: there is no page data.
      */
-    export let onDone: (view: MadeFromView | undefined, taken?: UpdateField[]) => void;
+    export let onDone: (view: MadeFromView | undefined, taken?: UpdateField[], noTemplate?: boolean) => void;
 
     let taken = new Set<UpdateField>();
     let busy = false;
@@ -86,9 +86,14 @@
                 taken = new Set();
                 changedAgain = true;
                 onDone(read.value);
-            } else {
-                onDone(read.ok ? read.value : undefined);
+            } else if (read.ok || read.why === "gone") {
+                // Orbit says no update remains (the offer is gone, or this Brick is not made from a template any more)
+                if (read.ok) onDone(read.value);
+                else onDone(undefined, [], true);
                 closeModal();
+            } else {
+                // Could not be read: what is offered is not known, so the sheet stays, and the person is told
+                warningMessageStore.addWarningMessage(t.updateFailed());
             }
             return;
         }

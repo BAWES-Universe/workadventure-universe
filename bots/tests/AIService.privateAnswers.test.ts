@@ -48,6 +48,9 @@ import { ConversationMemory } from '../memory/ConversationMemory';
 import { heardInDm } from '../memory/Heard';
 import { MarkerWatch, PRIVATE_MARKER, PrivateAnswers, answeredPrivatelyLine, continuedIn, privateBodyOf } from '../ai/PrivateAnswers';
 
+/** A file the lookup finds: `items` is the field the service reads from Orbit's answer. */
+const MINUTES = { type: 'file', ref: 'f9', name: 'Q3-minutes.pdf', kind: 'document', source: 'person', createdAt: '2026-11-17T09:00:00Z', inThisChat: true };
+
 const BOT = 'bot-1';
 const KHALID = 7;
 const SARA_ID = 9;
@@ -202,6 +205,11 @@ describe('a reply as its person reads it', () => {
     it('has no thinking, emotion block or marker in it', () => {
         expect(privateBodyOf(`<think>hmm</think>It is at 10.\n[EMOTION_UPDATE]{"personSentiment":1}[/EMOTION_UPDATE]`)).toBe('It is at 10.');
         expect(privateBodyOf(`${PRIVATE_MARKER} It is at 10.\n[EMOTION_UPDATE]{"person`)).toBe('It is at 10.');
+    });
+
+    it('has no spelling of the marker the watch accepts, and keeps other bracketed text', () => {
+        expect(privateBodyOf('It is at 10. [private_reply] [Private_Reply] See [1] and [PRIVATE_REPLY]')).toBe('It is at 10.   See [1] and');
+        expect(privateBodyOf('A [PRIVATE] note')).toBe('A [PRIVATE] note');
     });
 
     it('names the person in the line everyone reads, when the bot knows a name', () => {
@@ -503,6 +511,122 @@ describe('AIService: private answers in a group (#1993)', () => {
             expect(sendImage).toHaveBeenCalledWith(BUBBLE, CHART, 'A chart', KHALID, undefined, undefined);
             expect(botClient.sendMediaMessage).not.toHaveBeenCalled();
             expect(memory.getMemory(BOT, KHALID)!.pendingMedia).toHaveLength(1);
+        });
+    });
+
+    describe('files read for the group', () => {
+        const OMAR = 'uuid-omar';
+        /** A model that looks for a file, then says what it found. */
+        const looksThenSays = () => {
+            let calls = 0;
+            hoisted.generateStream.mockReset().mockImplementation(async function* () {
+                calls++;
+                if (calls === 1) yield { content: '', done: false, toolCalls: [{ id: 'call_1', name: 'find_files', arguments: JSON.stringify({ query: 'minutes' }) }] };
+                else yield { content: 'The minutes say the layoffs start on Monday.', done: false };
+                yield { content: '', done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 5, error: false, truncated: false } };
+            });
+        };
+
+        it('says one plain line, not what the files say, when someone walked up while they were read', async () => {
+            looksThenSays();
+            const { say, service, adminApi, here, botClient } = await scene();
+            Object.assign(botClient, { getFullConfig: () => ({}) });
+            (service as unknown as { orbitKeepsFiles: boolean }).orbitKeepsFiles = true;
+            adminApi.isConfigured = () => true;
+            // Omar walks up while Orbit looks the files up
+            adminApi.findBotFiles = vi.fn(async () => {
+                here.others = [SARA, OMAR];
+                return { items: [MINUTES], files: [], hidden: false };
+            });
+            const { room } = await say('What do the minutes say?');
+
+            expect(adminApi.findBotFiles).toHaveBeenCalled();
+            expect(room).not.toContain('layoffs');
+            expect(room).toContain('Someone else just joined');
+        });
+
+        it('says what they say when nobody walked up', async () => {
+            looksThenSays();
+            const { say, service, adminApi, botClient } = await scene();
+            Object.assign(botClient, { getFullConfig: () => ({}) });
+            (service as unknown as { orbitKeepsFiles: boolean }).orbitKeepsFiles = true;
+            adminApi.isConfigured = () => true;
+            adminApi.findBotFiles = vi.fn(async () => ({ items: [MINUTES], files: [], hidden: false }));
+            const { room } = await say('What do the minutes say?');
+            expect(room).toContain('layoffs');
+        });
+    });
+
+    describe('files named or read for the group, when someone walks up while the model is answering', () => {
+        const OMAR = 'uuid-omar';
+        /** A model whose answer takes a moment, and Omar walks up in that moment. */
+        const answersWhileOmarComes = (here: { others: string[] | undefined }, words: string, walksUp: boolean, tool = false) => {
+            let calls = 0;
+            hoisted.generateStream.mockReset().mockImplementation(async function* () {
+                calls++;
+                if (tool && calls === 1) {
+                    yield { content: '', done: false, toolCalls: [{ id: 'call_1', name: 'find_files', arguments: JSON.stringify({ query: 'minutes' }) }] };
+                } else {
+                    if (walksUp) here.others = [SARA, OMAR];
+                    yield { content: words.slice(0, 10), done: false };
+                    yield { content: words.slice(10), done: false };
+                }
+                yield { content: '', done: true, metadata: { tokensUsed: 110, promptTokens: 100, completionTokens: 10, latency: 5, error: false, truncated: false } };
+            });
+        };
+        const withFiles = async () => {
+            const made = await scene();
+            Object.assign(made.botClient, { getFullConfig: () => ({}) });
+            (made.service as unknown as { orbitKeepsFiles: boolean }).orbitKeepsFiles = true;
+            made.adminApi.isConfigured = () => true;
+            made.adminApi.findBotFiles = vi.fn(async () => ({ items: [MINUTES], files: [], hidden: false }));
+            return made;
+        };
+
+        it('does not say a file named in the prompt when the model answers without a tool and the newcomer arrives meanwhile', async () => {
+            const { say, here } = await withFiles();
+            answersWhileOmarComes(here, 'Your Q3-minutes.pdf is the newest one.', true);
+            const { room } = await say('What is my newest file?');
+            expect(room).not.toContain('Q3-minutes');
+            expect(room).toContain('Someone else just joined');
+        });
+
+        it('does not say what the files say when the newcomer arrives while the follow-up call after the tool is answering', async () => {
+            const { say, here } = await withFiles();
+            answersWhileOmarComes(here, 'The minutes say the layoffs start on Monday.', true, true);
+            const { room } = await say('What do the minutes say?');
+            expect(room).not.toContain('layoffs');
+            expect(room).toContain('Someone else just joined');
+        });
+
+        it('keeps the files check on the second try made when the first said it saved a page nobody saved', async () => {
+            const { say, here, service } = await withFiles();
+            let calls = 0;
+            (service as any).generateTurn = async function* (...args: any[]) {
+                calls++;
+                const facts = args[16];
+                if (calls === 1) {
+                    // The first answer read files, said it saved a page, and saved none
+                    Object.assign(facts, { guard: true, artifactTools: true, fileDerived: { joined: () => here.others?.includes(OMAR) === true } });
+                    yield { content: 'Rebuilt it, v2 is dark.', done: false };
+                } else {
+                    // The second look at the files timed out, so it sets nothing; Omar walks up while it answers
+                    here.others = [SARA, OMAR];
+                    yield { content: 'The minutes say the layoffs start on Monday.', done: false };
+                }
+                yield { content: '', done: true, metadata: { tokensUsed: 10, promptTokens: 5, completionTokens: 5, latency: 5, error: false, truncated: false } };
+            };
+            const { room } = await say('Rebuild the minutes page');
+            expect(calls).toBe(2);
+            expect(room).not.toContain('layoffs');
+            expect(room).toContain('Someone else just joined');
+        });
+
+        it('says the same answer, whole, when nobody walked up', async () => {
+            const { say, here } = await withFiles();
+            answersWhileOmarComes(here, 'Your Q3-minutes.pdf is the newest one.', false);
+            const { room } = await say('What is my newest file?');
+            expect(room).toBe('Your Q3-minutes.pdf is the newest one.');
         });
     });
 

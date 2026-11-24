@@ -36,6 +36,10 @@ const game = vi.hoisted(() => ({
     getBotMcpServers: vi.fn<(botId: string) => Promise<unknown>>(),
     saveGitHubKey: vi.fn<(key: string) => Promise<unknown>>(),
     dropGitHubKey: vi.fn<() => Promise<unknown>>(),
+    getAppShare: vi.fn<(id: string, botId: string) => Promise<unknown>>(),
+    startAppShare: vi.fn<(id: string, botId: string, start: unknown) => Promise<unknown>>(),
+    changeAppShare: vi.fn<(id: string, botId: string, change: unknown) => Promise<unknown>>(),
+    stopAppShare: vi.fn<(id: string, botId: string) => Promise<unknown>>(),
     warn: vi.fn<(message: string) => void>(),
 }));
 // The tests run Svelte's server build, where onMount does nothing; the pages read on mount.
@@ -71,6 +75,10 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         getMcpServerTools: () => new Promise(() => {}),
         saveGitHubKey: game.saveGitHubKey,
         dropGitHubKey: game.dropGitHubKey,
+        getAppShare: game.getAppShare,
+        startAppShare: game.startAppShare,
+        changeAppShare: game.changeAppShare,
+        stopAppShare: game.stopAppShare,
     },
 }));
 // A Brick wearing a WOKA is drawn by the game's picture loader, which has nothing to do with these pages
@@ -111,6 +119,7 @@ import AddManagerSheet from "../AddManagerSheet.svelte";
 import AppPage from "../AppPage.svelte";
 import AppsPage from "../AppsPage.svelte";
 import { forgetMyApps } from "../AppsStore";
+import GitHubWaitingSheet from "../GitHubWaitingSheet.svelte";
 import LendSheet from "../LendSheet.svelte";
 import MoreApps from "../MoreApps.svelte";
 import TeamAppPage from "../TeamAppPage.svelte";
@@ -153,6 +162,53 @@ const appPage = (over: Record<string, unknown> = {}) => ({
     ],
     ...over,
 });
+const shareJob = (over: Record<string, unknown> = {}) => ({
+    tool: "search",
+    title: "Search the web",
+    description: "Looks things up",
+    heading: "lookUp",
+    picked: false,
+    needsPicking: false,
+    inputs: [
+        { name: "query", required: true, picked: false },
+        { name: "max_results", required: false, picked: false },
+    ],
+    returns: { names: ["title", "url", "content"], picked: null },
+    ...over,
+});
+const shareView = (over: Record<string, unknown> = {}) => ({
+    shareable: true,
+    shared: false,
+    reachable: true,
+    limits: { usesPerDayEveryone: 50, usesPerDayPerson: 5 },
+    usedToday: 0,
+    jobs: [shareJob()],
+    ...over,
+});
+/** The view of a Brick that shares Search the web, with the one job picked as the owner left it */
+const sharedView = (over: Record<string, unknown> = {}) =>
+    shareView({
+        shared: true,
+        usedToday: 12,
+        jobs: [
+            shareJob({
+                picked: true,
+                inputs: [
+                    { name: "query", required: true, picked: true },
+                    { name: "max_results", required: false, picked: false },
+                ],
+                returns: { names: ["title", "url", "content"], picked: ["title", "url"] },
+            }),
+            shareJob({
+                tool: "extract",
+                title: "Read a page",
+                description: null,
+                inputs: [],
+                returns: { names: null, picked: null },
+            }),
+        ],
+        ...over,
+    });
 const teamApp = (over: Record<string, unknown> = {}) => ({
     id: "notion",
     name: "Notion",
@@ -233,6 +289,10 @@ describe("the Apps pages (#2001)", () => {
         game.getAppsABotCouldUse.mockResolvedValue({ apps: [] });
         game.letBotUseApp.mockResolvedValue({});
         game.getBotMcpServers.mockResolvedValue([]);
+        game.getAppShare.mockResolvedValue(shareView());
+        game.startAppShare.mockResolvedValue(sharedView());
+        game.changeAppShare.mockResolvedValue(sharedView());
+        game.stopAppShare.mockResolvedValue(undefined);
     });
 
     afterEach(() => {
@@ -459,6 +519,424 @@ describe("the Apps pages (#2001)", () => {
         });
     });
 
+    describe("Other people: letting others use an app through a Brick (#2006)", () => {
+        const open = async (id = "tavily") => {
+            page = new AppPage({ target, props: { appId: id, onBack: () => {} } });
+            await settle();
+        };
+        const sheetButton = (label: string): HTMLElement | undefined =>
+            [...document.querySelectorAll<HTMLElement>('[data-testid="appShareSheet"] button')].find(
+                (one) => words(one) === label
+            );
+        const tapSheet = async (label: string) => {
+            sheetButton(label)?.click();
+            await settle();
+        };
+        const twoJobs = () =>
+            shareView({
+                jobs: [
+                    shareJob(),
+                    shareJob({
+                        tool: "extract",
+                        title: "Read a page",
+                        description: null,
+                        inputs: [],
+                        returns: { names: null, picked: null },
+                    }),
+                ],
+            });
+
+        it("says Only you with one button for a Brick that uses the app, reading what is shared for that Brick", async () => {
+            await open();
+            expect(game.getAppShare).toHaveBeenCalledWith("tavily", "b1");
+            expect(words(byId("appShareOff"))).toBe(
+                "Only you People who chat with Brick can't use it Let others use it"
+            );
+            expect(allById("appShareStart")).toHaveLength(1);
+            expect(byId("appOnlyYou")).toBeNull();
+        });
+
+        it("starts at once when the app has one thing to ask for, then shows what people can ask for and the two limits", async () => {
+            await open();
+            await click("appShareStart");
+            expect(game.startAppShare).toHaveBeenCalledWith("tavily", "b1", {});
+            expect(byId("appShareSheet")).toBeNull();
+            expect(words(byId("appShareOn"))).toContain("People who chat with Brick Can ask for: Search the web");
+            expect(words(byId("appShareLimits"))).toBe("50 uses a day for everyone · 5 for each person");
+            expect(words(byId("appShareToday"))).toBe("Today: 12 of 50 used. Your own chats never count.");
+        });
+
+        it("opens a sheet to pick jobs when there are several, and starts only the ones picked, with what they fill in and get back", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            await open();
+            await click("appShareStart");
+            expect(game.startAppShare).not.toHaveBeenCalled();
+            expect(byId("appShareSheet")).not.toBeNull();
+            // Nothing picked yet: nothing can be sent
+            expect(byId("appSharePickOne")).not.toBeNull();
+            expect(byId("appShareConfirm")?.hasAttribute("disabled")).toBe(true);
+            await click("appShareJobPick", 0);
+            expect(byId("appSharePickOne")).toBeNull();
+            expect(byId("appShareConfirm")?.hasAttribute("disabled")).toBe(false);
+            // What it cannot work without is offered and cannot be taken out; the optional one is the owner's to add
+            const inputs = allById("appShareInput");
+            expect(inputs.map((one) => one.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+            expect(inputs[0]?.hasAttribute("disabled")).toBe(true);
+            await click("appShareInput", 1);
+            // One field of its answer taken out
+            await click("appShareReturn", 2);
+            await tapSheet("Let others use it");
+            expect(game.startAppShare).toHaveBeenCalledWith("tavily", "b1", {
+                jobs: [{ tool: "search", inputs: ["query", "max_results"], returns: ["title", "url"] }],
+                usesPerDayEveryone: 50,
+                usesPerDayPerson: 5,
+            });
+            expect(byId("appShareSheet")).toBeNull();
+            expect(byId("appShareOn")).not.toBeNull();
+        });
+
+        it("says a job that gives back no named fields gives its whole answer, nothing more", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            await open();
+            await click("appShareStart");
+            await click("appShareJobPick", 1);
+            expect(words(byId("appShareGetBackAll"))).toBe("Its whole answer, nothing else of Tavily");
+            await tapSheet("Let others use it");
+            expect(game.startAppShare).toHaveBeenCalledWith("tavily", "b1", {
+                jobs: [{ tool: "extract", inputs: [], returns: null }],
+                usesPerDayEveryone: 50,
+                usesPerDayPerson: 5,
+            });
+        });
+
+        it("brings back what was set for a job when it is unticked and ticked again", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            await open();
+            await click("appShareStart");
+            await click("appShareJobPick", 0);
+            // Only title and url come back, and the optional input is added
+            await click("appShareReturn", 2);
+            await click("appShareInput", 1);
+            await click("appShareJobPick", 0);
+            await click("appShareJobPick", 0);
+            expect(allById("appShareReturn").map((one) => one.getAttribute("aria-checked"))).toEqual([
+                "true",
+                "true",
+                "false",
+            ]);
+            expect(allById("appShareInput").map((one) => one.getAttribute("aria-checked"))).toEqual(["true", "true"]);
+            await tapSheet("Let others use it");
+            expect(game.startAppShare).toHaveBeenCalledWith("tavily", "b1", {
+                jobs: [{ tool: "search", inputs: ["query", "max_results"], returns: ["title", "url"] }],
+                usesPerDayEveryone: 50,
+                usesPerDayPerson: 5,
+            });
+        });
+
+        it("cannot send a job with nothing coming back", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            await open();
+            await click("appShareStart");
+            await click("appShareJobPick", 0);
+            await click("appShareReturn", 0);
+            await click("appShareReturn", 1);
+            await click("appShareReturn", 2);
+            expect(byId("appShareGetBackOne")).not.toBeNull();
+            expect(byId("appShareConfirm")?.hasAttribute("disabled")).toBe(true);
+        });
+
+        it("changes what is shared and the limits in one go, with the jobs already shared picked as they are", async () => {
+            game.getAppShare.mockResolvedValue(sharedView());
+            await open();
+            await click("appShareChange");
+            const picks = allById("appShareJobPick").map((one) => one.getAttribute("aria-checked"));
+            expect(picks).toEqual(["true", "false"]);
+            // The returns the owner left are kept: title and url, not content
+            expect(allById("appShareReturn").map((one) => one.getAttribute("aria-checked"))).toEqual([
+                "true",
+                "true",
+                "false",
+            ]);
+            const chip = [
+                ...document.querySelectorAll<HTMLElement>('[data-testid="appShareSheet"] [role="radio"]'),
+            ].find((one) => words(one) === "100");
+            chip?.click();
+            await settle();
+            await tapSheet("Save");
+            expect(game.changeAppShare).toHaveBeenCalledWith("tavily", "b1", {
+                jobs: [{ tool: "search", inputs: ["query"], returns: ["title", "url"] }],
+                usesPerDayEveryone: 100,
+                usesPerDayPerson: 5,
+            });
+            expect(byId("appShareSheet")).toBeNull();
+        });
+
+        it("shows a restricted choice for a job whose app no longer names its fields, never as the whole answer", async () => {
+            game.getAppShare.mockResolvedValue(
+                sharedView({
+                    jobs: [
+                        shareJob({
+                            picked: true,
+                            inputs: [{ name: "query", required: true, picked: true }],
+                            returns: { names: null, picked: ["title", "url"] },
+                        }),
+                    ],
+                })
+            );
+            await open();
+            await click("appShareChange");
+            expect(byId("appShareGetBackAll")).toBeNull();
+            expect(allById("appShareGetBackKept").map((one) => words(one))).toEqual(["title", "url"]);
+        });
+
+        it("reads what is shared again when a change got no answer (a timeout), and keeps the old state as it was only for a definite refusal", async () => {
+            game.getAppShare.mockResolvedValue(sharedView());
+            game.changeAppShare.mockRejectedValue(new Error("offline"));
+            await open();
+            await click("appShareChange");
+            await tapSheet("Save");
+            expect(game.getAppShare).toHaveBeenCalledTimes(2);
+            game.getAppShare.mockClear();
+            // A definite refusal: nothing changed, nothing is read again
+            game.changeAppShare.mockRejectedValue(Object.assign(new Error("No."), { status: 409 }));
+            await click("appShareChange");
+            await tapSheet("Save");
+            expect(game.getAppShare).not.toHaveBeenCalled();
+        });
+
+        it("keeps the sheet, its picks and its failure line open when a save got no answer and what is shared is read again", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            game.startAppShare.mockRejectedValue(new Error("offline"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            await open();
+            await click("appShareStart");
+            await click("appShareJobPick", 1);
+            await tapSheet("Let others use it");
+            warn.mockRestore();
+            // It was read again (the answer may have gone through), and the sheet is still there with what was picked and a failure shown
+            expect(game.getAppShare).toHaveBeenCalledTimes(2);
+            expect(byId("appShareSheet")).not.toBeNull();
+            expect(byId("appShareFailed")).not.toBeNull();
+            expect(allById("appShareJobPick").map((one) => one.getAttribute("aria-checked"))).toEqual([
+                "false",
+                "true",
+            ]);
+        });
+
+        it("stops at once with one tap and nothing to confirm, and then says Only you again", async () => {
+            game.getAppShare.mockResolvedValueOnce(sharedView());
+            await open();
+            expect(words(byId("appShareStopLine"))).toBe(
+                "Anyone asking after this gets nothing from Tavily, also in a chat that is already open."
+            );
+            game.getAppShare.mockResolvedValue(shareView());
+            await click("appShareStop");
+            expect(game.stopAppShare).toHaveBeenCalledWith("tavily", "b1");
+            expect(byId("appShareSheet")).toBeNull();
+            expect(byId("appShareOff")).not.toBeNull();
+            expect(byId("appShareOn")).toBeNull();
+        });
+
+        it("keeps sharing shown and says nothing changed when Orbit refused to stop it", async () => {
+            game.getAppShare.mockResolvedValue(sharedView());
+            game.stopAppShare.mockRejectedValue(Object.assign(new Error("refused"), { status: 409 }));
+            await open();
+            await click("appShareStop");
+            expect(game.warn).toHaveBeenCalledWith("That didn't go through. Nothing changed.");
+            expect(byId("appShareOn")).not.toBeNull();
+            // Only the first read: a refusal leaves sharing as it was
+            expect(game.getAppShare).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not say nothing changed when the answer to stopping never came: it reads what is shared again", async () => {
+            game.getAppShare.mockResolvedValueOnce(sharedView());
+            game.stopAppShare.mockRejectedValue(new Error("Orbit did not answer in time"));
+            await open();
+            // Orbit did stop it, only the answer was lost
+            game.getAppShare.mockResolvedValue(shareView());
+            await click("appShareStop");
+            expect(game.warn).toHaveBeenCalledWith("We couldn't tell if sharing stopped. Checking now.");
+            expect(game.warn).not.toHaveBeenCalledWith("That didn't go through. Nothing changed.");
+            expect(game.getAppShare).toHaveBeenCalledTimes(2);
+            expect(byId("appShareOff")).not.toBeNull();
+            expect(byId("appShareOn")).toBeNull();
+        });
+
+        it("does not show sharing as on when it stopped but reading what is shared again failed, and offers to try again", async () => {
+            game.getAppShare.mockResolvedValueOnce(sharedView());
+            await open();
+            game.getAppShare.mockRejectedValueOnce(new Error("down"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            await click("appShareStop");
+            expect(game.stopAppShare).toHaveBeenCalledWith("tavily", "b1");
+            expect(byId("appShareOn")).toBeNull();
+            expect(byId("appShareLoadFailed")).not.toBeNull();
+            game.getAppShare.mockResolvedValue(shareView());
+            await click("appShareTryAgain");
+            warn.mockRestore();
+            expect(byId("appShareOff")).not.toBeNull();
+        });
+
+        it("keeps the row locked until what is shared has been read again after stopping", async () => {
+            game.getAppShare.mockResolvedValueOnce(sharedView());
+            await open();
+            let finishRead: (value: unknown) => void = () => undefined;
+            game.getAppShare.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        finishRead = resolve;
+                    })
+            );
+            await click("appShareStop");
+            // Reading again has not finished: the old row is gone, so Change cannot open an editor for sharing that has stopped
+            expect(byId("appShareChange")).toBeNull();
+            expect(byId("appShareSheet")).toBeNull();
+            finishRead(shareView());
+            await settle();
+            expect(byId("appShareOff")).not.toBeNull();
+        });
+
+        it("says so, and offers no way to change what is shared, when sharing is on but the app cannot be read", async () => {
+            game.getAppShare.mockResolvedValue(sharedView({ reachable: false }));
+            await open();
+            expect(byId("appShareUnreachable")).not.toBeNull();
+            expect(byId("appShareChange")).toBeNull();
+            // Stopping is always possible
+            expect(byId("appShareStop")).not.toBeNull();
+        });
+
+        it("keeps the sheet's choices from changing while it is saving, and lets them change again when saving failed", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            await open();
+            await click("appShareStart");
+            await click("appShareJobPick", 0);
+            let answer: (value: unknown) => void = () => undefined;
+            let failSave: (error: unknown) => void = () => undefined;
+            game.startAppShare.mockImplementation(
+                () =>
+                    new Promise((resolve, reject) => {
+                        answer = resolve;
+                        failSave = reject;
+                    })
+            );
+            await tapSheet("Let others use it");
+            const locked = [
+                ...allById("appShareJobPick"),
+                ...allById("appShareReturn"),
+                ...document.querySelectorAll<HTMLElement>('[data-testid="appShareSheet"] [role="radio"]'),
+            ];
+            expect(locked.length).toBeGreaterThan(4);
+            expect(locked.every((one) => one.hasAttribute("disabled"))).toBe(true);
+            expect(allById("appShareInput").every((one) => one.hasAttribute("disabled"))).toBe(true);
+            expect(answer).toBeDefined();
+            // Nor does the sheet close under a save that is on its way: not by Cancel, Escape or a tap beside it
+            expect(byId("appShareCancel")?.hasAttribute("disabled")).toBe(true);
+            window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+            document.querySelector<HTMLElement>(".sh-scrim")?.click();
+            await settle();
+            expect(byId("appShareSheet")).not.toBeNull();
+            vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            failSave(new Error("offline"));
+            await settle();
+            expect(byId("appShareCancel")?.hasAttribute("disabled")).toBe(false);
+            expect(allById("appShareJobPick").every((one) => !one.hasAttribute("disabled"))).toBe(true);
+            expect(allById("appShareReturn").every((one) => !one.hasAttribute("disabled"))).toBe(true);
+        });
+
+        it("shows Orbit's own words in the sheet when it would not take a pick, and keeps the sheet open", async () => {
+            game.getAppShare.mockResolvedValue(twoJobs());
+            const refused = Object.assign(
+                new Error("The job needs an input that is not offered, so nobody could ask for it"),
+                { status: 400 }
+            );
+            game.startAppShare.mockRejectedValue(refused);
+            await open();
+            await click("appShareStart");
+            await click("appShareJobPick", 0);
+            await tapSheet("Let others use it");
+            expect(words(byId("appShareFailed"))).toBe(
+                "The job needs an input that is not offered, so nobody could ask for it"
+            );
+            expect(byId("appShareSheet")).not.toBeNull();
+        });
+
+        it("offers no button when the app did not answer, and says to try again soon", async () => {
+            game.getAppShare.mockResolvedValue(shareView({ reachable: false }));
+            await open();
+            expect(byId("appShareStart")).toBeNull();
+            expect(words(byId("appShareUnreachable"))).toBe(
+                "Tavily didn't answer just now, so what people can ask for can't be picked. Try again soon."
+            );
+        });
+
+        it("says there is nothing to ask for, with no button, when the app has no job that can be shared", async () => {
+            game.getAppShare.mockResolvedValue(shareView({ jobs: [] }));
+            await open();
+            expect(byId("appShareStart")).toBeNull();
+            expect(byId("appShareNothing")).not.toBeNull();
+        });
+
+        it("marks a job that changed since it was shared as paused, and does not count it as shared", async () => {
+            game.getAppShare.mockResolvedValue(
+                sharedView({
+                    jobs: [
+                        shareJob({ picked: true }),
+                        shareJob({
+                            tool: "extract",
+                            title: "Read a page",
+                            needsPicking: true,
+                            inputs: [],
+                            returns: { names: null, picked: null },
+                        }),
+                    ],
+                })
+            );
+            await open();
+            expect(words(byId("appShareOn"))).toContain("Can ask for: Search the web");
+            expect(words(byId("appShareOn"))).not.toContain("Read a page");
+            await click("appShareChange");
+            expect(words(byId("appSharePaused"))).toBe(
+                "It changed since you shared it, so it is paused. Pick it again to share it."
+            );
+        });
+
+        it("has a block for each Brick that uses the app", async () => {
+            game.getMyApp.mockResolvedValue(
+                appPage({
+                    app: tavily({
+                        bricks: [
+                            { botId: "b1", botName: "Brick", serverId: "s1", enabled: true, headings: HEADINGS },
+                            { botId: "b2", botName: "Studio Brick", serverId: "s2", enabled: true, headings: HEADINGS },
+                        ],
+                    }),
+                })
+            );
+            await open();
+            expect(game.getAppShare).toHaveBeenCalledWith("tavily", "b1");
+            expect(game.getAppShare).toHaveBeenCalledWith("tavily", "b2");
+            expect(allById("appShareOff").map(words)).toEqual([
+                "Only you People who chat with Brick can't use it Let others use it",
+                "Only you People who chat with Studio Brick can't use it Let others use it",
+            ]);
+        });
+
+        it("says Only for you, with no button and no reading of shares, for an app signed in as the person", async () => {
+            game.getMyApp.mockResolvedValue(appPage({ app: gmail }));
+            await open("gmail");
+            expect(byId("appOnlyForYou")).not.toBeNull();
+            expect(byId("appShare")).toBeNull();
+            expect(game.getAppShare).not.toHaveBeenCalled();
+        });
+
+        it("says so, with Try again, when what is shared could not be read", async () => {
+            game.getAppShare.mockRejectedValueOnce(new Error("offline"));
+            await open();
+            expect(words(byId("appShareLoadFailed"))).toBe("Couldn't read who can ask for this.");
+            await click("appShareTryAgain");
+            expect(byId("appShareOff")).not.toBeNull();
+        });
+    });
+
     describe("an app of the person's own", () => {
         const open = async (id = "tavily") => {
             page = new AppPage({ target, props: { appId: id, onBack: () => {} } });
@@ -475,11 +953,13 @@ describe("the Apps pages (#2001)", () => {
             expect(byId("appOnlyForYou")).toBeNull();
         });
 
-        it("says Only you under Other people, with no button, for an app that can be lent", async () => {
+        it("says Only you under Other people, with no button, for an app that can be lent and no Brick uses yet", async () => {
+            game.getMyApp.mockResolvedValue(appPage({ app: tavily({ bricks: [] }) }));
             await open();
             expect(words(byId("appOnlyYou"))).toBe("Only you People who chat with your Bricks can't use it");
             expect(byId("appOnlyYou")?.querySelector("button")).toBeNull();
             expect(words(byId("appPage"))).toContain("Other people");
+            expect(game.getAppShare).not.toHaveBeenCalled();
         });
 
         it("shows each Brick's picture, and opens what that Brick may do from its row and its arrow", async () => {
@@ -604,6 +1084,58 @@ describe("the Apps pages (#2001)", () => {
             expect(words(byId("appTakeBackSheet"))).toContain("Lending it again later does not give it back to them.");
             await click("appTakeBackSheet-confirm");
             expect(game.takeAppBack).toHaveBeenCalledWith("tavily", "u1");
+        });
+
+        it("names the bots that stop when two or more use the lend, and says 'Bots there' only when none does", async () => {
+            const bot = (botId: string, botName: string) => ({
+                botId,
+                botName,
+                serverId: `s${botId}`,
+                enabled: true,
+                usesThisMonth: 1,
+            });
+            game.getMyApp.mockResolvedValue(
+                appPage({ lentTo: [lentRow({ bots: [bot("g", "Guide"), bot("s", "Scout")] })], canLendTo: [] })
+            );
+            await open();
+            await click("appTakeBack");
+            expect(words(byId("appTakeBackSheet"))).toContain(
+                "Guide and Scout stop using Tavily at once, also in a chat that is already open."
+            );
+            expect(words(byId("appTakeBackSheet"))).not.toContain("Bots there");
+            page?.$destroy();
+            game.getMyApp.mockResolvedValue(
+                appPage({
+                    lentTo: [
+                        lentRow({ bots: [bot("g", "Guide"), bot("s", "Scout"), bot("h", "Helper"), bot("k", "Kit")] }),
+                    ],
+                    canLendTo: [],
+                })
+            );
+            await open();
+            await click("appTakeBack");
+            expect(words(byId("appTakeBackSheet"))).toContain(
+                "Guide, Scout and 2 more stop using Tavily at once, also in a chat that is already open."
+            );
+            page?.$destroy();
+            game.getMyApp.mockResolvedValue(appPage({ lentTo: [lentRow({ bots: [] })], canLendTo: [] }));
+            await open();
+            await click("appTakeBack");
+            expect(words(byId("appTakeBackSheet"))).toContain(
+                "Bots there stop using Tavily at once, also in a chat that is already open."
+            );
+        });
+
+        it("closes the lend sheet and says nothing is wrong when the lend went through but reading the page again failed", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            await open();
+            await click("appLendGo");
+            game.getMyApp.mockRejectedValue(new Error("down"));
+            await click("appLendConfirm");
+            warn.mockRestore();
+            expect(game.lendApp).toHaveBeenCalledTimes(1);
+            expect(byId("appLendSheet")).toBeNull();
+            expect(game.warn).not.toHaveBeenCalledWith("That didn't go through. Nothing changed.");
         });
 
         it("asks nothing of anyone when Cancel is chosen on Take back", async () => {
@@ -793,6 +1325,27 @@ describe("the Apps pages (#2001)", () => {
             expect(words(byId("appPage"))).toContain("Your own key · @BAWES");
         });
 
+        it("does not let a key save that was started before a Cancel close the sheet that was opened after it", async () => {
+            let finish: (value: unknown) => void = () => undefined;
+            game.saveGitHubKey.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+            );
+            await open();
+            await click("gitHubUseKey");
+            await type("ghp_abcdefghij1234");
+            await click("gitHubKeySave");
+            await click("gitHubKeyCancel");
+            expect(byId("gitHubKeySheet")).toBeNull();
+            await click("gitHubUseKey");
+            await type("ghp_second1234567");
+            finish({ id: "gh", login: "BAWES" });
+            await settle();
+            expect(byId("gitHubKeySheet")).not.toBeNull();
+            expect((byId("gitHubKeyInput") as HTMLInputElement).value).toBe("ghp_second1234567");
+        });
+
         it("with the person's own key: works everywhere it does, switches back through GitHub's sign-in, and offers no key", async () => {
             game.getMyApp.mockResolvedValue(github({ ownKey: true }));
             await open();
@@ -870,6 +1423,37 @@ describe("the Apps pages (#2001)", () => {
             expect(byId("teamAppLoadFailed")).not.toBeNull();
             expect(byId("teamAppTryAgain")).not.toBeNull();
             expect(words(byId("teamAppPage"))).toContain("Belongs to BAWES Universe");
+        });
+
+        it("never lets a slow older read bring back a manager that a newer read no longer shows", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const withSara = { app: teamApp(), canAddAsManager: [], canLetUse: [{ id: "h", name: "Hala" }] };
+            const withoutSara = {
+                app: teamApp({ managers: [{ id: "k", name: "Khalid", owner: true, you: true }] }),
+                canAddAsManager: [],
+                canLetUse: [],
+            };
+            game.getTeamApp.mockResolvedValueOnce(withSara);
+            await open();
+            // The read after a change fails: Try again is offered, and is tapped twice
+            game.getTeamApp.mockRejectedValueOnce(new Error("offline"));
+            await click("teamAppLetUse");
+            let older: (value: unknown) => void = () => undefined;
+            game.getTeamApp.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        older = resolve;
+                    })
+            );
+            await click("teamAppTryAgain");
+            game.getTeamApp.mockResolvedValueOnce(withoutSara);
+            await click("teamAppTryAgain");
+            expect(allById("teamAppManager").map(words)).toEqual(["Khalid (you) Owns BAWES Universe"]);
+            older(withSara);
+            await settle();
+            expect(allById("teamAppManager").map(words)).toEqual(["Khalid (you) Owns BAWES Universe"]);
+            expect(byId("teamAppLoadFailed")).toBeNull();
+            warn.mockRestore();
         });
 
         it("offers no Let it use when Orbit sends nobody, and says Orbit's line when it refuses", async () => {
@@ -986,6 +1570,31 @@ describe("the Apps pages (#2001)", () => {
             ]);
         });
 
+        it("never lets a slow older read bring back an app that a newer read no longer shows", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.getUniverseApps.mockRejectedValueOnce(new Error("offline"));
+            page = new TeamAppsPage({
+                target,
+                props: { universe: { id: "u1", name: "BAWES Universe", apps: 2 }, onBack: () => {} },
+            });
+            await settle();
+            let older: (value: unknown) => void = () => undefined;
+            game.getUniverseApps.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        older = resolve;
+                    })
+            );
+            await click("teamAppsTryAgain");
+            game.getUniverseApps.mockResolvedValueOnce({ apps: [teamApp({ id: "a", name: "Notion" })] });
+            await click("teamAppsTryAgain");
+            expect(allById("teamAppRow")).toHaveLength(1);
+            older({ apps: [teamApp({ id: "a", name: "Notion" }), teamApp({ id: "b", name: "GitHub" })] });
+            await settle();
+            expect(allById("teamAppRow").map((row) => words(row).split(" ")[0])).toEqual(["Notion"]);
+            warn.mockRestore();
+        });
+
         it("says nothing is connected yet", async () => {
             game.getUniverseApps.mockResolvedValue({ apps: [] });
             page = new TeamAppsPage({
@@ -1081,6 +1690,60 @@ describe("the Apps pages (#2001)", () => {
     });
 
     describe("the sheets on their own", () => {
+        it("does not stay shut for good when the lend is rejected: it says so and a tap tries again", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const onSubmit = vi
+                .fn<() => Promise<boolean>>()
+                .mockRejectedValueOnce(new Error("down"))
+                .mockResolvedValue(true);
+            page = new LendSheet({
+                target,
+                props: {
+                    app: "Tavily",
+                    universes: [{ id: "u2", name: "Kuwait Makers", access: "manage" }],
+                    onSubmit,
+                    onClose: () => {},
+                },
+            });
+            await settle();
+            await click("appLendConfirm");
+            expect((byId("appLendConfirm") as HTMLButtonElement).disabled).toBe(false);
+            expect(byId("appLendFailed")).not.toBeNull();
+            await click("appLendConfirm");
+            expect(onSubmit).toHaveBeenCalledTimes(2);
+            warn.mockRestore();
+        });
+
+        it("shows the whole install link to copy by hand when the browser does not let it be copied", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            const writeText = vi.fn<(text: string) => Promise<void>>().mockRejectedValueOnce(new Error("denied"));
+            Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+            page = new GitHubWaitingSheet({
+                target,
+                props: {
+                    account: "acme-corp",
+                    installUrl: "https://github.com/apps/bawes-universe/installations/new?target_id=42",
+                    onUseKey: () => {},
+                    onClose: () => {},
+                },
+            });
+            await settle();
+            expect(byId("gitHubCopyFailed")).toBeNull();
+            await click("gitHubCopyLink");
+            expect(words(byId("gitHubCopyFailed"))).toBe(
+                "Couldn't copy it. Select the whole link below and copy it yourself."
+            );
+            expect(words(byId("gitHubInstallFull"))).toBe(
+                "https://github.com/apps/bawes-universe/installations/new?target_id=42"
+            );
+            // a copy that works afterwards says so and drops the fallback
+            writeText.mockResolvedValue(undefined);
+            await click("gitHubCopyLink");
+            expect(byId("gitHubCopyFailed")).toBeNull();
+            expect(words(byId("gitHubCopyLink"))).toBe("Copied");
+            warn.mockRestore();
+        });
+
         it("shows 'You have Manage bots here' for a person who does not own the universe, and sends what was picked", async () => {
             const onSubmit = vi.fn(() => Promise.resolve(true));
             page = new LendSheet({

@@ -30,6 +30,7 @@ vi.mock("../BrickChat", () => ({ openBrickChat }));
 vi.mock("../MyBricksStore", () => ({ myBricksStore: bricks, loadMyBricks }));
 
 import { get } from "svelte/store";
+import { appPageStart, takeAppPageStart } from "../Apps/AppLink";
 import { closeKeyFormSheet, keyFormOpen } from "../Apps/KeyFormLink";
 import { usageLinkRequest } from "../UsageLink";
 import { BRICK_CHAT_LINK, brickChatLinkId, brickChatLinks, linksBrickChat, openBrickChatLink } from "../BrickChatLink";
@@ -86,8 +87,12 @@ describe("a link to a Brick's chat inside an answer", () => {
         expect(openBrickChat).toHaveBeenCalledWith("11");
         expect(loadMyBricks).not.toHaveBeenCalled();
 
-        // A middle click would open the game again in a new tab: it opens the chat too
+        // A middle click would open the game again in a new tab: it opens the chat too, once
+        openBrickChat.mockClear();
         expect(tap(link, "auxclick").defaultPrevented).toBe(true);
+        await flush();
+        expect(openBrickChat).toHaveBeenCalledTimes(1);
+        expect(openBrickChat).toHaveBeenCalledWith("11");
         // A right click opens the browser's menu as anywhere else
         expect(tap(link, "auxclick", 2).defaultPrevented).toBe(false);
 
@@ -166,6 +171,29 @@ describe("the Apps link in what a Brick says after connecting an App", () => {
         const action = brickChatLinks(list);
         const event = tap(link.querySelector("b")!);
         expect(event.defaultPrevented).toBe(false);
+        expect(openAppsPage).not.toHaveBeenCalled();
+        action.destroy();
+    });
+});
+
+describe("the Change the limit link in the note a Brick leaves its owner (#2006)", () => {
+    it("opens the Apps page on that App, and is never followed", () => {
+        const { list, link } = listWithLink("#apps=conn_1");
+        const action = brickChatLinks(list);
+        const event = tap(link.querySelector("b")!);
+        expect(event.defaultPrevented).toBe(true);
+        expect(get(appPageStart)).toBe("conn_1");
+        expect(openAppsPage).toHaveBeenCalledTimes(1);
+        takeAppPageStart();
+        action.destroy();
+    });
+
+    it("is never followed when broken, and opens nothing", () => {
+        const { list, link } = listWithLink("#apps=a/../b");
+        const action = brickChatLinks(list);
+        const event = tap(link.querySelector("b")!);
+        expect(event.defaultPrevented).toBe(true);
+        expect(get(appPageStart)).toBeUndefined();
         expect(openAppsPage).not.toHaveBeenCalled();
         action.destroy();
     });

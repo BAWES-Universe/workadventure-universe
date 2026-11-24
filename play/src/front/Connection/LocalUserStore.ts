@@ -507,6 +507,19 @@ class LocalUserStore {
         }
     }
 
+    /**
+     * A sign-in that has to be tried again (Orbit could not keep the guest's chat yet) keeps the guest token aside for 30 more minutes from now,
+     * so it runs out 30 minutes after the last try, not after the first. A token that is already too old, or none, stays as it is.
+     * Whether it was too old is judged when the request that came back was sent (`sentAt`): one sent just in time that comes back
+     * just late was still valid when it went, and is renewed from now. Only the token that went with the request is renewed
+     * (`sentToken`): another tab may have kept a different one aside meanwhile, and that one was never sent, so it is left as it is.
+     */
+    renewGuestTokenAside(now = Date.now(), sentAt = now, sentToken?: string): void {
+        const token = this.peekGuestTokenAside(sentAt);
+        if (token === null || (sentToken !== undefined && token !== sentToken)) return;
+        localStorage.setItem(guestTokenAsideKey, JSON.stringify({ token, at: now }));
+    }
+
     /** The guest token kept aside, once: asking removes it. */
     takeGuestTokenAside(now = Date.now()): string | null {
         const token = this.peekGuestTokenAside(now);

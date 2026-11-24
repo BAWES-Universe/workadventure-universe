@@ -14,7 +14,7 @@ vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } })
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { BotAPI } from '../server/BotAPI';
-import { GuestBrickService, readDelivery, signDelivery, type GuestBrickMedia } from '../server/GuestBrickService';
+import { GuestBrickService, readDelivery, signDelivery, type GuestBrickMedia, type GuestUpload } from '../server/GuestBrickService';
 import { CarryNotNowError, copyCarriedMedia, readGuestUpload, type CarryCopy } from '../server/GuestBrickMedia';
 import { readCarriedLines } from '../server/GuestBrickService';
 import { carriedWords } from '../matrix/MatrixDmBridge';
@@ -303,7 +303,14 @@ describe('The Brick for guests reads what a guest sends', () => {
         // The model ran: the try stays counted, never given back or marked failed, so a retry is not counted again
         expect(admin.finishGuestBrickReply).not.toHaveBeenCalledWith('turn-1', { failed: true });
         expect(notes.answerFailed).not.toHaveBeenCalled();
-        // The device asks again with the same turn: Orbit says it was counted already, and the note has its words but no answer
+        // The device asks again at once: the note is still in its answering state for this turn, so Orbit refuses it as busy
+        // and nothing runs a second time
+        admin.claimGuestBrickReply.mockResolvedValueOnce({ allowed: true, counted: false } as GuestBrickAllowance);
+        notes.guestNote.mockResolvedValueOnce({ kind: 'refused', why: 'busy' });
+        expect(await service.reply(ask({ note: 'n1' }))).toEqual({ kind: 'unheard', why: 'busy' });
+        expect(generate).toHaveBeenCalledTimes(1);
+        expect(admin.finishGuestBrickReply).toHaveBeenCalledTimes(1);
+        // Later, a turn is granted the answer lease again: Orbit says it was counted already, and the note has its words but no answer
         admin.claimGuestBrickReply.mockResolvedValueOnce({ allowed: true, counted: false } as GuestBrickAllowance);
         expect(await service.reply(ask({ note: 'n1' }))).toEqual({ kind: 'unheard', why: 'uncertain' });
         expect(generate).toHaveBeenCalledTimes(1);
@@ -474,6 +481,98 @@ describe("a guest's pictures, files and notes come along when they sign in (plan
         const offline = copySteps({ handed: vi.fn(async () => Promise.reject(new Error('timeout'))) });
         await expect(copyCarriedMedia(`g-${Math.random()}`, readCarriedLines([LINE]), offline)).rejects.toBeInstanceOf(CarryNotNowError);
         expect(offline.read).not.toHaveBeenCalled();
+    });
+
+    it('on a retry of a part with two files, reuses the file already stored and stores only the one that failed', async () => {
+        const two = [
+            {
+                from: 'guest' as const,
+                text: 'two files',
+                at: 9,
+                media: [
+                    { kind: 'file' as const, name: 'a.png', type: 'image/png', receipt: 'r-a' },
+                    { kind: 'file' as const, name: 'b.png', type: 'image/png', receipt: 'r-b' },
+                ],
+            },
+        ];
+        const steps = copySteps();
+        // The first file is stored; storing the second fails
+        steps.store.mockResolvedValueOnce('https://cdn.test/a.png').mockRejectedValueOnce(new Error('storage down'));
+        const guest = `g-${Math.random()}`;
+        await expect(copyCarriedMedia(guest, readCarriedLines(two), steps)).rejects.toBeInstanceOf(CarryNotNowError);
+        expect(steps.store).toHaveBeenCalledTimes(2);
+
+        // The same part again: the first file's copy is reused, and only the second is stored
+        steps.store.mockResolvedValueOnce('https://cdn.test/b.png');
+        const again = await copyCarriedMedia(guest, readCarriedLines(two), steps);
+        expect(steps.store).toHaveBeenCalledTimes(3);
+        expect(again[0].media?.map((one) => one.url)).toEqual(['https://cdn.test/a.png', 'https://cdn.test/b.png']);
+        // Orbit's receipt for the first file was read once only, and the second twice (once for the try that failed)
+        expect(steps.read.mock.calls.filter((call) => call[0] === 'r-a')).toHaveLength(1);
+        expect(steps.read.mock.calls.filter((call) => call[0] === 'r-b')).toHaveLength(2);
+    });
+
+    it('gives a file to a carry whose budget fits when other carries with less budget keep starting the copy first', async () => {
+        const guest = `g-${Math.random()}`;
+        const big = new Uint8Array(59 * 1024 * 1024);
+        const small = new Uint8Array(2 * 1024 * 1024);
+        const pending: Array<() => void> = [];
+        const steps = copySteps({
+            read: vi.fn(async (receipt: string): Promise<GuestUpload> => {
+                if (receipt === 'r-big') return { ok: true, bytes: big, url: 'g', type: 'image/png', name: 'big.png', sha256: 's' };
+                // The file is read when the test lets it: the store yields between steps
+                await new Promise<void>((resolve) => pending.push(resolve));
+                return { ok: true, bytes: small, url: 'g', type: 'image/png', name: 'f.png', sha256: 's' };
+            }),
+            store: vi.fn(async (bytes: Uint8Array) => `https://cdn.test/${bytes.byteLength}`),
+        });
+        const lineOf = (...receipts: string[]) => readCarriedLines([{ from: 'guest' as const, text: 'files', at: 1, media: receipts.map((r) => ({ kind: 'file' as const, name: `${r}.png`, type: 'image/png', receipt: r })) }]);
+        const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+        // A has 1 MiB left after a 59 MiB file and asks for the 2 MiB file twice; B has all 60 MiB and asks once, while A's copy is being made
+        const a = copyCarriedMedia(guest, lineOf('r-big', 'r-f', 'r-f'), steps);
+        await flush();
+        const b = copyCarriedMedia(guest, lineOf('r-f'), steps);
+        await flush();
+        // Each copy that is waiting is let through, one after the other, until nothing is waiting
+        for (let round = 0; round < 6; round++) {
+            pending.splice(0).forEach((resolve) => resolve());
+            await flush();
+        }
+        const [carriedA, carriedB] = await Promise.all([a, b]);
+        expect(carriedB[0].media?.[0]).toMatchObject({ url: `https://cdn.test/${small.byteLength}` });
+        expect(carriedB[0].media?.[0]).not.toHaveProperty('gone');
+        // A's own two lines of the 2 MiB file are gone: its budget cannot hold it
+        expect(carriedA[0].media?.slice(1).every((one) => one.gone === true)).toBe(true);
+    });
+
+    it('still gives the file to a carry whose budget fits after more than three copies were started first by carries with less budget', async () => {
+        const guest = `g-${Math.random()}`;
+        const big = new Uint8Array(59 * 1024 * 1024);
+        const small = new Uint8Array(2 * 1024 * 1024);
+        const pending: Array<() => void> = [];
+        const steps = copySteps({
+            read: vi.fn(async (receipt: string): Promise<GuestUpload> => {
+                if (receipt === 'r-big') return { ok: true, bytes: big, url: 'g', type: 'image/png', name: 'big.png', sha256: 's' };
+                await new Promise<void>((resolve) => pending.push(resolve));
+                return { ok: true, bytes: small, url: 'g', type: 'image/png', name: 'f.png', sha256: 's' };
+            }),
+            store: vi.fn(async (bytes: Uint8Array) => `https://cdn.test/${bytes.byteLength}`),
+        });
+        const lineOf = (...receipts: string[]) => readCarriedLines([{ from: 'guest' as const, text: 'files', at: 1, media: receipts.map((r) => ({ kind: 'file' as const, name: `${r}.png`, type: 'image/png', receipt: r })) }]);
+        const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+        // A has 1 MiB left and carries the 2 MiB file eight times: it starts eight copies, one after another; B (all 60 MiB) asks once, meanwhile
+        const a = copyCarriedMedia(guest, lineOf('r-big', ...Array<string>(8).fill('r-f')), steps);
+        await flush();
+        const b = copyCarriedMedia(guest, lineOf('r-f'), steps);
+        await flush();
+        for (let round = 0; round < 30; round++) {
+            pending.splice(0).forEach((resolve) => resolve());
+            await flush();
+        }
+        const [carriedA, carriedB] = await Promise.all([a, b]);
+        expect(carriedB[0].media?.[0]).toMatchObject({ url: `https://cdn.test/${small.byteLength}` });
+        expect(carriedB[0].media?.[0]).not.toHaveProperty('gone');
+        expect(carriedA[0].media?.slice(1).every((one) => one.gone === true)).toBe(true);
     });
 
     it('keeps the name of each line a device brings in parts', () => {

@@ -15,6 +15,39 @@ const game = vi.hoisted(() => ({
 vi.mock("svelte", async () => await import("svelte/internal"));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({ botApiService: game }));
 vi.mock("../../../Stores/ErrorStore", () => ({ warningMessageStore: { addWarningMessage: game.warn } }));
+// The sheets that are open: each is destroyed at teardown (removing the host alone would leave its component, and its read of the computer, running into the next test)
+const modals = vi.hoisted(() => new Set<{ $destroy: () => void }>());
+// A sheet opened with svelte-modals is drawn into the page here, closed by its own close
+vi.mock("svelte-modals", () => ({
+    closeModal: vi.fn(),
+    openModal: (
+        component: new (options: { target: HTMLElement; props: Record<string, unknown> }) => { $destroy: () => void },
+        props: Record<string, unknown> = {}
+    ) => {
+        const host = document.createElement("div");
+        host.dataset.modal = "true";
+        document.body.appendChild(host);
+        const made = new component({
+            target: host,
+            props: {
+                ...props,
+                isOpen: true,
+                close: () => {
+                    modals.delete(made);
+                    made.$destroy();
+                    host.remove();
+                },
+            },
+        });
+        modals.add(made);
+    },
+}));
+/** Destroys every sheet still open, then clears what is left of their hosts. */
+const closeAllModals = () => {
+    modals.forEach((modal) => modal.$destroy());
+    modals.clear();
+    document.querySelectorAll("[data-modal]").forEach((modal) => modal.remove());
+};
 
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
@@ -87,7 +120,9 @@ describe("a Brick's computer on screen (#2000)", () => {
         piece?.$destroy();
         piece = undefined;
         target.remove();
+        closeAllModals();
     });
+    const inSheet = (id: string) => document.querySelector<HTMLElement>(`[data-modal] [data-testid="${id}"]`);
 
     const text = () => target.textContent?.replace(/\s+/g, " ").trim() ?? "";
     const byId = (id: string) => target.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -128,7 +163,34 @@ describe("a Brick's computer on screen (#2000)", () => {
         game.brickComputerAction.mockResolvedValue(computer());
         byId("brickComputerStop")?.click();
         await settle();
-        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop");
+        // One job: Stop ends it at once, as the approved mock draws it
+        expect(inSheet("computerEndAsk")).toBeNull();
+        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop", undefined, expect.any(String), ["j1"]);
+    });
+
+    it("CodeRabbit: Stop on the page is off while its request is on its way, so a second tap sends no second Stop", async () => {
+        await showGroup(computer({ machine: "working", job: job() }));
+        let answer!: (value: unknown) => void;
+        game.brickComputerAction.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answer = resolve;
+                })
+        );
+        byId("brickComputerStop")?.click();
+        await settle();
+        byId("brickComputerStop")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledTimes(1);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        answer(Promise.reject(new Error("nope")));
+        await settle();
+        warn.mockRestore();
+        // over: a later tap is a new Stop
+        game.brickComputerAction.mockResolvedValue(computer());
+        byId("brickComputerStop")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledTimes(2);
     });
 
     it("warns when Orbit refuses", async () => {
@@ -207,6 +269,49 @@ describe("a Brick's computer on screen (#2000)", () => {
         await settle();
         expect(byId("brickComputerBarNotice")).toBeNull();
         expect(byId("brickComputerBar")).not.toBeNull();
+    });
+
+    it("counts only jobs that start by themselves as waiting on the bar: a paused one is not waiting", async () => {
+        game.getBrickComputer.mockResolvedValue(
+            computer({
+                machine: "working",
+                job: job(),
+                queued: [
+                    { id: "p1", title: "Visa form", status: "queued", queuedFor: "paused", pausedWhy: "person" },
+                    { id: "w1", title: "Hotel", status: "queued", queuedFor: "turn" },
+                ],
+            })
+        );
+        await loadBrickComputer(BRICK);
+        piece = new BrickComputerBar({ target, props: { brick } });
+        await settle();
+        expect(byId("brickComputerBar")?.textContent).toContain("Book the table");
+        expect(byId("brickComputerBar")?.textContent).toContain("1 waiting");
+    });
+
+    it("says a job is paused on the bar when only paused jobs are left, and why when the month ran out", async () => {
+        game.getBrickComputer.mockResolvedValue(
+            computer({
+                queued: [{ id: "p1", title: "Visa form", status: "queued", queuedFor: "paused", pausedWhy: "person" }],
+            })
+        );
+        await loadBrickComputer(BRICK);
+        piece = new BrickComputerBar({ target, props: { brick } });
+        await settle();
+        expect(byId("brickComputerBar")?.textContent).toContain("Visa form · paused");
+        expect(byId("brickComputerBar")?.textContent).not.toContain("Waiting its turn");
+        game.getBrickComputer.mockResolvedValue(
+            computer({
+                queued: [
+                    { id: "p1", title: "Visa form", status: "queued", queuedFor: "paused", pausedWhy: "allowance" },
+                ],
+            })
+        );
+        await loadBrickComputer(BRICK);
+        await settle();
+        expect(byId("brickComputerBar")?.textContent).toContain(
+            "Visa form · paused · this month's computer time is used up"
+        );
     });
 
     it("shows the screen only for a working computer, and the one tap names exactly what goes in", async () => {
@@ -351,7 +456,7 @@ describe("a Brick's computer on screen (#2000)", () => {
         await settle();
         // Brick puts the details in, then names the same ones again: the answer to the tap has not come yet
         game.getBrickComputer.mockResolvedValue(
-            computer({ machine: "working", job: job({ id: "j1", status: "working", control: "person" }) })
+            computer({ machine: "working", job: job({ id: "j1", status: "running", control: "person" }) })
         );
         await loadBrickComputer(BRICK);
         await settle();
@@ -413,6 +518,142 @@ describe("a Brick's computer on screen (#2000)", () => {
         (piece as unknown as { $set: (props: object) => void }).$set({ brick: { ...brick, id: OTHER, name: "Other" } });
         await settle();
         expect(game.getBrickComputer).toHaveBeenCalledWith(OTHER);
+    });
+
+    it("closes nothing when the answer to Stop comes after the screen went away or turned to another Brick", async () => {
+        const OTHER = "9f8e7d6c-1111-4222-8333-000011112222";
+        const working = computer({ machine: "working", job: job() });
+        game.getBrickComputer.mockResolvedValue(working);
+        await loadBrickComputer(BRICK);
+        const onClose = vi.fn();
+        piece = new BrickScreen({ target, props: { brick, onClose } });
+        await settle();
+        let stopped: (value: unknown) => void = () => undefined;
+        game.brickComputerAction.mockReturnValue(
+            new Promise((resolve) => {
+                stopped = resolve;
+            })
+        );
+        byId("brickScreenStop")?.click();
+        await settle();
+        // The screen goes away (another Brick's screen is open in its place) before Orbit answers
+        piece.$destroy();
+        piece = undefined;
+        stopped({ job: job({ status: "stopped" }) });
+        await settle();
+        expect(onClose).not.toHaveBeenCalled();
+
+        // The same when the screen stays but turns to another Brick
+        game.getBrickComputer.mockResolvedValue(working);
+        await loadBrickComputer(OTHER);
+        const onClose2 = vi.fn();
+        const second = new BrickScreen({ target, props: { brick, onClose: onClose2 } });
+        await settle();
+        let stopped2: (value: unknown) => void = () => undefined;
+        game.brickComputerAction.mockReturnValue(
+            new Promise((resolve) => {
+                stopped2 = resolve;
+            })
+        );
+        byId("brickScreenStop")?.click();
+        await settle();
+        (second as unknown as { $set: (props: object) => void }).$set({
+            brick: { ...brick, id: OTHER, name: "Other" },
+        });
+        await settle();
+        stopped2({ job: job({ status: "stopped" }) });
+        await settle();
+        expect(onClose2).not.toHaveBeenCalled();
+        second.$destroy();
+    });
+
+    it("sends one Stop however often it is tapped while the first is pending, and the button works again once it is over, whatever came of it", async () => {
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
+        await loadBrickComputer(BRICK);
+        const onClose = vi.fn();
+        piece = new BrickScreen({ target, props: { brick, onClose } });
+        await settle();
+        let answer: (value: unknown) => void = () => undefined;
+        game.brickComputerAction.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        byId("brickScreenStop")?.click();
+        await settle();
+        byId("brickScreenStop")?.click();
+        byId("brickScreenStop")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledTimes(1);
+        expect((byId("brickScreenStop") as HTMLButtonElement | null)?.disabled).toBe(true);
+        // Orbit refused: the screen stays, the button is on again, and a new tap is a new Stop
+        answer(null);
+        await settle();
+        expect(onClose).not.toHaveBeenCalled();
+        expect((byId("brickScreenStop") as HTMLButtonElement | null)?.disabled).toBe(false);
+        game.brickComputerAction.mockResolvedValue({ job: job({ status: "stopped" }) });
+        byId("brickScreenStop")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledTimes(2);
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("still closes on Stop when the screen is still the one that was tapped", async () => {
+        game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: job() }));
+        await loadBrickComputer(BRICK);
+        const onClose = vi.fn();
+        piece = new BrickScreen({ target, props: { brick, onClose } });
+        await settle();
+        game.brickComputerAction.mockResolvedValue({ job: job({ status: "stopped" }) });
+        byId("brickScreenStop")?.click();
+        await settle();
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks first on the Watch screen when Stop would end several jobs, and closes only once they ended", async () => {
+        game.getBrickComputer.mockResolvedValue(
+            computer({
+                machine: "working",
+                job: job(),
+                queued: [{ id: "j2", title: "Hotel", status: "queued", queuedFor: "turn" }],
+            })
+        );
+        await loadBrickComputer(BRICK);
+        const onClose = vi.fn();
+        piece = new BrickScreen({ target, props: { brick, onClose } });
+        await settle();
+        byId("brickScreenStop")?.click();
+        await settle();
+        expect(onClose).not.toHaveBeenCalled();
+        expect(inSheet("computerEndAsk")?.textContent).toContain("Stop all 2 jobs?");
+        game.brickComputerAction.mockResolvedValue(computer());
+        inSheet("computerEndAskEnd")?.click();
+        await settle();
+        expect(game.brickComputerAction).toHaveBeenCalledWith(BRICK, "stop", undefined, expect.any(String), [
+            "j1",
+            "j2",
+        ]);
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("says the last step is the person's even when what was filled in is confirmed (paying and submitting are always theirs)", async () => {
+        const waiting = (over: Record<string, unknown>) =>
+            computer({ machine: "working", job: job({ status: "waiting", control: "person", ...over }) });
+        game.getBrickComputer.mockResolvedValue(
+            waiting({ waitingFor: "details", ready: { what: "your name", where: "the form" } })
+        );
+        await loadBrickComputer(BRICK);
+        piece = new BrickScreen({ target, props: { brick, onClose: () => undefined } });
+        await settle();
+        game.brickComputerAction.mockResolvedValue({ job: job({ control: "person" }) });
+        byId("brickScreenFill")?.click();
+        await settle();
+        // Brick has put it in, and now only paying is left
+        game.getBrickComputer.mockResolvedValue(waiting({ waitingFor: "pay" }));
+        await loadBrickComputer(BRICK);
+        await settle();
+        expect(byId("brickScreenLast")).not.toBeNull();
+        expect(byId("brickScreenFilled")).toBeNull();
     });
 
     it("shows no screen for a computer that is resting, and does not ask for one to be woken", async () => {

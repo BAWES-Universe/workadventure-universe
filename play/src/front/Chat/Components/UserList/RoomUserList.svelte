@@ -28,6 +28,7 @@
         relationshipsStore,
     } from "../../Stores/FriendsStore";
     import { countPeopleAndBots, countPeopleElsewhere } from "../../UserProvider/WorldUserProvider";
+    import { matchesPeopleSearch } from "./PeopleSearch";
     import UserList from "./UserList.svelte";
     import PeopleAndBots from "./PeopleAndBots.svelte";
     import type { SelfIdentity } from "./PersonActions";
@@ -39,7 +40,7 @@
     import FriendFaces from "./FriendFaces.svelte";
     import UniverseSearch from "./UniverseSearch.svelte";
     import type { ListedPerson, WorldSighting } from "./Friends";
-    import { chatIdsToAsk, otherWorldFaces, placeFriends, savedLook } from "./Friends";
+    import { chatIdsToAsk, onlineFriendsCount, otherWorldFaces, placeFriends, savedLook } from "./Friends";
     import { createLayerPictures } from "./LayerPictures";
     import { friendNoticeStore } from "./FriendActions";
     import { IconChevronDown, IconMapPin } from "@wa-icons";
@@ -89,9 +90,7 @@
     });
 
     function matches(user: ChatUser): boolean {
-        if (!isSearching) return true;
-        if (findsBots && user.isBot === true) return true;
-        return user.username ? user.username.toLocaleLowerCase().includes(query) : false;
+        return matchesPeopleSearch(user, query, findsBots);
     }
 
     function statusOf(user: ChatUser): AvailabilityStatus | undefined {
@@ -325,7 +324,7 @@
 <div class="relative flex flex-col h-full">
     {#if $friendsEnabledStore}
         <PeopleChips
-            friendsCount={friendsList?.friends.length ?? 0}
+            onlineFriendsCount={onlineFriendsCount(placedFriends)}
             incomingCount={friendsList?.incoming.length ?? 0}
             {showRequests}
         />

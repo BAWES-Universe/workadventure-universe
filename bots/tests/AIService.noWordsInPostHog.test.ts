@@ -34,7 +34,11 @@ vi.mock("@sentry/node", () => {
         spanContext: vi.fn(() => ({ spanId: "s", traceId: "t" })),
     };
     return {
-        startSpanManual: vi.fn((_opts: unknown, callback: (span: any) => any) => callback(span)),
+        // The options a span is opened with are recorded too: they reach Sentry as much as what is set on the span later
+        startSpanManual: vi.fn((opts: unknown, callback: (span: any) => any) => {
+            hoisted.sentryCalls.push(["startSpanManual", opts]);
+            return callback(span);
+        }),
         startInactiveSpan: vi.fn(),
         getCurrentScope: vi.fn(() => ({ setConversationId: vi.fn() })),
         getActiveSpan: vi.fn(() => null),
@@ -65,6 +69,7 @@ vi.mock("../mcp/MCPConnector", () => ({
         clearCache: vi.fn(),
     },
     toolTimeoutMs: vi.fn(() => 60_000),
+    signInRefusalOf: vi.fn(() => undefined),
 }));
 
 const provider = {
@@ -184,11 +189,29 @@ describe("AIService: no words reach PostHog or Sentry", () => {
             expect(properties.$ai_output_tokens).toEqual(expect.any(Number));
             expect(properties).toHaveProperty("$ai_latency");
         }
-        // Tool names and counts are kept
+        // The count is kept; the name of a tool that comes from an App or another tool server is the server's to choose, so it is "other"
         const initial = events.find((e) => e.event === "$ai_generation" && e.properties.tool_names);
-        expect(initial.properties).toMatchObject({ tool_names: ["read_mail"], tool_call_count: 1 });
+        expect(initial.properties).toMatchObject({ tool_names: ["other"], tool_call_count: 1 });
         const trace = events.find((e) => e.event === "$ai_trace");
-        expect(trace.properties).toMatchObject({ tool_names: ["read_mail"], tool_call_count: 1 });
+        expect(trace.properties).toMatchObject({ tool_names: ["other"], tool_call_count: 1 });
+        expect(sent).not.toContain("read_mail");
+    });
+
+    it("names the bot's own tools and nothing else", async () => {
+        const { telemetryToolNames } = await import("../ai/AIService");
+        expect(telemetryToolNames(["get_people_on_map", "medical_report.pdf", "", "get_people_on_map"], new Set(["get_people_on_map"]))).toEqual(["get_people_on_map", "other", "get_people_on_map"]);
+    });
+
+    it("sends 'other' for a tool name the model made up, even when it is a valid identifier", async () => {
+        const { admin, memory } = buildMocks();
+        mockGenerateStream
+            .mockImplementationOnce(callsTool("medical_report.pdf", {}))
+            .mockImplementationOnce(says("Done."));
+        await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
+
+        expect(everythingSent()).not.toContain("medical_report");
+        const events = hoisted.posthogCapture.mock.calls.map((call) => call[0]);
+        expect(events.find((e) => e.event === "$ai_trace").properties).toMatchObject({ tool_names: ["other"], tool_call_count: 1 });
     });
 
     it("keeps typed words and the memory out of a plain turn (a typed message or a call alike)", async () => {

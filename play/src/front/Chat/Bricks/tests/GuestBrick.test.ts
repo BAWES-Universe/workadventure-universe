@@ -49,6 +49,21 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
         expect(read?.lines.map((line) => line.text)).toEqual(["Where's the coffee?", "Second row."]);
     });
 
+    it("reads a chat saved mid-carry by the build before parts (carryingTo) as the part that was on its way", () => {
+        let chat = newGuestChat(GUEST, 1000);
+        for (let i = 0; i < 4; i++)
+            chat = withLine(chat, { from: i % 2 ? "brick" : "guest", text: `line ${i}`, at: 2000 + i });
+        const old = { ...JSON.parse(serializeGuestChat(chat)), carriedTo: 1, carryingTo: 3 };
+        const read = parseGuestChat(JSON.stringify(old), GUEST, 5000, HOUR);
+        // The part asked again is the one that went: lines 1 and 2, same ids, not the whole chat from the start
+        expect(read?.carrying).toEqual(carriedPart(chat, 1, 3));
+        expect(read?.carrying?.lines).toHaveLength(2);
+        // A place that cannot be (behind where it got to, or past the lines) is not a part
+        for (const carryingTo of [1, 0, 9, 2.5, "3"]) {
+            expect(parseGuestChat(JSON.stringify({ ...old, carryingTo }), GUEST, 5000, HOUR)?.carrying).toBeUndefined();
+        }
+    });
+
     it("does not give a chat to anyone but the guest it was kept for", () => {
         const chat = withLine(newGuestChat(GUEST, 1), { from: "guest", text: "hi", at: 2 });
         expect(
@@ -121,6 +136,25 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
             { from: "guest", text: "line 0" },
             { from: "guest", text: "line 2" },
         ]);
+    });
+
+    it("reads a long chat from its newest line and stops at what a request carries, never through to its first line", () => {
+        const lines = Array.from({ length: 20000 }, (_, index) => ({
+            from: index % 2 ? ("brick" as const) : ("guest" as const),
+            text: `line ${index}`,
+            at: index + 1,
+        }));
+        const looked = new Set<number>();
+        const watched = new Proxy(lines, {
+            get(target, key, receiver) {
+                if (typeof key === "string" && /^\d+$/.test(key)) looked.add(Number(key));
+                return Reflect.get(target, key, receiver) as unknown;
+            },
+        });
+        const history = historyExcept(watched, new Set());
+        expect(history).toHaveLength(REQUEST_LINES_MAX);
+        expect(history[history.length - 1].text).toBe("line 19999");
+        expect(Math.min(...looked)).toBeGreaterThanOrEqual(20000 - REQUEST_LINES_MAX - 1);
     });
 
     it("keeps a request under what the bot server takes in, however long the chat or the message is", () => {
@@ -231,7 +265,13 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
         expect(first).toMatchObject({ from: 0, last: false });
         expect(first.lines.length).toBeLessThanOrEqual(CARRIED_LINES_MAX);
         const all = [first];
-        while (!all[all.length - 1].last) all.push(carriedPart(chat, all[all.length - 1].to));
+        while (!all[all.length - 1].last) {
+            const before = all[all.length - 1];
+            // Every part moves on: a part that did not would repeat for ever
+            expect(before.to).toBeGreaterThan(before.from);
+            all.push(carriedPart(chat, before.to));
+        }
+        expect(all[all.length - 1].to).toBeGreaterThan(all[all.length - 1].from);
         expect(all.flatMap((part) => part.lines).map((line) => line.at)).toEqual(
             Array.from({ length: 300 }, (_, i) => i + 1)
         );
@@ -311,7 +351,13 @@ describe("the Brick for guests: the chat a guest's device keeps (#1997)", () => 
         expect(serverBytes(first.lines[0])).toBeLessThanOrEqual(CARRIED_BYTES_MAX);
         expect(first.lines[0].media!.length).toBeLessThanOrEqual(10);
         const all = [first];
-        while (!all[all.length - 1].last) all.push(carriedPart(chat, all[all.length - 1].to));
+        while (!all[all.length - 1].last) {
+            const before = all[all.length - 1];
+            // Every part moves on: a part that did not would repeat for ever
+            expect(before.to).toBeGreaterThan(before.from);
+            all.push(carriedPart(chat, before.to));
+        }
+        expect(all[all.length - 1].to).toBeGreaterThan(all[all.length - 1].from);
         expect(all.flatMap((part) => part.lines).map((line) => line.at)).toEqual([2, 3, 4]);
         for (const part of all)
             expect(part.lines.reduce((sum, line) => sum + serverBytes(line), 0)).toBeLessThanOrEqual(CARRIED_BYTES_MAX);

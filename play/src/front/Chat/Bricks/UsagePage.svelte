@@ -12,7 +12,10 @@
     import {
         availableText,
         fullAgainWhen,
-        spentText,
+        PRICE_NOT_KNOWN,
+        REFUND_PENDING_NOTE,
+        exactDollars,
+        spentLabel,
         storageSize,
         type ActivityItem,
         type BotSpend,
@@ -20,6 +23,7 @@
         type CreditCategory,
         type ExtraCredit,
         type Replies,
+        type ReceiptLine,
     } from "./Usage";
     import UsageMoney from "./UsageMoney.svelte";
     import { askMyUsageForMore, loadMyUsage, myUsageFailed, myUsageSettled, myUsageStore } from "./UsageStore";
@@ -36,6 +40,8 @@
     export let onBack: () => void;
     /** A task whose receipt opens first (the link under a Brick's answer) */
     export let receiptId: string | undefined = undefined;
+    /** Which request opened it: the same receipt asked for again is a new request, and opens it again */
+    export let receiptRequest = 0;
     /** What each of the person's Bricks looks like, by id, for By bot */
     export let looks: Record<string, string | null> = {};
 
@@ -47,11 +53,21 @@
     $: computer = usage?.computer ?? null;
     let asking: CreditCategory | undefined;
     let openId: string | undefined = receiptId;
-    let scrolledTo: string | undefined;
+    let handledRequest: number | undefined;
     let body: HTMLDivElement | undefined;
+    // Each task's button, by its id: what a link to a receipt puts the keyboard on
+    let activityButtons: Record<string, HTMLButtonElement | undefined> = {};
 
     // The legacy bar: words only, for an Orbit that does not send replies yet
-    $: chatTitle = chat ? (chat.words === "out" ? text.out() : chat.words === "low" ? text.low() : text.plenty()) : "";
+    $: chatTitle = chat
+        ? chat.words === "out"
+            ? text.out()
+            : chat.words === "low"
+            ? text.low()
+            : chat.words === "half"
+            ? text.half()
+            : text.plenty()
+        : "";
     $: chatHint = chat?.fullAgainAt ? text.fullAgain({ when: fullAgainWhen(chat.fullAgainAt, $locale) }) : undefined;
     $: computerTitle = computer
         ? computer.words === "out"
@@ -111,53 +127,137 @@
         return parts.length > 0 ? parts.join(" · ") : undefined;
     }
 
-    const coversText = (covers: CreditCategory[]) =>
+    // These take what they say it with (the words and the language) as arguments, so a row says itself again when either changes
+    type Words = typeof $LL.chat.brick.usage;
+    const coversText = (covers: CreditCategory[], text: Words) =>
         covers.length > 1 ? text.coversBoth() : covers[0] === "apps" ? text.coversApps() : text.coversComputers();
-    const creditHint = (credit: ExtraCredit) => {
+    const creditHint = (credit: ExtraCredit, text: Words, locale: string | undefined) => {
         const name = credit.fromName ?? text.extraCreditUniverse();
-        const covers = coversText(credit.covers);
+        const covers = coversText(credit.covers, text);
         return credit.until
-            ? text.extraCreditFrom({ name, covers, day: shortDay(credit.until, $locale) })
+            ? text.extraCreditFrom({ name, covers, day: shortDay(credit.until, locale) })
             : text.extraCreditFromNoDay({ name, covers });
     };
-    const botUses = (bot: BotSpend) =>
+    const botUses = (bot: BotSpend, text: Words) =>
         bot.uses.length > 1
             ? text.botUsesBoth()
             : bot.uses[0] === "computer"
             ? text.botUsesComputer()
             : text.botUsesApps();
 
-    function paidBy(item: ActivityItem): string {
+    function paidBy(item: ActivityItem, text: Words): string {
         if (item.payer === "you") return text.paidByYou();
         if (item.payer === "universe") return text.paidByUniverse();
         return text.paidByName({ name: item.payerName ?? text.extraCreditUniverse() });
     }
 
-    function activityWhen(at: string): string {
-        const when = whenLabel(at, $locale ?? "en");
+    function activityWhen(at: string, text: Words, locale: string | undefined): string {
+        const when = whenLabel(at, locale ?? "en");
         if (when.kind === "today") return text.activityToday({ time: when.text });
         return when.kind === "yesterday" ? text.activityYesterday() : when.text;
     }
 
-    function activityHint(item: ActivityItem): string {
-        const when = activityWhen(item.at);
-        if (item.state === "refunded") return `${when} · ${text.activityRefunded()}`;
-        if (item.payer !== "you") return `${when} · ${paidBy(item)}`;
+    /** A task that cost something nobody can say yet: Orbit sends its total as nothing and a line that says the price is not known */
+    const priceUnknown = (item: ActivityItem): boolean =>
+        item.spentMicros === null &&
+        item.lines.some((line) => line.amountMicros === null && line.note === PRICE_NOT_KNOWN);
+
+    /**
+     * What a task that did not simply finish is called: Orbit's own headline when it sends one, else ours. A done task has none.
+     * An outcome this page does not know reads as done, but keeps its own headline when Orbit sends one (a genuine done task, which
+     * Orbit also gives the word "Done", shows none).
+     */
+    function headline(item: ActivityItem, text: Words): string {
+        if (item.state === "refunded" && item.outcome !== "unconfirmed") return "";
+        // Orbit's own words for how a task ended are shown as Orbit says them; ours are only for an Orbit that sent none
+        if (item.outcome === "partial") return item.outcomeText ?? text.activityPartly();
+        if (item.outcome === "failed") return item.outcomeText ?? text.activityDidntFinish();
+        if (item.outcome === "unconfirmed") return item.outcomeText ?? text.activityCouldntConfirm();
+        if (item.outcome === "stopped") return item.outcomeText ?? text.activityStopped();
+        if (item.outcome === "deciding") return item.outcomeText ?? text.activityDeciding();
+        if (item.outcome === "refund_pending") {
+            if (item.outcomeText) return item.outcomeText;
+            const owed = item.refundPendingMicros !== undefined ? exactDollars(item.refundPendingMicros) : null;
+            return owed ? text.activityRefundPending({ amount: owed }) : text.activityRefundPendingNoAmount();
+        }
+        return item.unknownOutcome && item.outcomeText ? item.outcomeText : "";
+    }
+
+    /**
+     * A task that did not finish and took nothing: nobody paid, so no "Paid by" line (the note says what happened). A partly done task
+     * that owes nothing (an App delivered after its hold was let go, with the computer given back) is the same: Orbit says $0, and "Paid by you"
+     * under it would say otherwise.
+     */
+    const nothingPaid = (item: ActivityItem): boolean =>
+        ((item.outcome === "failed" ||
+            item.outcome === "unconfirmed" ||
+            item.outcome === "stopped" ||
+            item.outcome === "deciding" ||
+            item.outcome === "refund_pending") &&
+            item.spentMicros === null &&
+            !priceUnknown(item)) ||
+        (item.outcome === "partial" && item.spentMicros === 0);
+
+    function activityHint(item: ActivityItem, text: Words, locale: string | undefined): string {
+        const when = activityWhen(item.at, text, locale);
+        // A refunded task nobody could confirm says so beside the refund: its delivery is still not known
+        if (item.state === "refunded") {
+            return item.outcome === "unconfirmed"
+                ? [when, headline(item, text), text.refunded()].filter(Boolean).join(" · ")
+                : `${when} · ${text.activityRefunded()}`;
+        }
+        const partly = headline(item, text);
+        if (item.payer !== "you") {
+            return [when, partly, nothingPaid(item) ? "" : paidBy(item, text)].filter(Boolean).join(" · ");
+        }
         const what =
             item.category === "apps"
                 ? text.activityApps()
                 : item.category === "computer"
                 ? text.activityComputer()
                 : "";
-        return [when, item.spentMicros !== null ? spentText(item.spentMicros, $locale) : "", what]
-            .filter(Boolean)
-            .join(" · ");
+        const spent =
+            item.spentMicros !== null
+                ? spentLabel(item.spentMicros, locale, text.lessThanTenthOfCent())
+                : priceUnknown(item)
+                ? text.amountUnavailable()
+                : "";
+        return [when, partly, spent, what].filter(Boolean).join(" · ");
     }
 
-    function lineValue(amountMicros: number | null, note: string | null): string {
-        if (amountMicros !== null) return spentText(amountMicros, $locale);
+    function lineValue(line: ReceiptLine, text: Words, locale: string | undefined) {
+        const { amountMicros, note } = line;
+        if (amountMicros !== null) return spentLabel(amountMicros, locale, text.lessThanTenthOfCentInLine());
+        if (note === PRICE_NOT_KNOWN) return text.amountUnavailable();
+        // A computer given back: Orbit's word for it ("Given back") and what it got back, said the way Orbit says amounts
+        const back = note !== null && line.returnedMicros !== null ? exactDollars(line.returnedMicros) : null;
+        if (note !== null && back) return `${note} ${back}`;
         return note ?? text.activityNothingTaken();
     }
+
+    /** Every outcome but done and refunded shows its actions: a task that did not finish says what each step did */
+    const showsActions = (item: ActivityItem): boolean => item.outcome !== "done" && item.outcome !== "refunded";
+
+    /**
+     * A task that did not finish shows each action and how it ended; the lines of what it used follow only when no step that worked
+     * carries its own amount (then Orbit's lines are all there is). Once a step says what it took, the steps are the lines.
+     */
+    const perAction = (item: ActivityItem): boolean =>
+        showsActions(item) &&
+        item.actions.some((action) => action.outcome === "worked" && action.amountMicros !== null);
+
+    /**
+     * The lines of a receipt that are shown. When each step says what it took, the steps are the lines, except the computer's own line
+     * when it was given back or a refund of it is pending: nothing else says what happened to the computer's cost on that receipt.
+     */
+    const shownLines = (item: ActivityItem): ReceiptLine[] =>
+        perAction(item)
+            ? item.lines.filter(
+                  (line) =>
+                      line.returnedMicros !== null ||
+                      (item.refundPendingMicros !== undefined && line.note === REFUND_PENDING_NOTE)
+              )
+            : item.lines;
 
     async function onAsk(category: CreditCategory) {
         if (asking) return;
@@ -172,12 +272,23 @@
         loadMyUsage().catch((error) => console.error(error));
     }
 
-    // The task a link asked for scrolls into view once the page has it
-    $: if (receiptId && usage && scrolledTo !== receiptId && usage.activity.some((item) => item.id === receiptId)) {
-        scrolledTo = receiptId;
-        openId = receiptId;
+    // The task a link asked for opens, scrolls into view and takes the keyboard once the page has it, each time it is asked for
+    // (the same receipt asked for again, after it was closed, is a new request)
+    $: if (
+        receiptId &&
+        usage &&
+        handledRequest !== receiptRequest &&
+        usage.activity.some((item) => item.id === receiptId)
+    ) {
+        const wanted = receiptId;
+        handledRequest = receiptRequest;
+        openId = wanted;
         tick()
-            .then(() => body?.querySelector(`[data-activity="${receiptId}"]`)?.scrollIntoView?.({ block: "center" }))
+            .then(() => {
+                const button = activityButtons[wanted];
+                button?.scrollIntoView?.({ block: "center" });
+                button?.focus({ preventScroll: true });
+            })
             .catch((error) => console.error(error));
     }
 
@@ -230,6 +341,7 @@
                     money={apps}
                     note={text.instantNote()}
                     asking={asking === "apps"}
+                    busy={asking !== undefined}
                     onAsk={() => onAsk("apps")}
                 />
             {/if}
@@ -242,6 +354,7 @@
                         money={computer.money}
                         note={text.computerNote()}
                         asking={asking === "computer"}
+                        busy={asking !== undefined}
                         onAsk={() => onAsk("computer")}
                     />
                 {:else}
@@ -263,7 +376,7 @@
                             <PageButton
                                 tall
                                 go
-                                disabled={asking === "computer"}
+                                disabled={asking !== undefined}
                                 testId="usageAskForMore"
                                 on:click={() => onAsk("computer")}
                             >
@@ -285,7 +398,7 @@
                             available: availableText(credit.availableMicros, $locale),
                             total: availableText(credit.totalMicros, $locale),
                         })}
-                        hint={creditHint(credit)}
+                        hint={creditHint(credit, text, $locale)}
                         on
                     />
                     <PageNote>{credit.covers.length > 1 ? text.extraCreditBoth() : text.extraCreditOne()}</PageNote>
@@ -301,7 +414,10 @@
                             <div class="t">{bot.name}</div>
                             <div class="m">
                                 {bot.spentMicros > 0
-                                    ? text.botSpent({ amount: spentText(bot.spentMicros, $locale), uses: botUses(bot) })
+                                    ? text.botSpent({
+                                          amount: spentLabel(bot.spentMicros, $locale, text.lessThanTenthOfCent()),
+                                          uses: botUses(bot, text),
+                                      })
                                     : text.botNone()}
                             </div>
                         </div>
@@ -318,27 +434,64 @@
                         class:open={openId === item.id}
                         aria-expanded={openId === item.id}
                         data-activity={item.id}
+                        bind:this={activityButtons[item.id]}
                         data-testid="usageActivity"
                         on:click={() => (openId = openId === item.id ? undefined : item.id)}
                     >
                         <div class="tx">
                             <div class="t">{item.title}</div>
-                            <div class="m">{activityHint(item)}</div>
+                            <div class="m">{activityHint(item, text, $locale)}</div>
                         </div>
                         <span class="chev"><IconChevronDown font-size="18" /></span>
                     </button>
                     {#if openId === item.id}
                         <div class="receipt" data-testid="usageReceipt">
-                            {#each item.lines as line, index (index)}
+                            {#if showsActions(item)}
+                                {#each item.actions as action, index (index)}
+                                    <div class="rl" data-testid="usageReceiptAction">
+                                        <span>{action.text}</span>
+                                        {#if action.outcome === "failed"}
+                                            <b class="q">{action.takenText ?? text.activityNothingTaken()}</b>
+                                        {:else if action.outcome === "unknown"}
+                                            <!-- Not confirmed: only Orbit's words for what was taken, never a claim of ours -->
+                                            {#if action.takenText}<b class="q">{action.takenText}</b>{/if}
+                                        {:else if action.amountMicros !== null}
+                                            <b
+                                                >{spentLabel(
+                                                    action.amountMicros,
+                                                    $locale,
+                                                    text.lessThanTenthOfCentInLine()
+                                                )}</b
+                                            >
+                                        {:else if perAction(item) && item.lines.some((line) => line.note === PRICE_NOT_KNOWN)}
+                                            <!-- This step worked and its price is not known yet, as Orbit says in its lines -->
+                                            <b class="q">{text.amountUnavailable()}</b>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            {/if}
+                            {#each shownLines(item) as line, index (index)}
                                 <div class="rl">
-                                    <span>{line.label}</span><b>{lineValue(line.amountMicros, line.note)}</b>
+                                    <span>{line.label}</span><b
+                                        class:q={line.amountMicros === null && line.note === PRICE_NOT_KNOWN}
+                                        >{lineValue(line, text, $locale)}</b
+                                    >
                                 </div>
                             {/each}
-                            {#if item.state === "refunded"}
+                            {#if item.state === "refunded" && item.outcome !== "unconfirmed"}
                                 <p class="why" data-testid="usageReceiptWhy">{text.receiptRefundedWhy()}</p>
+                            {:else if item.outcomeNote}
+                                <p class="why" data-testid="usageReceiptWhy">{item.outcomeNote}</p>
                             {/if}
                             <div class="rfoot">
-                                <span class="paid">{item.state === "refunded" ? text.refunded() : paidBy(item)}</span>
+                                {#if headline(item, text)}
+                                    <span class="paid" data-testid="usageReceiptPartly">{headline(item, text)}</span>
+                                {/if}
+                                {#if item.state === "refunded"}
+                                    <span class="paid">{text.refunded()}</span>
+                                {:else if !nothingPaid(item)}
+                                    <span class="paid">{paidBy(item, text)}</span>
+                                {/if}
                             </div>
                         </div>
                     {/if}
@@ -499,10 +652,15 @@
         color: #fff;
         text-align: right;
     }
+    .rl b.q {
+        font-weight: 500;
+        color: rgba(244, 242, 250, 0.75);
+    }
     .rfoot {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
-        justify-content: space-between;
+        gap: 8px;
         padding-top: 8px;
         min-height: 36px;
     }

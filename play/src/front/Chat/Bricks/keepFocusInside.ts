@@ -6,7 +6,7 @@ import type { Action } from "svelte/action";
  */
 export const keepFocusInside: Action<HTMLElement, () => void> = (node, onClose) => {
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-    const stops = () => Array.from(node.querySelectorAll<HTMLElement>("button:not([disabled]), input"));
+    const stops = () => Array.from(node.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled])"));
     stops()[0]?.focus();
 
     function onKeydown(event: KeyboardEvent) {

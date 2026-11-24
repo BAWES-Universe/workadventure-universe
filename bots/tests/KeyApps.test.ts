@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
 import { answerOf, callKeyApp, keyAppTools, loadKeyApps, parseKeyApps } from '../mcp/KeyApps';
 import { MCPConnector } from '../mcp/MCPConnector';
+import { resultOf } from '../ai/ToolSteps';
 
 vi.mock('../ai/encryption', () => ({ decryptApiKey: (val: string | null | undefined) => val || null }));
 vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), isCancel: vi.fn(), isAxiosError: vi.fn() } }));
@@ -150,7 +151,7 @@ describe('a call', () => {
         });
         const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, turn.signal, WAIT)) as { error: string; outcome?: string };
         expect(result.error).toMatch(/couldn't tell whether/);
-        expect(result.outcome).toBeUndefined();
+        expect(result.outcome).toBe('uncertain');
     });
 
     it('waits as long as it was told to: the bot’s Patience, or the default the other tools have', async () => {
@@ -165,7 +166,7 @@ describe('a call', () => {
         http.post.mockRejectedValueOnce(new Error('timeout'));
         const result = (await callKeyApp(where, entryFor('example_makepaymentlink'), {}, use, undefined, WAIT)) as { error: string; outcome?: string };
         expect(result.error).toMatch(/couldn't tell whether/);
-        expect(result.outcome).toBeUndefined();
+        expect(result.outcome).toBe('uncertain');
     });
 });
 
@@ -193,8 +194,12 @@ describe('what the model is told', () => {
             [429, { code: 'limit' }, 'not_sent'],
             [502, { code: 'key_rejected' }, 'failed'],
             // Orbit may have sent it and lost the answer: never said to be undone
-            [502, { code: 'unavailable' }, undefined],
-            [500, {}, 'not_sent'],
+            [502, { code: 'unavailable' }, 'uncertain'],
+            // Any server error may have come after the request was sent on: never said to be undone
+            [500, {}, 'uncertain'],
+            [503, {}, 'uncertain'],
+            [504, { code: 'timeout' }, 'uncertain'],
+            [503, { code: 'key_rejected' }, 'failed'],
         ];
         for (const [status, body, outcome] of cases) {
             const result = answerOf(status, body) as { error: string; outcome?: string };
@@ -203,20 +208,35 @@ describe('what the model is told', () => {
         }
     });
 
+    it('shows a server error as not known, never as failed: the step cannot say it did not work', () => {
+        for (const status of [500, 502, 503, 504]) expect(resultOf('step', answerOf(status, {}))).toMatchObject({ ok: false, unknown: true });
+        // A key the service refused is proven
+        expect(resultOf('step', answerOf(503, { code: 'key_rejected' }))).toEqual(expect.not.objectContaining({ unknown: true }));
+    });
+
+    it('says "paused" kindly, not "gone", when Orbit refuses with the team\'s pause', () => {
+        const result = answerOf(403, { allowed: false, reason: 'paused' }) as { error: string; outcome?: string };
+        expect(result.error).toContain('paused for a while');
+        expect(result.error).not.toMatch(/any more/);
+        expect(result.outcome).toBe('not_sent');
+    });
+
     it('treats a call that was already made as done, so a retry never makes a second one', () => {
         expect(answerOf(409, { code: 'already_asked' })).toMatchObject({ done: true });
     });
 
     it('never says an address, a key or an app’s inside', () => {
-        for (const status of [200, 400, 403, 404, 409, 429, 500, 502]) expect(JSON.stringify(answerOf(status, { code: 'x', error: 'bad' }))).not.toMatch(/https?:\/\/|sk_|Bearer/);
+        for (const status of [200, 400, 403, 404, 409, 429, 500, 502, 503, 504]) expect(JSON.stringify(answerOf(status, { code: 'x', error: 'bad' }))).not.toMatch(/https?:\/\/|sk_|Bearer/);
     });
 });
 
-import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, keyAppsNote, keyToolDefinitions, runKeyTool, isKeyTool } from '../ai/KeyTools';
+import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, keyAppsNote, keyToolDefinitions, minorUnitsOf, runKeyTool, isKeyTool } from '../ai/KeyTools';
 
 describe('the two tools of a Brick for keys', () => {
     const apps = parseKeyApps({ apps: [{ ...APP, payments: true }] });
     const context = { where: { adminApiUrl: ORBIT, serviceToken: 'svc' }, botId: 'bot-1', userId: 'sara-uuid', apps };
+    /** A page job as Orbit saves it (canonical form): KWD has three decimals, so 4.500 is 4500. */
+    const saved = (over: Record<string, unknown> = {}) => ({ id: 'job-1', artifactId: 'art-1', connectionId: 'conn-1', app: 'Example Pay', amount: '4.500', amountMinor: 4500, currency: 'KWD', exponent: 3, description: null, status: 'active', active: true, ...over });
 
     it('are named and described without ever asking for a key in the chat', () => {
         expect(keyToolDefinitions().map((tool) => tool.function.name)).toEqual([ASK_FOR_KEY_TOOL, PAYMENT_TOOL]);
@@ -257,9 +277,10 @@ describe('the two tools of a Brick for keys', () => {
     });
 
     it('set up a payment through an App that can take one, with the amount as text', async () => {
-        http.post.mockResolvedValueOnce({ status: 200, data: { job: { amount: '4.500', currency: 'KWD', app: 'Example Pay' } } });
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: saved() } });
         const result = (await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'example', amount: '4.500', currency: 'KWD' }, context)) as { done: boolean; amount: string };
         expect(result).toMatchObject({ done: true, amount: '4.500 KWD' });
+        expect(http.get).not.toHaveBeenCalled();
         expect(http.post).toHaveBeenCalledWith(`${ORBIT}/api/bots/bot-1/key-apps/grant-1/page-jobs`, { requesterKey: 'sara-uuid', artifactId: 'art-1', amount: '4.500', currency: 'KWD' }, expect.anything());
     });
 
@@ -270,7 +291,7 @@ describe('the two tools of a Brick for keys', () => {
         }
         expect(http.post).not.toHaveBeenCalled();
         // Spaces around a good code are only trimmed
-        http.post.mockResolvedValueOnce({ status: 200, data: { job: { amount: '4.500', currency: 'KWD', app: 'Example Pay' } } });
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: saved() } });
         await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'example', amount: '4.500', currency: ' KWD ' }, context);
         expect(http.post.mock.calls[0][1]).toMatchObject({ currency: 'KWD' });
     });
@@ -286,6 +307,186 @@ describe('the two tools of a Brick for keys', () => {
         const result = (await runKeyTool(PAYMENT_TOOL, { artifact: 'a', app: 'example', amount: '1', currency: 'KWD' }, broken)) as { error: string };
         expect(result.error).toMatch(/Replace key/);
         expect(http.post).not.toHaveBeenCalled();
+    });
+
+    const args = { artifact: 'art-1', app: 'example', amount: '4.500', currency: 'KWD' };
+    const ask = (over: Record<string, unknown> = {}) => runKeyTool(PAYMENT_TOOL, { ...args, ...over }, context) as Promise<{ done?: boolean; amount?: string; error?: string }>;
+
+    it('says "done" only when the saved job is the page, the App\'s connection, the amount in minor units, the currency, and it is on', async () => {
+        // "4.5" and "4.500" KWD are the same 4500
+        for (const amount of ['4.5', '4.500', '04.500']) {
+            http.post.mockResolvedValueOnce({ status: 200, data: { job: saved() } });
+            expect(await ask({ amount })).toMatchObject({ done: true });
+        }
+        // JPY has no decimals, USD two: GPT's 99.00 USD is 9900
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: saved({ amount: '500', amountMinor: 500, currency: 'JPY', exponent: 0 }) } });
+        expect(await ask({ amount: '500', currency: 'jpy' })).toMatchObject({ done: true, amount: '500 JPY' });
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: saved({ amount: '99.00', amountMinor: 9900, currency: 'USD', exponent: 2 }) } });
+        expect(await ask({ amount: '99.00', currency: 'USD' })).toMatchObject({ done: true, amount: '99.00 USD' });
+        expect(http.get).not.toHaveBeenCalled();
+    });
+
+    it('reads back once, and never writes again, when the saved job is not what was asked for: not confirmed, with the approved words', async () => {
+        const differs: Record<string, unknown>[] = [
+            { amountMinor: 450, amount: '0.450' }, // a hundredth of the price
+            { amountMinor: 99000, amount: '99.000' }, // GPT's 99.00 USD that was saved as ten times 9.90
+            { currency: 'USD', exponent: 2 },
+            { artifactId: 'another-page' },
+            { connectionId: 'conn-2' },
+            { active: false, status: 'inactive' },
+        ];
+        for (const over of differs) {
+            http.post.mockClear();
+            http.get.mockClear();
+            http.post.mockResolvedValueOnce({ status: 200, data: { job: saved(over) } });
+            // The read-back says the same: it is still not what was asked for
+            http.get.mockResolvedValueOnce({ status: 200, data: { job: saved(over) } });
+            const result = await ask();
+            expect(result).not.toHaveProperty('done');
+            expect(result.error).toMatch(/not confirmed/);
+            expect(result.error).toContain("What was saved doesn't match 4.500 KWD, so I didn't set it up again. Please open the page and check the price before you share it.");
+            expect(http.post).toHaveBeenCalledTimes(1);
+            expect(http.get).toHaveBeenCalledTimes(1);
+            expect(http.get.mock.calls[0][0]).toBe(`${ORBIT}/api/bots/bot-1/key-apps/grant-1/page-jobs`);
+            expect(http.get.mock.calls[0][1]).toMatchObject({ params: { artifactId: 'art-1' } });
+        }
+    });
+
+    it('does not call a setup done when a timed-out write changed only the description and the read-back still holds the old one', async () => {
+        const described = () => ask({ description: 'Join the club' });
+        // The read-back holds the same page, App, amount and currency, with the description it had before
+        http.post.mockRejectedValueOnce(new Error('timeout of 15000ms exceeded'));
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: saved({ description: 'Old text' }) } });
+        const stale = await described();
+        expect(stale).not.toHaveProperty('done');
+        expect(stale.error).toMatch(/not confirmed/);
+        expect(http.post).toHaveBeenCalledTimes(1);
+
+        // With the description that was asked for, it is done
+        http.post.mockClear();
+        http.post.mockRejectedValueOnce(new Error('timeout of 15000ms exceeded'));
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: saved({ description: 'Join the club' }) } });
+        expect(await described()).toMatchObject({ done: true });
+        expect(http.post).toHaveBeenCalledTimes(1);
+
+        // A read-back that does not carry the description cannot confirm one that was asked for
+        http.post.mockClear();
+        http.post.mockRejectedValueOnce(new Error('timeout of 15000ms exceeded'));
+        const { description: _gone, ...without } = saved();
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: without } });
+        expect(await described()).not.toHaveProperty('done');
+
+        // None asked for: what the job holds is not compared
+        http.post.mockClear();
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: saved({ description: 'Old text' }) } });
+        expect(await ask()).toMatchObject({ done: true });
+    });
+
+    it('compares a long description as Orbit stores it: cut at 200 characters and trimmed, so a cut just after a space still matches', async () => {
+        // Cut at 200 it ends in a space, which Orbit's fitWords does not keep
+        const long = `${'a'.repeat(199)} and some more words after the cut`;
+        http.post.mockRejectedValueOnce(new Error('timeout of 15000ms exceeded'));
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: saved({ description: 'a'.repeat(199) }) } });
+        expect(await ask({ description: long })).toMatchObject({ done: true });
+        expect(http.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes the read-back as the answer when the write gave none that was whole: no second write either way', async () => {
+        const unclear: unknown[] = [new Error('timeout of 15000ms exceeded'), { status: 502, data: {} }, { status: 200, data: {} }, { status: 200, data: { job: {} } }, { status: 200, data: { job: { amount: '4.500', currency: 'KWD', app: 'Example Pay' } } }, { status: 200, data: { job: null } }];
+        for (const first of unclear) {
+            http.post.mockClear();
+            http.get.mockClear();
+            if (first instanceof Error) http.post.mockRejectedValueOnce(first);
+            else http.post.mockResolvedValueOnce(first as never);
+            // It was made after all: the read-back says so
+            http.get.mockResolvedValueOnce({ status: 200, data: { job: saved() } });
+            expect(await ask()).toMatchObject({ done: true, amount: '4.500 KWD' });
+            expect(http.post).toHaveBeenCalledTimes(1);
+            expect(http.get).toHaveBeenCalledTimes(1);
+
+            // Nothing is found, or the read-back gives no clear answer either: not confirmed, never "nothing was set up", never a blind retry
+            for (const read of [{ status: 404, data: { code: 'not_found' } }, { status: 500, data: {} }, new Error('down'), undefined]) {
+                http.post.mockClear();
+                http.get.mockClear();
+                if (first instanceof Error) http.post.mockRejectedValueOnce(first);
+                else http.post.mockResolvedValueOnce(first as never);
+                if (read instanceof Error) http.get.mockRejectedValueOnce(read);
+                else http.get.mockResolvedValueOnce(read as never);
+                const result = await ask();
+                expect(result).not.toHaveProperty('done');
+                expect(result.error).toMatch(/not confirmed/);
+                expect(result.error).toMatch(/do not set it up again/i);
+                expect(result.error).not.toMatch(/offer to try again/);
+                expect(http.post).toHaveBeenCalledTimes(1);
+                expect(http.get).toHaveBeenCalledTimes(1);
+            }
+        }
+        // No clear answer anywhere: the other approved words
+        http.post.mockRejectedValueOnce(new Error('timeout'));
+        http.get.mockResolvedValueOnce({ status: 404, data: {} });
+        expect((await ask()).error).toContain("No clear answer came back, so I can't confirm the payment setup. I didn't set it up again. Please open the page and check it.");
+    });
+
+    it('says plainly that nothing was set up when Orbit refuses the write, and reads nothing back; a text that is not an amount is never "done"', async () => {
+        for (const [status, expected] of [[404, /not a page of theirs/], [403, /Only the owner/], [400, /Nothing was set up/]] as const) {
+            http.post.mockResolvedValueOnce({ status, data: { error: 'No.' } });
+            expect((await ask()).error).toMatch(expected);
+        }
+        expect(http.get).not.toHaveBeenCalled();
+        // An amount that is not a number: Orbit would refuse it, and if it saved anything, that is not "done"
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: saved() } });
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: saved() } });
+        const oops = await ask({ amount: 'oops' });
+        expect(oops).not.toHaveProperty('done');
+        expect(oops.error).toMatch(/not confirmed/);
+    });
+
+    it('turns an amount into the smallest unit of its currency without ever rounding', () => {
+        expect(minorUnitsOf('4.5', 3)).toBe(4500);
+        expect(minorUnitsOf('4.500', 3)).toBe(4500);
+        expect(minorUnitsOf('19.99', 2)).toBe(1999);
+        expect(minorUnitsOf('99', 2)).toBe(9900);
+        expect(minorUnitsOf('500', 0)).toBe(500);
+        // Zeros past the decimals change nothing; any other digit is an amount the currency cannot hold
+        expect(minorUnitsOf('500.00', 0)).toBe(500);
+        expect(minorUnitsOf('4.5000', 3)).toBe(4500);
+        expect(minorUnitsOf('4.5001', 3)).toBeNull();
+        expect(minorUnitsOf('0.005', 2)).toBeNull();
+        for (const bad of ['oops', '', '-1', '1,5', '1e3', ' ', '4.', '.5', '99999999999999']) expect(minorUnitsOf(bad, 2)).toBeNull();
+    });
+
+    it('teach a page to hear a payment result only from its own parent window, only while its checkout waits, and only with its own request id', () => {
+        const description = String(keyToolDefinitions().find((tool) => tool.function.name === PAYMENT_TOOL)?.function.description);
+        expect(description).toContain('e.source !== window.parent');
+        expect(description).toContain('!waiting');
+        // ...and only for its own request: the game echoes the id back, so an earlier checkout's result is ignored
+        expect(description).toContain('request: waiting, session }');
+        expect(description).toContain('e.data.request !== waiting');
+        // A "paid" that comes after its request ended (Check payment or Restore purchase found the purchase later) is heard, for the last request the page sent only
+        expect(description).toContain('let waiting = "", asked = ""');
+        expect(description).toContain('e.data.status === "paid" && !waiting && e.data.request === asked');
+        expect(description).toContain('waiting = asked = crypto.randomUUID()');
+        // ...and only for its own document: the page makes a session id when its scripts start, sends it with every message and ignores an answer with another one
+        expect(description).toContain('const session = crypto.randomUUID()');
+        expect(description).toContain('e.data.session !== session');
+        expect(description).toMatch(/A message without its session is never answered/);
+        expect(description).toMatch(/result of an earlier request/);
+        expect(description).toContain('"busy"');
+        expect(description).toMatch(/Show "paid" only for status "paid" heard that way/);
+    });
+
+    it('teach a page to ask once on load whether this visitor already bought, to keep the pay button on "none", and to show a test payment as a preview only', () => {
+        const description = String(keyToolDefinitions().find((tool) => tool.function.name === PAYMENT_TOOL)?.function.description);
+        expect(description).toContain('request: waiting, session, restore: true');
+        expect(description).toContain('"none"');
+        expect(description).toMatch(/A restore is not a checkout: it never opens a payment window/);
+        expect(description).toContain('e.data.test === true');
+        expect(description).toMatch(/Test payment" preview/);
+        expect(description).toMatch(/never unlock or hand over anything real/);
+        // The Universe window owns Check payment, Restore purchase and the receipt link: the page never shows them
+        expect(description).toMatch(/the Universe window shows those itself/);
+        // A page made with the older instructions has to be made again
+        expect(description).toMatch(/older instructions[^.]*make the page again/);
     });
 
     it('say what Orbit said no to in words', async () => {

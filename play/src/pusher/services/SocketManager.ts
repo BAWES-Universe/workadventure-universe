@@ -79,6 +79,7 @@ import { SpaceConnection } from "../models/SpaceConnection";
 import type { UpgradeFailedData } from "../controllers/IoSocketController";
 import { eventProcessor } from "../models/eventProcessorInit";
 import { forgetSpeakInvitation, setMegaphoneSettings } from "../models/MegaphoneRights";
+import { onlyForOfBotsOnly } from "../models/SpaceToFrontDispatcher";
 import { areaSpacesToLeave } from "./AreaSpaceEviction";
 import { emitInBatch } from "./IoSocketHelpers";
 import { probeEmbeddableWebsite } from "./EmbeddableWebsiteProbe";
@@ -2006,10 +2007,23 @@ export class SocketManager implements ZoneEventListener {
             throw new Error("User id not found");
         }
 
+        // Only a bot may say that an event is for one person alone (#1993): the sending socket's own tags and uuid are the identity the pusher
+        // trusts, so from anyone else that field is cleared before the event goes on
+        const spaceEvent = publicEvent.spaceEvent?.event
+            ? {
+                  ...publicEvent.spaceEvent,
+                  event: onlyForOfBotsOnly(publicEvent.spaceEvent.event, {
+                      tags: socketData.tags,
+                      uuid: socketData.userUuid,
+                  }),
+              }
+            : publicEvent.spaceEvent;
+
         space.forwarder.forwardMessageToSpaceBack({
             $case: "publicEvent",
             publicEvent: {
                 ...publicEvent,
+                ...(spaceEvent ? { spaceEvent } : {}),
                 senderUserId: socketData.spaceUserId,
             },
         });

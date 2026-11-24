@@ -17,11 +17,13 @@ import type { PendingMedia } from '../memory/ConversationMemory';
 import type { ArtifactCard } from '../ai/ArtifactTools';
 import { ReplySteps, type StepsField } from '../ai/ToolSteps';
 import type { ReplyLimitReached } from '../ai/types';
+import type { ToolSignInCard, ToolSignInDelivery } from '../mcp/ToolSignInCard';
 import type { ParsedFile } from '../services/FileParser';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
+import { withJobLines } from '../ai/JobStatusLine';
 import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
 import type { BotManager } from './BotManager';
 
@@ -125,6 +127,10 @@ export interface DmReplyHooks {
     onSteps?: (field: StepsField, text: string) => Promise<void>;
     /** The Matrix room the message came in. Live artifacts made in this chat belong to it. */
     roomId?: string;
+    /** The Matrix event of the message (its id): the key of a computer start made for it is made from it, so the same event delivered again makes no second job. */
+    eventId?: string;
+    /** When the person wrote it (the event's own `origin_server_ts`): the moment of their consent, which the key of a computer start made for it carries. */
+    eventTs?: number;
     /** The artifacts the person pointed at by replying to a card (game #1781): the bot may open those even when another bot made them. */
     pointedArtifactIds?: string[];
     /** A line from the system about something the person did (a card they tapped), not words they typed: nothing is learned about them from it. */
@@ -135,6 +141,11 @@ export interface DmReplyHooks {
     starter?: string;
     /** The person tapped "Make it" on a Brick's suggestion (#1996): the Brick the card described. Their message is the button's own words. */
     makeOffered?: OfferedBrick;
+    /**
+     * The person tapped "Start a new job" on a card for a job Orbit would not carry on (GPT's sixth answer, finding 6): the job's title. Their message is the title, and the start
+     * is an ORDINARY new one (its own key, no continuation), so "try again" is not offered to the model in this turn.
+     */
+    newJobAsked?: { title: string };
 }
 
 export interface DmReply {
@@ -144,7 +155,7 @@ export interface DmReply {
     /** The AI provider failed on this message, so there is no answer; the person can send it again. */
     failed?: boolean;
     /** Remembers the text as said. Call it once the text reached the person, so an answer that never arrived isn't. */
-    keep?: () => void;
+    keep?: (eventId?: string) => void;
     /** Puts a file in `media` on the person's list of files (#1508). Call it once it reached them. */
     mediaSent?: (item: PendingMedia) => void;
     /** The bot's room, when the text names it: the game shows a card under the message to go there. */
@@ -158,12 +169,21 @@ export interface DmReply {
     /** What this turn did about Bricks (#1996): Bricks it made go with the text, a suggestion goes out as a card after it. */
     bricks?: BrickNote[];
     /**
+     * Orbit refused to carry a job on and a new job is a sensible next step (GPT's sixth answer, finding 6): a card with one "Start a new job" button goes out after the text, for
+     * the job of this title. Nothing was started; the tap is an ordinary new start.
+     */
+    newJob?: { title: string };
+    /**
      * For a reply with a suggestion: asks Orbit, right before its card is sent, whether it may be shown now. The topic
      * as Orbit keeps it, or null to leave the card out. Asks once however often it is called.
      */
     claimOffer?: () => Promise<string | null>;
     /** The same for an App offer's card (game #2001). */
     claimApp?: () => Promise<string | null>;
+    /** A tool's sign-in expired and this person manages the bot (#1819): the Reconnect card to send after the reply. */
+    toolSignIn?: ToolSignInCard;
+    /** Says how the Reconnect card's send went (see AIStreamChunk.toolSignInDelivery) */
+    toolSignInDelivery?: ToolSignInDelivery;
     /**
      * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
      * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
@@ -224,6 +244,26 @@ export class DmReplyService extends BaseBehavior {
     forgetConfig(botId: string): void {
         this.configCache.delete(botId);
         this.missingCache.delete(botId);
+        this.fenceOff(botId);
+    }
+
+    /**
+     * Settings read before a change must not be kept after it: each bot has a generation, raised when its settings are forgotten while
+     * a read of them is out, and a read that finishes under another generation than it began in is used once and never cached.
+     */
+    private configFence?: Map<string, { generation: number; reading: number }>;
+
+    private fenceOf(botId: string): { generation: number; reading: number } {
+        this.configFence ??= new Map();
+        let fence = this.configFence.get(botId);
+        if (!fence) this.configFence.set(botId, (fence = { generation: 0, reading: 0 }));
+        return fence;
+    }
+
+    /** A read of this bot's settings that is out now is of the old ones. Nothing is kept for a bot nobody is reading for. */
+    private fenceOff(botId: string): void {
+        const fence = this.configFence?.get(botId);
+        if (fence && fence.reading > 0) fence.generation++;
     }
 
     /**
@@ -232,8 +272,15 @@ export class DmReplyService extends BaseBehavior {
      */
     forgetBrickOf(botId: string, ownerId: string): boolean {
         const cached = this.configCache.get(botId);
-        if (!cached || cached.config.brick?.ownerId !== ownerId) return false;
+        if (!cached) {
+            // Nothing held: a read that is out now may still bring back the settings from before this change, and is not kept (this
+            // makes Orbit be asked nothing, it only keeps one answer from being cached)
+            this.fenceOff(botId);
+            return false;
+        }
+        if (cached.config.brick?.ownerId !== ownerId) return false;
         this.configCache.delete(botId);
+        this.fenceOff(botId);
         return true;
     }
 
@@ -276,7 +323,8 @@ export class DmReplyService extends BaseBehavior {
         // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently.
         // Nor is a starter they tapped (#1995): its answer is fixed words, which would leave what they typed unanswered
         // Nor an App they just connected: each one gets its own steps line ("Connected Notion"), which one batch cannot show twice
-        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered && !hooks.connectedApp) {
+        // Nor a "Start a new job" they tapped: its title, its event and its fresh start belong to that one reply, and words typed beside it are answered on their own
+        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered && !hooks.connectedApp && !hooks.newJobAsked) {
             waiting.texts.push(text);
             // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
             waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
@@ -287,7 +335,7 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered || !!hooks.connectedApp } as {
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered || !!hooks.connectedApp || !!hooks.newJobAsked } as {
             texts: string[];
             pointed: string[];
             note: boolean;
@@ -359,7 +407,20 @@ export class DmReplyService extends BaseBehavior {
         if (!admin.isConfigured()) throw new Error('The admin API is not configured, so bot settings cannot be loaded');
         // Bounded, as every caller waits on it: a chat's next events, and the game's bot states
         // Direct messages are where a Brick lives (#1995), so this is the one place that asks Orbit for one
-        const config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS, { bricks: true });
+        const fence = this.fenceOf(botId);
+        const generation = fence.generation;
+        fence.reading++;
+        let config: BotConfiguration | null;
+        let stale = false;
+        try {
+            config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS, { bricks: true });
+        } finally {
+            fence.reading--;
+            stale = fence.generation !== generation;
+            if (fence.reading === 0 && this.configFence?.get(botId) === fence) this.configFence.delete(botId);
+        }
+        // Forgotten while it was being read: this answer may be from before the change, so it is used this once and not kept
+        if (stale) return config;
         this.configCache.delete(botId);
         this.missingCache.delete(botId);
         if (config) {
@@ -472,6 +533,12 @@ export class DmReplyService extends BaseBehavior {
 
         // Same attachment handling as a bubble: parsed text for the model, image URLs for vision.
         let augmented = text;
+        // "Start a new job" tapped on the card for a job Orbit would not carry on (GPT's sixth answer, finding 6): the tap says only the button's words, so which job it is comes
+        // from the card, in a line that is from the system and not theirs. It is an ORDINARY start: "try again" is not offered in this turn (`newJobAsked` in memory)
+        if (hooks.newJobAsked) {
+            const asked = hooks.newJobAsked.title.replace(/["“”]/g, "'");
+            augmented = `${text}\n[They tapped “Start a new job” on the card for the job "${asked}". Start it now: call use_computer with job "${asked}" and WITHOUT try_again, since it carries nothing on. This line is from the system, not words they typed.]`;
+        }
         let images: string[] = [];
         const read = new Map<string, ParsedFile | null>();
         const [primary, ...gallery] = attachments;
@@ -542,10 +609,18 @@ export class DmReplyService extends BaseBehavior {
         const turnMemory = memory.getMemory(botId, playerId);
         if (turnMemory) {
             turnMemory.dmRoomId = hooks.roomId;
+            turnMemory.dmEventId = hooks.eventId;
+            turnMemory.dmEventTs = hooks.eventTs;
             // Only this turn's reply: a card pointed at earlier is not pointed at again by the next message
             turnMemory.pointedArtifacts = hooks.pointedArtifactIds ?? [];
             turnMemory.pendingArtifacts = [];
             turnMemory.pendingBricks = [];
+            // An offer of a failed turn (a stream that set it and threw) is not shown under a later reply
+            delete turnMemory.pendingNewJob;
+            // They tapped "Start a new job" (finding 6): this turn starts that job afresh, so carrying one on is not offered in
+            // it. Written here, after the memory exists and the person's saved memory is in place, and only for this turn.
+            if (hooks.newJobAsked) turnMemory.newJobAsked = { title: hooks.newJobAsked.title };
+            else delete turnMemory.newJobAsked;
         }
 
         const context = memory.getConversationContext(botId, playerId);
@@ -557,6 +632,8 @@ export class DmReplyService extends BaseBehavior {
         let promptTokens = 0;
         let completionTokens = 0;
         let providerFailed = false;
+        let toolSignIn: ToolSignInCard | undefined;
+        let toolSignInDelivery: ToolSignInDelivery | undefined;
         // The bot's own "Show tool calls" switch (#742) decides whether this reply shows its steps line (#1545)
         let steps: ReplySteps | undefined;
         let showSteps: boolean | undefined;
@@ -617,9 +694,15 @@ export class DmReplyService extends BaseBehavior {
                     if (steps?.finish(chunk.toolStepResults)) await showStepsNow();
                     continue;
                 }
+                if (chunk.toolSignIn) {
+                    toolSignIn = chunk.toolSignIn;
+                    toolSignInDelivery = chunk.toolSignInDelivery;
+                    continue;
+                }
                 // A reply limit: nothing was said and nothing is remembered as said
                 if (chunk.replyLimit) {
                     await stopSteps();
+                    toolSignInDelivery?.(false);
                     return { text: '', media: [], replyLimit: chunk.replyLimit };
                 }
                 if (chunk.content) fullMessage = appendStreamedChunk(fullMessage, chunk.content);
@@ -634,11 +717,14 @@ export class DmReplyService extends BaseBehavior {
         } catch (error) {
             console.error(`[DmReplyService] AI error for bot ${botId}:`, error);
             await stopSteps();
+            // The reply failed before the card could go with it: it is shown at a later reply
+            toolSignInDelivery?.(false);
             return { text: '', media: [], failed: true };
         }
         if (providerFailed) {
             console.error(`[DmReplyService] AI provider failed for bot ${botId}; the answer so far is dropped`);
             await stopSteps();
+            toolSignInDelivery?.(false);
             return { text: '', media: [], failed: true };
         }
 
@@ -694,12 +780,18 @@ export class DmReplyService extends BaseBehavior {
             replyText = withoutRoomCardMark(replyText);
         } catch (error) {
             await stopSteps();
+            toolSignInDelivery?.(false);
             throw error;
         }
         // Kept only once it was sent: if sending fails the person's message stays the last thing said, so a retry
         // answers it afresh instead of seeing a reply they never got.
         let kept = false;
-        const keep = () => {
+        // The computer jobs this reply names are confirmed to Orbit once it is delivered to the person's chat (the bridge calls `keep` after a send without error), never before. A reply that
+        // failed or was not sent never calls it, and a newer message drops them
+        const confirmations = memory.getMemory(botId, playerId)?.computerConfirmations;
+        const keep = (eventId?: string) => {
+            // Only the event Matrix accepted (its id) confirms the jobs whose lines it carries: a send that was suppressed, or that gave no id, confirmed nothing
+            if (replyText.trim()) void confirmations?.deliver(eventId);
             if (kept || !replyText) return;
             kept = true;
             memory.addMessage(botId, playerId, replyText, 'bot', DM_SPACE_NAME);
@@ -716,10 +808,19 @@ export class DmReplyService extends BaseBehavior {
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
         const artifacts = playerMemory?.pendingArtifacts?.splice(0) ?? [];
         let bricks = playerMemory?.pendingBricks?.splice(0) ?? [];
+        // Orbit refused to carry a job on: the button that starts it afresh (finding 6). Taken whatever the words are, and sent only with words of some kind (below)
+        const newJob = playerMemory?.pendingNewJob;
+        if (playerMemory) delete playerMemory.pendingNewJob;
         // A Brick it made with no words around it (the model said nothing else): the fixed line, so the person still gets
         // its chat one tap away instead of a "couldn't answer" note
         const madeOne = bricks.find((note) => note.kind === 'made');
         if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
+        // A reply that names a computer job but has no words of its own (the model made only a card or a file) says so in one fixed sentence: the job is confirmed to Orbit only once the person
+        // received an event that tells them of it, so there is always one
+        // Every job this reply names has its fixed status line APPENDED to the reply's own words, built from what Orbit really said of it (started, waiting and not started yet, still going, done,
+        // ended), in the SAME text event: that event is the only one that confirms those jobs. The model's own sentence can say anything (or something else: "The clock is ready.")
+        const lines = confirmations?.tell() ?? [];
+        replyText = withJobLines(replyText, lines);
         // A suggestion goes out only with words, and Orbit is asked about it only as its card is sent (claimOffer)
         if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer' && note.kind !== 'app');
         const claimOffer = this.offerClaim(bricks, botId, person.uuid);
@@ -749,8 +850,10 @@ export class DmReplyService extends BaseBehavior {
             ...(roomLink ? { roomLink } : {}),
             ...(artifacts.length ? { artifacts } : {}),
             ...(bricks.length ? { bricks } : {}),
+            ...(newJob && replyText.trim() ? { newJob } : {}),
             ...(claimOffer ? { claimOffer } : {}),
             ...(claimApp ? { claimApp } : {}),
+            ...(toolSignIn ? { toolSignIn, ...(toolSignInDelivery ? { toolSignInDelivery } : {}) } : {}),
         };
     }
 

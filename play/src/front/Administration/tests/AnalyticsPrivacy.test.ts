@@ -35,6 +35,38 @@ describe("withoutQueryOrHash", () => {
         );
     });
 
+    it("blanks an email that is percent-encoded in the path, once or twice over, and keeps the rest of the path", () => {
+        expect(withoutQueryOrHash("https://a.test/invite/sara%40example.test?x=1")).toBe(
+            "https://a.test/invite/[email]"
+        );
+        expect(withoutQueryOrHash("https://a.test/invite/Sara%2540Example.test/room")).toBe(
+            "https://a.test/invite/[email]/room"
+        );
+        expect(withoutQueryOrHash("https://a.test/u/sara%2Bnote%40example.test")).toBe("https://a.test/u/[email]");
+        expect(
+            keepPrivate({ properties: { $current_url: "https://a.test/invite/sara%40example.test#h" } })?.properties
+                ?.$current_url
+        ).toBe("https://a.test/invite/[email]");
+        // Not an email: kept as it was, escapes and all
+        expect(withoutQueryOrHash("https://a.test/%C3%A9t%C3%A9/room%20one")).toBe(
+            "https://a.test/%C3%A9t%C3%A9/room%20one"
+        );
+    });
+
+    it("blanks an email however many times its @ is encoded, including the last round that is read", () => {
+        for (let times = 1; times <= 8; times++) {
+            let at = "@";
+            for (let i = 0; i < times; i++) at = encodeURIComponent(at);
+            expect(withoutQueryOrHash(`https://a.test/invite/sara${at}example.test/room`), `${times}x`).toBe(
+                "https://a.test/invite/[email]/room"
+            );
+        }
+        // Deeper than it is read: a piece still holding an escape after the rounds is not trusted either
+        expect(withoutQueryOrHash("https://a.test/invite/sara%252525252525252540example.test")).toBe(
+            "https://a.test/invite/[email]"
+        );
+    });
+
     it("returns what is not an address as it was", () => {
         expect(withoutQueryOrHash("not an address")).toBe("not an address");
     });
@@ -139,6 +171,150 @@ describe("keepPrivate", () => {
         });
         expect(event?.properties?.$current_url).toBe("https://play.test/@/uni/room");
         expect(event?.properties?.$snapshot_data).toEqual([{ type: 2, data: { node } }]);
+    });
+
+    it("blanks an email in the path of a relative address in the replay, encoded once or many times, and keeps the rest of the path", () => {
+        const node = {
+            tagName: "a",
+            attributes: {
+                href: "/invite/sara%40example.test?token=secret",
+                src: "/files/sara%2540example.test/avatar.png#x",
+                action: "/u/sara%25252540example.test/room?y=1",
+                "data-href": "/plain/room?z=2",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const attributes = (
+            event?.properties?.$snapshot_data as Array<{ data: { node: { attributes: Record<string, string> } } }>
+        )[0].data.node.attributes;
+        expect(attributes).toEqual({
+            href: "/invite/[email]",
+            src: "/files/[email]/avatar.png",
+            action: "/u/[email]/room",
+            "data-href": "/plain/room",
+        });
+        expect(JSON.stringify(attributes)).not.toMatch(/sara|secret/);
+    });
+
+    it("cleans the attributes of the replay's elements, however deep, and keeps the rest of the recording", () => {
+        let node: Record<string, unknown> = {
+            tagName: "a",
+            attributes: {
+                href: "https://play.test/invite?token=secret&email=sara@example.test",
+                "data-invite-token": "abc123",
+                "data-owner": "sara@example.test",
+                class: "link",
+            },
+        };
+        for (let level = 0; level < 40; level++) {
+            node = {
+                tagName: "div",
+                attributes: level === 0 ? { src: "/join?code=zzz#room", title: "plain" } : {},
+                childNodes: [node],
+            };
+        }
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("secret");
+        expect(text).not.toContain("abc123");
+        expect(text).not.toContain("sara@example.test");
+        expect(text).not.toContain("code=zzz");
+        expect(text).not.toContain("#room");
+        expect(text).toContain("https://play.test/invite");
+        expect(text).toContain('"/join"');
+        expect(text).toContain('"title":"plain"');
+        expect(text).toContain('"class":"link"');
+        expect(text).toContain("[removed]");
+    });
+
+    it("keeps a comma inside a srcset address as part of that address: nothing after it is left unredacted", () => {
+        const node = {
+            tagName: "img",
+            attributes: {
+                srcset: "https://a.test/image?t=1,secret-token 1x, /pics/b.png?sig=x,y-secret 2x,https://c.test/c.png#frag-secret 3x",
+                "data-srcset": "/pics/d.png?k=1,secret2,/pics/e.png 1x",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("secret");
+        expect(text).not.toContain("frag");
+        expect(text).toContain("https://a.test/image 1x, /pics/b.png 2x, https://c.test/c.png 3x");
+        // No whitespace after the commas: it is all one address, so all of it is cleaned
+        expect(text).toContain('"data-srcset":"/pics/d.png 1x"');
+    });
+
+    it("cuts the query and hash of the addresses in a replay's style, srcset and stylesheet text, and leaves an ordinary style alone", () => {
+        const node = {
+            tagName: "div",
+            attributes: {
+                style: 'background-image: url("https://a.test/image?token=abc123"); color: red',
+                srcset: "https://a.test/image?token=abc123 1x, /local/image2.png?token=abc123#x 2x",
+                "data-srcset": "https://a.test/image3?token=abc123 480w",
+                class: "plain",
+            },
+            childNodes: [
+                {
+                    tagName: "style",
+                    attributes: {
+                        _cssText:
+                            ".a { background: url(/pics/bg.png?token=abc123#frag) } .b { background: url('data:image/png;base64,AAAA') }",
+                    },
+                },
+                { tagName: "span", attributes: { style: "color: red" } },
+            ],
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("token=abc123");
+        expect(text).not.toContain("#frag");
+        expect(text).toContain('url(\\"https://a.test/image\\")');
+        expect(text).toContain("https://a.test/image 1x, /local/image2.png 2x");
+        expect(text).toContain("https://a.test/image3 480w");
+        expect(text).toContain("url(/pics/bg.png)");
+        // A data address is no address to hide, and an ordinary style is as it was
+        expect(text).toContain("data:image/png;base64,AAAA");
+        expect(text).toContain('"style":"color: red"');
+    });
+
+    it("keeps an escaped bracket or quote inside a style's address, so nothing after it is left in the recording", () => {
+        const node = {
+            tagName: "style",
+            attributes: {
+                _cssText:
+                    ".a { background: url(/pics/a\\)b.png?token=secret1) } .b { background: url(\"/pics/c\\\"d.png?token=secret2\") } .c { background: url('/pics/e\\')f.png?token=secret3') } .d { background: url(/pics/ok.png?token=secret4) }",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("token=");
+        expect(text).not.toContain("secret");
+        expect(text).toContain("url(/pics/a\\\\)b.png)");
+        expect(text).toContain("url(/pics/ok.png)");
+    });
+
+    it("keeps an escaped line break inside a quoted style address, so nothing after it is left in the recording", () => {
+        const node = {
+            tagName: "style",
+            attributes: {
+                _cssText:
+                    ".a { background: url(\"/img/a\\\nb.png?token=secret1\") } .b { background: url('/img/c\\\r\nd.png?token=secret2') } .c { background: url(/img/ok.png?token=secret3) }",
+            },
+        };
+        const event = keepPrivate({ properties: { $snapshot_data: [{ type: 2, data: { node } }] } });
+        const text = JSON.stringify(event?.properties?.$snapshot_data);
+        expect(text).not.toContain("token=");
+        expect(text).not.toContain("secret");
+        expect(text).toContain("url(/img/ok.png)");
+    });
+
+    it("does not send a replay recording too large to be checked whole", () => {
+        const huge = { type: 2, data: { values: new Array<string>(500_001).fill("*") } };
+        const event = keepPrivate({
+            properties: { $current_url: "https://play.test/@/uni/room?x=1", $snapshot_data: [huge] },
+        });
+        expect(event?.properties).not.toHaveProperty("$snapshot_data");
+        expect(event?.properties?.$current_url).toBe("https://play.test/@/uni/room");
     });
 
     it("lets a missing event through", () => {

@@ -26,6 +26,8 @@ export function runPretendJob(admin: Calls, botId: string, jobId: string, stepMs
         if (stopped) return;
         try {
             const job = await admin.getComputerJob(botId, jobId);
+            // Stopped while that was on its way: nothing is renewed, posted or scheduled after it
+            if (stopped) return;
             // Over (stopped by the person, the allowance, a delete) or gone: nothing more to do
             if (!job || (job.status !== 'running' && job.status !== 'waiting')) return stop();
             // The person has the mouse: nothing moves until they hand it back
@@ -34,12 +36,14 @@ export function runPretendJob(admin: Calls, botId: string, jobId: string, stepMs
                 return;
             }
             const renewed = await admin.computerJobAction(botId, jobId, { action: 'renew' });
+            if (stopped) return;
             if (renewed && (renewed as { ok?: boolean }).ok === false) return stop();
             if (done >= PRETEND_STEPS.length) {
                 await admin.computerJobAction(botId, jobId, { action: 'finish', outcome: 'done' });
                 return stop();
             }
             await admin.computerJobAction(botId, jobId, { action: 'progress', stepDone: done, stepTotal: PRETEND_STEPS.length, label: PRETEND_STEPS[done] });
+            if (stopped) return;
             done += 1;
             timer = setTimeout(() => void tick(), stepMs);
         } catch (error) {

@@ -6,6 +6,7 @@ import type { AppOffer, BrickOffer, GuestChatLine, MadeBrick } from "../Bricks/B
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
+import type { BotToolSignIn } from "../Bots/BotToolSignIn";
 import type { BotSteps } from "../Bots/BotSteps";
 import type { NoteTranscript } from "../Bots/BotTranscript";
 import type { ArtifactCard } from "../../Artifacts/artifactCard";
@@ -217,6 +218,8 @@ export interface ChatMessage {
     roomLink?: BotRoomLink;
     /** Set when a bot did not answer because the person reached a reply limit (#1159): drawn as the fixed card. */
     replyLimit?: BotReplyLimit;
+    /** Set when a bot says a tool's sign-in expired and this person manages it (#1819): drawn as a card pinned above the message box. */
+    toolSignIn?: BotToolSignIn;
     /** Set on a nearby line made from what its sender said out loud to a voice bot (#1664): a small mic mark beside its time. */
     spoken?: boolean;
     /** Set on a voice bot's reply whose voice stopped part-way because someone spoke over it (#1665): a quiet line under it. */
@@ -250,6 +253,11 @@ export interface ChatMessage {
     brickOffer?: BrickOffer;
     /** Set on a Brick's offer to connect an App (#2001): while it is the newest message it is a card above the message box. */
     appOffer?: AppOffer;
+    /**
+     * Set on a Brick's offer of a new computer job, after an answer that says Orbit would not carry one on (GPT's sixth answer, finding 6): while it is the newest message it is a
+     * card above the message box with one button, "Start a new job". Nothing was started.
+     */
+    newJobOffer?: { title: string };
     /** Set when a bot's direct message is a card that waits for one answer (#1657): pinned above the message box while
      * it waits, then drawn in the chat as it ended. The bot server edits the same notice. */
     ask?: Readable<BotAsk | undefined>;

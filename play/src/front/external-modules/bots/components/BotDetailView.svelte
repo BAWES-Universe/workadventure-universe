@@ -260,7 +260,11 @@
         // calls flushPendingSaves() itself first: Svelte runs a parent's onDestroy before its children's, so by now
         // BotEditor would no longer be listening for the store update this makes.
         flushPendingSaves();
+        retired = true;
     });
+
+    /** Set when the view is gone: a save that ends after that never starts another from a view nobody sees. */
+    let retired = false;
 
     /** Run pending debounced saves now rather than dropping them */
     export function flushPendingSaves() {
@@ -483,6 +487,16 @@
         }, 1000);
     }
 
+    /**
+     * A name typed while a save was out is only compared with the name Orbit had acknowledged before it: typing B and then back
+     * to A while B was on its way scheduled nothing, and Orbit kept B. When a save ends, what the page shows is compared with the
+     * name Orbit has now, and saved if they differ.
+     */
+    function saveNewerNameLater(botId: string) {
+        if (retired || currentBot?.id !== botId) return;
+        if ((currentBot.name?.trim() || "") !== lastSavedName) handleNameChange();
+    }
+
     function flushNameSave() {
         const botId = currentBot?.id;
         const newName = currentBot?.name?.trim() || "";
@@ -497,6 +511,7 @@
                 if (currentBot?.id !== botId) return;
                 if (saved) {
                     lastSavedName = newName;
+                    saveNewerNameLater(botId);
                 } else if ((currentBot.name?.trim() || "") === newName) {
                     // Only the name that failed goes back: one typed since stays, and saves in its turn
                     currentBot = { ...currentBot, name: lastSavedName || "" };
@@ -532,10 +547,11 @@
 
                 // Update store with the saved name. The server will have respawned the bot with the new name
                 upsertBot({ ...latestPreview, name: newName });
+                saveNewerNameLater(botId);
             } catch (error) {
                 console.error("[BotDetailView] Failed to save bot name:", error);
-                // Revert name on error
-                if (currentBot && currentBot.id === botId) {
+                // Revert name on error: only the name that failed, a newer one typed since stays and is saved in its turn
+                if (currentBot && currentBot.id === botId && (currentBot.name?.trim() || "") === newName) {
                     currentBot.name = lastSavedName || "";
                     currentBot = currentBot; // Trigger reactivity
                 }
@@ -1084,16 +1100,19 @@
                     onChange={(next) => apply(next)}
                     onEditRoute={editRoute}
                 />
-                <ToolsGroup
-                    bot={currentBot}
-                    open={openGroup === "tools"}
-                    onToggle={toggleGroup}
-                    onChange={(next) => apply(next)}
-                    wide={!$mobileLayoutStore}
-                    {onToolCount}
-                    {aiOptions}
-                    onOpenScreen={(screen) => (toolsScreen = screen)}
-                />
+                <!-- Its list of tool servers belongs to one bot: another bot starts it over (no old bot's sign-in lines) -->
+                {#key currentBot?.id}
+                    <ToolsGroup
+                        bot={currentBot}
+                        open={openGroup === "tools"}
+                        onToggle={toggleGroup}
+                        onChange={(next) => apply(next)}
+                        wide={!$mobileLayoutStore}
+                        {onToolCount}
+                        {aiOptions}
+                        onOpenScreen={(screen) => (toolsScreen = screen)}
+                    />
+                {/key}
                 {#if askLimit && currentBot}
                     <LimitSuggestion
                         name={currentBot.name || "Bot"}

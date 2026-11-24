@@ -53,6 +53,8 @@ export interface AppOfferNote {
     /** The App on Orbit's list: its key and the name people see. */
     app: string;
     name: string;
+    /** Which call connects it: "listed" (Orbit's list, and GitHub) or "readyMade". (`kind` above says this is an App offer.) */
+    connectKind: 'listed' | 'readyMade';
     /** "new": nothing is connected yet. "connected": they already connected it, and this Brick may not use it yet. */
     state: 'new' | 'connected';
     /** Their connection when they have one, so the card lets this Brick use it instead of signing in again. */

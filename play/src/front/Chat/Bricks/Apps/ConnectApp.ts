@@ -2,7 +2,7 @@ import { get } from "svelte/store";
 import { botApiService } from "../../../external-modules/bots/services/BotApiService";
 import { loadMyApps, myAppsFailed, myAppsStore } from "./AppsStore";
 import type { Connectable } from "./Connectable";
-import { signInInPopup } from "./Reconnect";
+import { newPopupName, signInInPopup } from "./Reconnect";
 
 /**
  * "Connect" on an app of "Connect another" (game #2001): the app's own sign-in page opens in a window, the way a bot's app signs
@@ -54,7 +54,8 @@ function waitForPopup(popup: Window): Promise<"done" | "stopped"> {
             resolve(result);
         };
         const onMessage = (event: MessageEvent) => {
-            if (event.origin !== window.location.origin) return;
+            // Only this sign-in's own window: another sign-in's return is never this one's
+            if (event.origin !== window.location.origin || event.source !== popup) return;
             const type = (event.data as { type?: unknown } | null)?.type;
             if (type === "oauth-success") finish("done");
             else if (type === "oauth-failure") finish("stopped");
@@ -73,12 +74,15 @@ const text = (value: unknown): string | undefined => (typeof value === "string" 
 
 /** An app of the list a super admin keeps: the connection is made while its window is already open. */
 async function connectListed(app: Connectable): Promise<ConnectResult> {
-    const made = botApiService.connectListedApp(app.key);
-    // A window the browser would not open never waits for it: a failure then must not go unhandled
-    made.catch(() => undefined);
-    // Not awaited before the window opens: signInInPopup opens it first, then waits for the connection
-    const result = await signInInPopup(made);
-    if (result !== "done") return result === "blocked" ? { status: "blocked" } : { status: "stopped" };
+    // Made only once the window is open: a window the browser blocks never leaves a connection behind that nobody signs in to
+    let made: Promise<string> | undefined;
+    const result = await signInInPopup(() => {
+        made = botApiService.connectListedApp(app.key);
+        // A failure is said by the sign-in ("blocked"): it must not also go unhandled
+        made.catch(() => undefined);
+        return made;
+    });
+    if (result !== "done" || !made) return result === "blocked" ? { status: "blocked" } : { status: "stopped" };
     return { status: "connected", appId: await made };
 }
 
@@ -87,7 +91,7 @@ async function connectListed(app: Connectable): Promise<ConnectResult> {
  * already signed in there. The provider sends the window back to the game's own return page.
  */
 async function connectReadyMade(app: Connectable): Promise<ConnectResult> {
-    const popup = window.open("", "oauth-popup", "width=600,height=700");
+    const popup = window.open("", newPopupName(), "width=600,height=700");
     if (!popup) return { status: "blocked" };
     let appId: string;
     try {

@@ -27,10 +27,10 @@ const BRICK_USER = `@bot_${BRICK}:matrix.test`;
 const ALICE = '@alice:matrix.test';
 const ROOM = '!dm:matrix.test';
 
-const CALENDAR = { key: 'google-calendar', name: 'Google Calendar', blurb: 'See and plan your day', connectionId: null, connected: false, usable: false };
-const NOTION = { key: 'notion', name: 'Notion', blurb: 'Notes and docs', connectionId: null, connected: false, usable: false };
-const GMAIL = { key: 'gmail', name: 'Gmail', blurb: 'Read, draft and send email', connectionId: 'conn-gmail', connected: true, usable: false };
-const GITHUB = { key: 'github', name: 'GitHub', blurb: 'Issues and code', connectionId: 'conn-gh', connected: true, usable: true };
+const CALENDAR = { key: 'google-calendar', name: 'Google Calendar', blurb: 'See and plan your day', kind: 'listed' as const, connectionId: null, connected: false, usable: false };
+const NOTION = { key: 'notion', name: 'Notion', blurb: 'Notes and docs', kind: 'listed' as const, connectionId: null, connected: false, usable: false };
+const GMAIL = { key: 'gmail', name: 'Gmail', blurb: 'Read, draft and send email', kind: 'readyMade' as const, connectionId: 'conn-gmail', connected: true, usable: false };
+const GITHUB = { key: 'github', name: 'GitHub', blurb: 'Issues and code', kind: 'listed' as const, connectionId: 'conn-gh', connected: true, usable: true };
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -61,6 +61,27 @@ describe('What the bot server asks Orbit about Apps', () => {
     });
 });
 
+describe('Which call connects an App', () => {
+    const tokenBefore = process.env.BOT_SERVICE_TOKEN;
+    beforeEach(() => {
+        request.mockReset();
+        process.env.BOT_SERVICE_TOKEN = 'service-token';
+    });
+    afterAll(() => {
+        if (tokenBefore === undefined) delete process.env.BOT_SERVICE_TOKEN;
+        else process.env.BOT_SERVICE_TOKEN = tokenBefore;
+    });
+
+    it('reads Orbit\'s kind of each App: ready-made, or listed, which is also what an older Orbit that sends none means', async () => {
+        request.mockResolvedValue({
+            status: 200,
+            data: { apps: [{ ...GMAIL, kind: 'readyMade' }, { ...GITHUB, kind: 'listed' }, { key: 'old', name: 'Old', blurb: '', connectionId: null, connected: false, usable: false }, { ...NOTION, kind: 'other' }] },
+        });
+        const apps = await new AdminApiService('http://orbit.test', 'admin-token').appsOfferableFor(BRICK, 'uuid-alice');
+        expect(apps.map((app) => [app.key, app.kind])).toEqual([['gmail', 'readyMade'], ['github', 'listed'], ['old', 'listed'], ['notion', 'listed']]);
+    });
+});
+
 describe('The offer_app tool', () => {
     const admin = (apps = [CALENDAR, NOTION, GMAIL, GITHUB], topics: string[] = []) => ({
         appsOfferableFor: vi.fn(async () => apps),
@@ -80,10 +101,19 @@ describe('The offer_app tool', () => {
         expect(result).toMatchObject({ shown: true });
         expect(notes).toEqual([
             {
-                kind: 'app', topic: 'app google calendar', app: 'google-calendar', name: 'Google Calendar', state: 'new', connectionId: null,
+                kind: 'app', topic: 'app google calendar', app: 'google-calendar', name: 'Google Calendar', connectKind: 'listed', state: 'new', connectionId: null,
                 ask: 'Connect your calendar?', asked: false, other: { label: 'Another calendar', line: 'Outlook, iCloud and more', search: 'calendar' },
             },
         ]);
+    });
+
+    it('carries which call connects the App, so the card never signs in the wrong way: a ready-made App, and GitHub through the list', async () => {
+        const gmail = await run({ app: 'gmail', asked: true });
+        expect(gmail.notes[0]).toMatchObject({ kind: 'app', app: 'gmail', connectKind: 'readyMade' });
+        const github = await run({ app: 'github', asked: true }, admin([{ ...GITHUB, connectionId: null, connected: false, usable: false }]));
+        expect(github.notes[0]).toMatchObject({ kind: 'app', app: 'github', connectKind: 'listed', state: 'new', connectionId: null });
+        const readyMade = await run({ app: 'googlecalendar', asked: false, ask: 'Connect your calendar?' }, admin([{ ...CALENDAR, key: 'googlecalendar', kind: 'readyMade' as const }]));
+        expect(readyMade.notes[0]).toMatchObject({ app: 'googlecalendar', connectKind: 'readyMade', state: 'new' });
     });
 
     it('offers one asked for by name without a question or a second choice, and even after a "not now"', async () => {
@@ -176,6 +206,7 @@ function makeBridge(config: Record<string, unknown> = { botId: BRICK, name: 'Bri
         getBotConfig: vi.fn(async () => config),
         checkAccess: vi.fn(async (): Promise<any> => ({ allowed: true, reason: null, user: { uuid: 'uuid-alice', name: 'Alice', isGuest: false } })),
         reply: vi.fn(async (): Promise<any> => ({ text: 'Hello Alice!', media: [] })),
+        appConnected: vi.fn(async () => true),
         rooms: {
             rememberDmRoom: vi.fn(async (r: string, b: string) => void rooms.set(r, b)),
             getDmRoomBot: vi.fn(async (r: string) => rooms.get(r) ?? null),
@@ -205,7 +236,7 @@ describe('An App offer in a Brick\'s chat', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         vi.spyOn(console, 'info').mockImplementation(() => undefined);
     });
-    const offer = { kind: 'app', topic: 'app google calendar', app: 'google-calendar', name: 'Google Calendar', state: 'new', connectionId: null, ask: 'Connect your calendar?', asked: false, other: { label: 'Another calendar', line: 'Outlook, iCloud and more', search: 'calendar' } };
+    const offer = { kind: 'app', topic: 'app google calendar', app: 'google-calendar', name: 'Google Calendar', connectKind: 'listed', state: 'new', connectionId: null, ask: 'Connect your calendar?', asked: false, other: { label: 'Another calendar', line: 'Outlook, iCloud and more', search: 'calendar' } };
 
     it('sends the card after the answer, never before it, once Orbit allowed it', async () => {
         const { bridge, client, deps } = makeBridge();
@@ -221,6 +252,17 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(order).toEqual(['answer', 'card']);
         const { kind: _kind, ...card } = offer;
         expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Connect your calendar?', [APP_OFFER_KEY]: card }, expect.any(String)]);
+    });
+
+    it('puts which call connects the App on the card, so the game signs in a ready-made App the ready-made way', async () => {
+        const { bridge, client, deps } = makeBridge();
+        const gmail = { ...offer, topic: 'app gmail', app: 'gmail', name: 'Gmail', connectKind: 'readyMade', other: null };
+        deps.reply.mockResolvedValue({ text: 'I can\'t see your email yet.', media: [], bricks: [gmail], claimApp: vi.fn(async () => 'app gmail') });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('Any new email?'));
+        const { kind: _kind, ...card } = gmail;
+        expect(client.sendMessage.mock.calls[0][2]).toEqual({ msgtype: 'm.text', body: 'Connect your calendar?', [APP_OFFER_KEY]: card });
+        expect(client.sendMessage.mock.calls[0][2][APP_OFFER_KEY].connectKind).toBe('readyMade');
     });
 
     it('sends no card when Orbit says it was shown before, or when the answer has no words', async () => {
@@ -249,6 +291,19 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(appConnectedLine('Google Calendar')).toContain('[Apps](#apps)');
     });
 
+    // CodeRabbit on 68379005 (outside the diff): the continuation's moment of consent is the original event's own time, else the time the inbox kept with it, never this try's clock
+    it('gives the continuation the original event\'s time, or the time the inbox kept when it has none, the same on every try', async () => {
+        const { bridge, deps } = makeBridge();
+        deps.reply.mockResolvedValue({ text: 'Done.', media: [] });
+        await bridge.onEvent(invite());
+        const hooks = { paid: async () => undefined, durable: true, arrived: 1_234_567 };
+        await bridge.onEvent(connected(), hooks);
+        expect(deps.reply.mock.calls[0][4].eventTs).toBe(1_234_567);
+        const timed = { ...connected(), origin_server_ts: 1_700_000_000_123 };
+        await bridge.onEvent(timed, hooks);
+        expect(deps.reply.mock.calls[1][4].eventTs).toBe(1_700_000_000_123);
+    });
+
     it('still tells the line of the system from the person\'s words when the Brick was resting and answers it later', async () => {
         const { bridge, client, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
         deps.reply.mockResolvedValue({ text: 'Tomorrow: 10:00 standup.', media: [] });
@@ -262,6 +317,38 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(deps.reply).toHaveBeenCalledTimes(1);
         expect(deps.reply.mock.calls[0][4]).toMatchObject({ note: true });
         expect(client.sendText.mock.calls.map(([, , words]) => words)).toContain(appConnectedLine('Google Calendar'));
+    });
+
+    // CodeRabbit on ea88b4c1, finding 6: the continuation a resting Brick remembers keeps the moment of consent the inbox kept, never the clock of the moment it was stored
+    it('keeps the inbox\'s time with a continuation it remembers while the Brick rests, and answers it later with that time', async () => {
+        const { bridge, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
+        deps.reply.mockResolvedValue({ text: 'Tomorrow: 10:00 standup.', media: [] });
+        await bridge.onEvent(invite());
+        // taken in by the inbox a minute before the Brick rested on it
+        const arrived = Date.now() - 60_000;
+        await bridge.onEvent(connected(), { paid: async () => undefined, durable: true, arrived });
+        expect(deps.reply).not.toHaveBeenCalled();
+
+        deps.getBotConfig.mockResolvedValue({ ...config, enabled: true });
+        await bridge.checkWaiting();
+
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        expect(deps.reply.mock.calls[0][4]).toMatchObject({ note: true, eventTs: arrived });
+    });
+
+    it('keeps the inbox\'s time with any message a resting Brick remembers that has no time of its own', async () => {
+        const { bridge, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
+        deps.reply.mockResolvedValue({ text: 'Sure.', media: [] });
+        await bridge.onEvent(invite());
+        const arrived = Date.now() - 60_000;
+        await bridge.onEvent(message('What is on tomorrow?'), { paid: async () => undefined, durable: true, arrived });
+        expect(deps.reply).not.toHaveBeenCalled();
+
+        deps.getBotConfig.mockResolvedValue({ ...config, enabled: true });
+        await bridge.checkWaiting();
+
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        expect(deps.reply.mock.calls[0][4]).toMatchObject({ eventTs: arrived });
     });
 
     it('ignores a connected event that is not whole, and one a bot sent', async () => {

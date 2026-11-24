@@ -41,12 +41,12 @@ function offsetMinutes(at: number, timeZone: string): number {
 }
 
 /**
- * "2026-11-15 16:00" (or with a T) on the clock of `timeZone`, as the moment it means (ISO, with Z), or null when it is not a real
+ * "2026-11-15 16:00" (or with a T, or with ":00" seconds; any other seconds are not a time here, never dropped) on the clock of `timeZone`, as the moment it means (ISO, with Z), or null when it is not a real
  * date and time.
  */
 export function localToInstant(local: unknown, timeZone: string): string | null {
     if (typeof local !== 'string' || !isTimeZone(timeZone)) return null;
-    const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::\d{2})?$/.exec(local.trim());
+    const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::00)?$/.exec(local.trim());
     if (!match) return null;
     const [year, month, day, hour, minute] = match.slice(1).map(Number);
     const wall = Date.UTC(year, month - 1, day, hour, minute);
@@ -89,6 +89,6 @@ export function sayNow(now: number, timeZone: string): string {
 
 /** The time of day (HH:mm) in "2026-11-15 16:00", for a reminder that comes every day. */
 export function timeOfDayOf(local: unknown): string | null {
-    const match = typeof local === 'string' ? /^\d{4}-\d{2}-\d{2}[ T]([01]\d|2[0-3]):([0-5]\d)(?::\d{2})?$/.exec(local.trim()) : null;
+    const match = typeof local === 'string' ? /^\d{4}-\d{2}-\d{2}[ T]([01]\d|2[0-3]):([0-5]\d)(?::00)?$/.exec(local.trim()) : null;
     return match ? `${match[1]}:${match[2]}` : null;
 }

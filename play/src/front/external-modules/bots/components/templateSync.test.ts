@@ -95,4 +95,26 @@ describe("parts taken from a template that a Brick's page has not read yet (#200
         sync.clear();
         expect(sync.waitsFor(["instructions"])).toBe(false);
     });
+
+    it("never shows a read of an earlier page of the same Brick after another Brick's page was open in between (A, B, A)", async () => {
+        const older = later<string>();
+        const read = vi.fn().mockReturnValueOnce(older.promise).mockResolvedValue("fresh again");
+        const apply = vi.fn();
+        const sync = templateSync(read, apply);
+        sync.add(["instructions"]);
+        const first = sync.sync();
+        // Another Brick's page opens, and then the first one's again, with a part of its own taken
+        sync.clear();
+        sync.clear();
+        sync.add(["description"]);
+        older.resolve("old snapshot");
+        await first;
+        expect(apply).not.toHaveBeenCalledWith("old snapshot", expect.anything());
+        // What the page that is open now was waiting for is still waiting, and is read for it
+        expect(sync.waitsFor(["description"])).toBe(true);
+        expect(await sync.sync()).toBe(true);
+        expect(apply).toHaveBeenCalledTimes(1);
+        expect(apply).toHaveBeenCalledWith("fresh again", ["description"]);
+        expect(sync.waitsFor(["description"])).toBe(false);
+    });
 });

@@ -326,6 +326,8 @@ describe('ConversationMemory: what a bot says in front of others', () => {
         say('ok', 'person', BUBBLE);
         memory.updateEmotionsFromAI(BOT, KHALID, { personSentiment: -90, isInsult: true, insultSeverity: 8, context: 'angry' });
 
+        // The wound exists (alone with Khalid it shows), so the omission in front of Sara is the privacy check and not a missing wound
+        expect(memory.getConversationContext(BOT, KHALID)).toContain('EMOTIONAL WOUNDS');
         expect(memory.getConversationContext(BOT, KHALID, { present: [SARA] })).not.toContain('EMOTIONAL WOUNDS');
     });
 

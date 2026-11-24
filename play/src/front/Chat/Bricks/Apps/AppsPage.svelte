@@ -11,6 +11,7 @@
     import AppRow from "./AppRow.svelte";
     import AppSection from "./AppSection.svelte";
     import AppsShell from "./AppsShell.svelte";
+    import { appPageStart, takeAppPageStart } from "./AppLink";
     import { appsSearchStart } from "./AppsSearch";
     import { loadMyApps, myAppsFailed, myAppsSettled, myAppsStore } from "./AppsStore";
     import { connectApp } from "./ConnectApp";
@@ -53,6 +54,12 @@
     let instantFailed = false;
     // Only the newest Instant Apps read is applied: an older answer arriving late must not overwrite a newer one
     let instantRead = 0;
+    // The reads a search looks through are still out (true until the newest read of each has ended, either way)
+    let instantPending = true;
+    let connectPending = true;
+    // Only the newest read of the lists to connect is applied, for the same reason
+    let connectableRead = 0;
+    $: sourcesPending = instantPending || connectPending;
     let query = "";
     let connectingKey: string | undefined;
     let connectNote: "stopped" | "blocked" | "unchecked" | undefined;
@@ -60,6 +67,11 @@
     $: if ($appsSearchStart !== undefined) {
         query = $appsSearchStart;
         appsSearchStart.set(undefined);
+    }
+    // "Change the limit" in a Brick's note to the owner: that App's page opens, taken once
+    $: if ($appPageStart !== undefined) {
+        openAppId = $appPageStart;
+        takeAppPageStart();
     }
     $: mine = apps ?? [];
     $: connectedApps = mine.filter(isConnectedApp);
@@ -77,6 +89,7 @@
 
     async function loadInstant() {
         const mine = ++instantRead;
+        instantPending = true;
         try {
             // An answer that is not the list (or has a row that is not an app) is a failed read, never an empty list
             const list = parseInstant(await botApiService.getInstantApps());
@@ -87,10 +100,14 @@
         } catch (error) {
             console.warn("Could not read the Instant Apps", error);
             if (mine === instantRead) instantFailed = true;
+        } finally {
+            if (mine === instantRead) instantPending = false;
         }
     }
 
     async function loadConnectable() {
+        const mineRead = ++connectableRead;
+        connectPending = true;
         connectListFailed = false;
         loadInstant().catch((error) => console.error(error));
         const [listed, readyMade] = await Promise.all([
@@ -110,6 +127,9 @@
                     return undefined;
                 }),
         ]);
+        // An older read that ends after a newer one has started must not replace what the newer one shows (or will show)
+        if (mineRead !== connectableRead) return;
+        connectPending = false;
         connectListFailed = !listed || !readyMade;
         // Whichever list came is shown: a failed one does not take the other's Connect buttons away
         connectable = listed || readyMade ? [...(listed ?? []), ...(readyMade ?? [])] : undefined;
@@ -191,7 +211,9 @@
                     data-testid="appsSearchInput"
                 />
             </label>
-            {#if searching && !instantFailed}
+            {#if searching && sourcesPending}
+                <PageNote>{text.loading()}</PageNote>
+            {:else if searching && !instantFailed && !connectListFailed}
                 <AppSection
                     title={text.appsCount({
                         count: shownConnected.length + shownInstant.length + shownAnother.length,
@@ -261,7 +283,7 @@
                         >{text.tryAgain()}</PageButton
                     >
                 </div>
-            {:else if searching && !instantFailed && shownConnected.length + shownInstant.length + shownAnother.length === 0}
+            {:else if searching && !sourcesPending && !instantFailed && shownConnected.length + shownInstant.length + shownAnother.length === 0}
                 <p class="ap-none" data-testid="appsNoMatch">{text.noAppMatches({ query: query.trim() })}</p>
             {/if}
             {#if searching && instantFailed}

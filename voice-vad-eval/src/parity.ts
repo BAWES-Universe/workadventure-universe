@@ -31,11 +31,16 @@ async function probsIn(pcm: Int16Array, sizes: () => number): Promise<number[]> 
     return probs;
 }
 
+// The frame-size part says "exact": a difference above this, or a probability that is not a number, fails the run (non-zero exit)
+const SAME_WITHIN = 1e-6;
+const failures: string[] = [];
 const md: string[] = ['# Both paths: proximity WebRTC (peer lane) and LiveKit room', '', 'Status: **partial, simulated**. Frame-size sameness is exact. The codec and resampler part is a reconstruction; the real transports, packet loss, jitter and reconnects are not exercised here.', ''];
 
 // 1. Frame size
 {
     const sample = manifest.filter((_, i) => i % 60 === 0).slice(0, 60);
+    // A report half with nothing to cut would pass every check below with nothing measured
+    if (sample.length === 0) failures.push('frame size: the report half has no clips to cut');
     let windows = 0;
     let worst = 0;
     let seed = 7;
@@ -46,10 +51,16 @@ const md: string[] = ['# Both paths: proximity WebRTC (peer lane) and LiveKit ro
         for (const sizes of [() => 320, () => 160, () => 480, odd]) {
             const other = await probsIn(pcm, sizes);
             if (other.length !== reference.length) throw new Error('window count differs');
-            for (let i = 0; i < reference.length; i++) worst = Math.max(worst, Math.abs(other[i] - reference[i]));
+            for (let i = 0; i < reference.length; i++) {
+                if (!Number.isFinite(other[i]) || !Number.isFinite(reference[i])) failures.push(`${item.id}: probability ${i} is not a finite number`);
+                worst = Math.max(worst, Math.abs(other[i] - reference[i]));
+            }
         }
+        if (reference.length === 0) failures.push(`${item.id}: no windows at all`);
         windows += reference.length;
     }
+    // NaN never compares greater, so it is checked on its own
+    if (!Number.isFinite(worst) || worst > SAME_WITHIN) failures.push(`frame size: largest difference ${worst} is above ${SAME_WITHIN}`);
     md.push('## Frame size', '', `${sample.length} clips, ${windows} windows, fed in 512, 320 (20 ms, peer lane), 160 (10 ms, room), 480 and random 1 to 997 samples at a time.`, '', `Largest difference in speech probability between any two ways of cutting the same audio: **${worst}**.`, '');
 }
 
@@ -62,6 +73,9 @@ const md: string[] = ['# Both paths: proximity WebRTC (peer lane) and LiveKit ro
         ...pickEvery(manifest.filter((i) => i.kind === 'speech' && i.set === 'en-sentence' && ['S30', 'S40', 'N10'].includes(i.condition)), 90),
     ];
     const noise = pickEvery(manifest.filter((i) => i.kind === 'noise' && i.label === 'nonspeech' && i.condition === '-35'), 60);
+    // Neither set may be empty: with no speech clips every path would show "0/0" valid, and with no noise clips "0 firings in 0 minutes", as if both were clean
+    if (speech.length === 0) failures.push('paths: no speech clips of the report half were picked, so no path was measured on speech');
+    if (noise.length === 0) failures.push('paths: no non-speech noise clips of the report half were picked, so no path was measured on noise');
     const paths: Record<string, (pcm: Int16Array) => PathAudio> = {
         'fixture as is (20 ms)': (pcm) => ({ pcm, frameSamples: 320 }),
         'peer lane: Opus 32 kbps + worker resampler (20 ms)': (pcm) => peerLanePath(pcm, 32000),
@@ -119,5 +133,10 @@ const md: string[] = ['# Both paths: proximity WebRTC (peer lane) and LiveKit ro
     }
     md.push('');
 }
+if (failures.length) md.push('## FAILED', '', ...failures.slice(0, 20).map((f) => `- ${f}`), '');
 writeFileSync(join(out, 'parity.md'), md.join('\n'));
 console.log(md.join('\n'));
+if (failures.length) {
+    console.error(`parity FAILED: ${failures.length} problem(s), the first: ${failures[0]}`);
+    process.exit(1);
+}

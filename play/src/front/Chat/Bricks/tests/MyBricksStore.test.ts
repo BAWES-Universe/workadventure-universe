@@ -61,6 +61,7 @@ import {
     deleteMyBrick,
     forgetMyBricks,
     loadMyBricks,
+    loadMyBricksAfterPending,
     makeMyBrick,
     myBricksByChatId,
     myBricksListFailed,
@@ -116,6 +117,45 @@ describe("a person's own Bricks", () => {
         expect(api.listMyBricks).toHaveBeenCalledTimes(1);
         await loadMyBricks();
         expect(api.ensureMyBrick).toHaveBeenCalledTimes(2);
+    });
+
+    it("are read again after the read in progress when a Brick was made meanwhile, and the answer says whether that read listed them", async () => {
+        // The first read goes out before the Brick exists; it answers with the old list
+        let answerFirst: (value: unknown) => void = () => {};
+        api.listMyBricks.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    answerFirst = resolve;
+                })
+        );
+        const first = loadMyBricks();
+        await vi.waitFor(() => expect(api.listMyBricks).toHaveBeenCalledTimes(1));
+        let listed: boolean | undefined;
+        const later = loadMyBricksAfterPending().then((ok) => (listed = ok));
+        answerFirst({ bricks: [card()] });
+        await first;
+        await later;
+        expect(api.listMyBricks).toHaveBeenCalledTimes(2);
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK, MADE]);
+        expect(listed).toBe(true);
+    });
+
+    it("say when the read after the pending one could not list the Bricks", async () => {
+        api.listMyBricks.mockRejectedValue(new Error("offline"));
+        expect(await loadMyBricksAfterPending()).toBe(false);
+    });
+
+    it("say the read after the pending one could not list the Bricks when nothing at all was read (neither the Brick everyone gets nor the list), and ask again after", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        api.ensureMyBrick.mockRejectedValue(new Error("offline"));
+        api.listMyBricks.mockRejectedValue(new Error("offline"));
+        expect(await loadMyBricksAfterPending()).toBe(false);
+        expect(get(myBricksStore)).toBeUndefined();
+        // Orbit is back: the next ask reads, and says so
+        api.ensureMyBrick.mockResolvedValue({ brick: card() });
+        api.listMyBricks.mockResolvedValue({ bricks: [card()] });
+        expect(await loadMyBricksAfterPending()).toBe(true);
+        expect(get(myBricksStore)?.map((brick) => brick.id)).toEqual([BRICK]);
     });
 
     it("are never asked for on behalf of a guest", async () => {
@@ -409,6 +449,25 @@ describe("turning a Brick on or off", () => {
         });
     });
 
+    it("does not call a read 'read' when a switch that Orbit has not answered set every try aside, and reads again once the switch ended", async () => {
+        let answer: (value: unknown) => void = () => undefined;
+        api.setBrickEnabled.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        const saving = setMyBrickEnabled(MADE, false);
+        const before = api.listMyBricks.mock.calls.length;
+        // The switch is still out: all three tries are set aside, nothing is applied, and the caller is told it must ask again
+        expect(await loadMyBricksAfterPending()).toBe(false);
+        expect(api.listMyBricks.mock.calls.length - before).toBe(3);
+        expect(enabled(MADE)).toBe(false);
+        answer({ brick: { ...made, enabled: false } });
+        await saving;
+        // The switch ended: the next ask reads the list, and says so
+        expect(await loadMyBricksAfterPending()).toBe(true);
+    });
+
     it("puts the switch back when Orbit refuses, and says it was not saved", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         api.setBrickEnabled.mockRejectedValue(new Error("API error: 500"));
@@ -660,6 +719,33 @@ describe("how the chat draws a person's own Bricks", () => {
             // Nobody shows it while the game stops offering it; then a list shows it again
             looks.catalog.set(offered(["woka-ada"]));
             expect(get(picture)).toBeUndefined();
+        });
+
+        it("drops the picture when the game forgets the WOKAs (the room changed), so a failed new read does not leave the old room's one", () => {
+            const offered = {
+                woka: {
+                    collections: [
+                        {
+                            name: "WOKAs",
+                            position: 0,
+                            textures: [{ id: "woka-cleo", name: "Cleo", url: "resources/cleo.png", position: 0 }],
+                        },
+                    ],
+                },
+            };
+            looks.catalog.set(offered);
+            const picture = brickPicture("woka-cleo");
+            const seen: (string | undefined)[] = [];
+            const stop = picture.subscribe((value) => seen.push(value));
+            expect(seen[seen.length - 1]).toBe("drawn:http://pusher.test/resources/cleo.png");
+            // The room changed: the list is dropped, and the new read has not answered (or failed)
+            looks.catalog.set(null);
+            expect(seen[seen.length - 1]).toBeUndefined();
+            expect(get(picture)).toBeUndefined();
+            // And it is drawn again when the new room offers it
+            looks.catalog.set(offered);
+            expect(seen[seen.length - 1]).toBe("drawn:http://pusher.test/resources/cleo.png");
+            stop();
         });
     });
 });
