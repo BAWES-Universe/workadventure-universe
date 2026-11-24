@@ -49,7 +49,9 @@ export function newBricksLimitLine(
     now: Date = new Date()
 ): string {
     if (retryAt === undefined || Number.isNaN(Date.parse(retryAt))) return t.limitReachedLater();
-    return t.limitReached({ time: replyLimitTime(retryAt, locale, now) });
+    // Up to the next whole minute: a time with seconds, shown without them, would be a minute early and a try inside it would be refused again
+    const upToTheMinute = new Date(Math.ceil(Date.parse(retryAt) / 60_000) * 60_000).toISOString();
+    return t.limitReached({ time: replyLimitTime(upToTheMinute, locale, now) });
 }
 
 /** What Orbit calls the refusal for a person who has made too many new Bricks this hour ("New Bricks per hour"). */
