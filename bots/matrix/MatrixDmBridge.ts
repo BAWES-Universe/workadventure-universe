@@ -3,7 +3,7 @@ import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { randomUUID } from 'node:crypto';
 import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
-import type { EventHooks, MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
+import type { EventHooks, MatrixEvent, MatrixEventHandler, NoticeDelivery, NoticeOutcome } from './MatrixAppServiceRouter';
 import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, botMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { STARTER_IDEAS, type DmAttachment, type DmPerson, type DmReply, type DmReplyHooks, type OfferedBrick } from '../server/DmReplyService';
@@ -262,6 +262,10 @@ const NOTE_REPEAT_MS = 10 * 60 * 1000;
 const RESTING_LINE_REPEAT_MS = 6 * 60 * 60 * 1000;
 /** Most chats whose last note time is remembered; the oldest are dropped first. */
 const NOTE_TIMES_MAX = 5000;
+/** The field a notice from the outbox carries (its transaction id), so a send whose answer was lost is found in the room before it is sent again (GPT's eighth note G). */
+export const NOTICE_TXN_KEY = 'universe.notice_txn';
+/** How many of a room's latest messages are read to find a notice already sent. */
+const NOTICE_LOOK_BACK = 50;
 /** A message left with a resting bot is answered when it is back within this long; older ones are dropped. */
 const WAITING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /**
@@ -2450,29 +2454,71 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * person and the chat can be resolved, the person gets the same "couldn't answer" line as for any failed answer, never silence. The one exception is work that had begun whose answer is
      * PROVED (`answered`: the link from the event to the reply Matrix took): it is only reported. Anything unsure counts as not answered, so the person gets the line.
      */
-    async onGaveUp(event: MatrixEvent, why: ClosedWhy): Promise<void> {
-        try {
-            Sentry.captureMessage('A Matrix event will not be handled again', { level: 'warning', tags: { area: 'matrix-inbox', why } });
-        } catch {
-            /* a report is never in the way */
+    async onGaveUp(event: MatrixEvent, why: ClosedWhy, delivery?: NoticeDelivery): Promise<NoticeOutcome | void> {
+        const outcome = await this.tellGaveUp(event, why, delivery);
+        // Without the outbox the note is sent once, as before, and nothing is answered
+        return delivery ? outcome : undefined;
+    }
+
+    private async tellGaveUp(event: MatrixEvent, why: ClosedWhy, delivery?: NoticeDelivery): Promise<NoticeOutcome> {
+        // Reported once: a notice the outbox sends again is not a new event given up on
+        if (!delivery?.again) {
+            try {
+                Sentry.captureMessage('A Matrix event will not be handled again', { level: 'warning', tags: { area: 'matrix-inbox', why } });
+            } catch {
+                /* a report is never in the way */
+            }
         }
         // Work had begun and the person's answer is PROVED (the link to the reply was kept): reported, and nothing more is said to them
-        if (why === 'answered') return;
+        if (why === 'answered') return 'nothing';
         // Every other way the person is told, never left in silence:
         // - an event that ran out of tries, waited more than a day or whose entry lapsed was not answered and nothing paid for ran: "Couldn't answer, send it again" (sending it again is the
         //   fresh consent; nothing of it runs again by itself);
         // - one whose server went away after paid work had BEGUN has no proved answer (an unsure look counts as none), and a resent message would be a second paid turn: the person is asked to
         //   look first ("not sure it answered"), never told to send it again. It is never run again by itself either
-        if (event.type !== 'm.room.message' || botIdFromMatrixId(this.config.domain, event.sender)) return;
+        // With `delivery` the notice is kept in the outbox until Matrix gives it an event id (GPT's eighth note G): every send uses the one transaction id, and a send whose answer was lost
+        // is found in the room before it is sent again. Nothing paid for runs to send it (a fixed note, never a model turn)
+        if (event.type !== 'm.room.message' || botIdFromMatrixId(this.config.domain, event.sender)) return 'nothing';
         try {
             const botId = await this.botForRoom(event.room_id, true);
-            if (!botId || this.purgedBots.has(botId)) return;
+            if (!botId || this.purgedBots.has(botId)) return 'nothing';
             const config = await this.deps.getBotConfig(botId).catch(() => null);
             const language = detectLanguage(String(event.content?.body ?? ''));
             // `lost`: the entry's state lapsed, so whether paid work began is not known: the careful line
-            await this.sendNote(botId, event.room_id, why === 'paid' || why === 'lost' ? 'unsure' : 'trouble', language, config);
+            const state: BotNoteState = why === 'paid' || why === 'lost' ? 'unsure' : 'trouble';
+            if (!delivery) {
+                await this.sendNote(botId, event.room_id, state, language, config);
+                return 'nothing';
+            }
+            const botUserId = this.botUserId(botId);
+            // An earlier send may have got into the room with its answer lost: the same note is not sent twice, and its event id is the receipt
+            if (delivery.again) {
+                const found = await this.noticeInRoom(botUserId, event.room_id, delivery.txnId);
+                if (found) return { eventId: found };
+            }
+            const content = { ...statusNoteContent(state, language, await this.botName(botId, config)), [NOTICE_TXN_KEY]: delivery.txnId };
+            const sent = await this.say(botId, () => this.client.sendMessage(botUserId, event.room_id, content, delivery.txnId));
+            // The Brick is being deleted: it says nothing more
+            if (sent === undefined && this.saysNothing(botId)) return 'nothing';
+            if (typeof sent === 'string' && sent.length > 0) return { eventId: sent };
+            console.warn(`[MatrixDmBridge] A ${state} note in ${event.room_id} got no event id from Matrix; it is sent again`);
+            return 'failed';
         } catch (error: any) {
-            console.warn(`[MatrixDmBridge] Could not tell the person in ${event.room_id} that their message was not answered:`, error?.message ?? error);
+            console.warn(`[MatrixDmBridge] Could not tell the person in ${event.room_id} that their message was not answered${delivery ? '; it is sent again later' : ''}:`, error?.message ?? error);
+            return 'failed';
+        }
+    }
+
+    /** The event id of a notice this Brick already sent under `txnId`, when it is among the room's latest messages; `undefined` when it is not, or the room could not be read. */
+    private async noticeInRoom(botUserId: string, roomId: string, txnId: string): Promise<string | undefined> {
+        if (typeof this.client.getRecentMessages !== 'function') return undefined;
+        try {
+            const latest = await this.client.getRecentMessages(botUserId, roomId, NOTICE_LOOK_BACK);
+            const found = (latest ?? []).find((one) => one?.sender === botUserId && one?.content?.[NOTICE_TXN_KEY] === txnId);
+            return typeof found?.event_id === 'string' ? found.event_id : undefined;
+        } catch {
+            // Not known: the send goes out under the same transaction id, which Matrix answers with the same event while it remembers the transaction
+            return undefined;
         }
     }
 

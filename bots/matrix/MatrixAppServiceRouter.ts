@@ -2,6 +2,7 @@ import express, { type Request, type Response, type NextFunction, type Router } 
 import { timingSafeEqual } from 'crypto';
 import type { MatrixAppServiceConfig } from './MatrixConfig';
 import { BEAT_EVERY_MS, type ClosedWhy, type EventInbox, type InboxEntry } from './MatrixEventInbox';
+import type { NoticeOutbox } from './MatrixNoticeOutbox';
 
 /** A Matrix event as Synapse pushes it to an application service. */
 export interface MatrixEvent {
@@ -36,6 +37,17 @@ export interface EventHooks {
     arrived?: number;
 }
 
+/** A send of the notice of an event given up on, from the outbox (GPT's eighth note G): every send of it uses `txnId`; `again` from the second send on (it may already be in the room). */
+export interface NoticeDelivery {
+    txnId: string;
+    again: boolean;
+}
+/**
+ * What came of one send of a notice: Matrix gave it an event id (`eventId`, the receipt), there is nobody to tell (`nothing`: not a person's message, or the Brick is gone), or it did not get
+ * out (`failed`: it stays in the outbox and is sent again, under the same transaction id).
+ */
+export type NoticeOutcome = { eventId: string } | 'nothing' | 'failed';
+
 export interface MatrixEventHandler {
     /**
      * Called once per pushed event, after Synapse already got its 200. Must not throw. `paid` is called by the handler as soon as it has begun something the person pays for (a model
@@ -46,8 +58,10 @@ export interface MatrixEventHandler {
      * An event nothing will handle any more (see `ClosedWhy`): it ran out of tries, it waited more than a day (`stale`), its entry lapsed (`lost`), or work had begun when its owner went
      * away and it is never handed out again (`paid`: no answer is proved; `answered`: the answer is proved). Told so it is not silent: the handler reports it and lets the person know,
      * except for `answered`. Never throws.
+     * With `delivery` (the inbox keeps the notice in its outbox): the notice is sent under `delivery.txnId` and the handler answers what came of it; the outbox keeps it until Matrix gave it
+     * an event id. A handler that answers nothing is taken as having sent it.
      */
-    onGaveUp?(event: MatrixEvent, why: ClosedWhy): Promise<void>;
+    onGaveUp?(event: MatrixEvent, why: ClosedWhy, delivery?: NoticeDelivery): Promise<void | NoticeOutcome>;
     /** Synapse asks whether a Matrix ID in our namespace exists before someone can invite it. */
     userExists(userId: string): Promise<boolean>;
 }
@@ -228,21 +242,55 @@ export function createMatrixAppServiceRouter(
         stale: 'it was taken in more than a day ago and is not run late',
         lost: 'its entry lapsed in the shared store',
     };
-    const gaveUp = (event: MatrixEvent, why: ClosedWhy): Promise<void> => {
-        const run = (async () => {
-            const line = `[MatrixAppService] An event will not be handled again (${reasons[why]}): ${event?.event_id ?? 'unknown'} in ${event?.room_id ?? 'unknown'}`;
-            if (why === 'answered') console.warn(line);
-            else console.error(line);
-            try {
-                await handler.onGaveUp?.(event, why);
-            } catch (error) {
-                console.error('[MatrixAppService] Could not report an event that will not be handled:', error instanceof Error ? error.message : error);
-            }
-        })();
+    /** The outbox of the notices (GPT's eighth note G): absent without a shared store, and the notice is then sent once, as before. */
+    const outbox: NoticeOutbox | undefined = options.inbox?.notices;
+    /** Work that shutdown waits for (within its own limit): a notice being sent, a report being made. */
+    const track = (run: Promise<void>): Promise<void> => {
         reporting.add(run);
         void run.finally(() => reporting.delete(run));
         return run;
     };
+    /**
+     * One send of the notice the outbox keeps for this event: taken from the outbox (so one server sends it at a time), sent under its one transaction id, and taken out only when Matrix
+     * gave it an event id (or there is nobody to tell). A send that fails leaves it for a later look, which sends it again. Nothing paid for runs. Never throws.
+     */
+    const deliver = async (eventId: string): Promise<void> => {
+        const notice = await outbox!.claim(eventId);
+        if (!notice) return;
+        let outcome: void | NoticeOutcome;
+        try {
+            outcome = await handler.onGaveUp?.(notice.event as MatrixEvent, notice.why, { txnId: notice.txnId, again: notice.tries > 1 });
+        } catch (error) {
+            console.error('[MatrixAppService] Could not send the notice of an event that will not be handled; it is sent again later:', error instanceof Error ? error.message : error);
+            outcome = 'failed';
+        }
+        if (outcome === 'failed') {
+            console.warn(`[MatrixAppService] The notice for ${eventId} did not get out (try ${notice.tries}); it stays in the outbox and is sent again`);
+            await notice.later();
+            return;
+        }
+        await notice.sent(typeof outcome === 'object' && outcome !== null ? outcome.eventId : undefined);
+    };
+    /**
+     * `kept`: the closure came from the shared store, which wrote the notice in the same step (the outbox sends it until Matrix takes it). Otherwise (no store) the handler sends it once.
+     */
+    const gaveUp = (event: MatrixEvent, why: ClosedWhy, kept = false): Promise<void> =>
+        track(
+            (async () => {
+                const line = `[MatrixAppService] An event will not be handled again (${reasons[why]}): ${event?.event_id ?? 'unknown'} in ${event?.room_id ?? 'unknown'}`;
+                if (why === 'answered') console.warn(line);
+                else console.error(line);
+                if (kept && outbox && why !== 'answered' && event?.event_id) {
+                    await deliver(event.event_id);
+                    return;
+                }
+                try {
+                    await handler.onGaveUp?.(event, why);
+                } catch (error) {
+                    console.error('[MatrixAppService] Could not report an event that will not be handled:', error instanceof Error ? error.message : error);
+                }
+            })()
+        );
 
     /** The events of a room that wait are asked again: at once (`now`, this server just ended an event of the room) or after the wait. */
     const askAgain = (room: string, now = false): void => {
@@ -273,7 +321,7 @@ export function createMatrixAppServiceRouter(
             .catch(() => 'unsure' as const)
             .then(async (how) => {
                 if (how === 'unsure') handOffUnsure = true;
-                else if (how === 'stale') await gaveUp(event, 'stale');
+                else if (how === 'stale') await gaveUp(event, 'stale', entry.durable !== false);
             });
         yielding.add(run);
         void run.finally(() => yielding.delete(run));
@@ -302,7 +350,7 @@ export function createMatrixAppServiceRouter(
                 // Taken in more than a day ago while it waited (CodeRabbit on 68379005, finding 9): the gate closed it, it never runs late, and the person is told to send it again
                 if (turn === 'stale') {
                     askAgain(event.room_id, true);
-                    await gaveUp(event, 'stale');
+                    await gaveUp(event, 'stale', entry.durable !== false);
                     return;
                 }
                 if (turn === 'wait') {
@@ -345,8 +393,9 @@ export function createMatrixAppServiceRouter(
                 // Nothing of it was paid for: it goes back, and another try (here or at another server) answers the person. Once something was paid for it is never handled again
                 if (!paid) {
                     // The last try: nobody takes it again, so it is said (loudly) and the person is told, never silence. With no inbox nothing gives it back at all
-                    const result = entry ? await entry.release(() => void gaveUp(event, 'tries')).catch(() => 'unsure' as const) : ('closed' as const);
-                    if (result === 'closed') await gaveUp(event, 'tries');
+                    const kept = entry !== undefined && entry.durable !== false;
+                    const result = entry ? await entry.release(() => void gaveUp(event, 'tries', kept)).catch(() => 'unsure' as const) : ('closed' as const);
+                    if (result === 'closed') await gaveUp(event, 'tries', kept);
                     // The store did not answer: the give-back goes on after this chain has ended, and may turn out to be the last try (which is then said). A shutdown waits for it, as for any report
                     const retrying = result === 'unsure' ? entry?.givingBack?.() : undefined;
                     if (retrying) {
@@ -377,9 +426,11 @@ export function createMatrixAppServiceRouter(
         for (const { one } of ordered) work(one.event as MatrixEvent, one.entry);
         // What the scan closed instead of handing out (work had begun, or no tries left) is said, not dropped in silence
         for (const closed of left.closed ?? []) {
-            if (closed.event) void gaveUp(closed.event as MatrixEvent, closed.why);
+            if (closed.event) void gaveUp(closed.event as MatrixEvent, closed.why, true);
             else console.error(`[MatrixAppService] An event will not be handled again (${closed.why}), and the store no longer held it: ${closed.eventId}`);
         }
+        // The notices that did not get out yet (a send that failed, or a server that went away before or while it sent one): sent again, each under its one transaction id
+        if (outbox) for (const eventId of await outbox.due()) void track(deliver(eventId));
         return left.length;
     };
     const recover = (): Promise<number> => {
