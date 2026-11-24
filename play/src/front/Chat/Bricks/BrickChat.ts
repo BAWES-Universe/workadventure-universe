@@ -127,9 +127,9 @@ async function carryTyped(room: ChatRoom, typed: string): Promise<void> {
  * person is still looking at it.
  */
 async function reveal(brickId: string, room: ChatRoom): Promise<void> {
-    markOpened(brickId);
     const pending = pendings.get(brickId);
     if (!pending) {
+        markOpened(brickId);
         showRoom(room);
         return;
     }
@@ -138,7 +138,11 @@ async function reveal(brickId: string, room: ChatRoom): Promise<void> {
         carry: (typed) => carryTyped(room, typed),
         showReal: () => showRoom(room),
     });
-    if (result === "switched" || result === "left") pendings.delete(brickId);
+    // Counted as opened once the person has had the chat: not while they are left on the screen of the chat being made
+    if (result === "switched" || result === "left") {
+        markOpened(brickId);
+        pendings.delete(brickId);
+    }
 }
 
 /** Whether a folder, or a folder inside one, holds a room with that id. Each folder is read once, so a folder that holds itself ends. */

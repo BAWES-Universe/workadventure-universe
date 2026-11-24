@@ -226,7 +226,7 @@ export class PendingBrickChatRoom implements ChatRoom {
      * The real chat is there. What was written goes into it, each message once and in order, the next one only after the
      * chat server has the one before; a message turns normal as soon as it is confirmed. When all went, the person is on the
      * real chat (if they were looking at this screen). When one did not, the words not sent go back into the box and the
-     * person stays here.
+     * person stays here. A chat that turns up after the wait ran out takes the screen's place too, unless the box holds words.
      */
     handOver(into: PendingHandOver): Promise<HandOverResult> {
         if (this.flushing) return this.flushing;
@@ -255,8 +255,9 @@ export class PendingBrickChatRoom implements ChatRoom {
                 this.publish();
             }
             /* eslint-enable no-await-in-loop */
-            // Gave up on before and nothing was written since: the person's box may hold words, so they stay as they are
-            if (wasFailed && !sentAny) {
+            // Gave up on before and nothing was written since: when the person's box holds words (the ones given back), they
+            // stay as they are. An empty box has nothing to lose, so the chat that turned up late takes the screen's place.
+            if (wasFailed && !sentAny && hasWords(this.carryText?.() ?? "")) {
                 this.phase = "failed";
                 return "stayed";
             }
@@ -277,6 +278,11 @@ export class PendingBrickChatRoom implements ChatRoom {
     readonly loadMorePreviousMessages = (): Promise<void> => Promise.resolve();
     readonly startTyping = (): Promise<object> => Promise.resolve({});
     readonly stopTyping = (): Promise<object> => Promise.resolve({});
+}
+
+/** Whether what is typed in the message box (as the box holds it, with line breaks) says anything. */
+function hasWords(typed: string): boolean {
+    return typed.replace(/<br\s*\/?>/gi, "").trim() !== "";
 }
 
 export function isPendingBrickChat(room: ChatRoom | undefined): room is PendingBrickChatRoom {

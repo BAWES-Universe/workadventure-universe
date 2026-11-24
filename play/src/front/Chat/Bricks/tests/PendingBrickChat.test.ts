@@ -333,14 +333,25 @@ describe("when the chat takes too long or cannot be made", () => {
         await expect(done).resolves.toBe("switched");
     });
 
-    it("stays on the screen when the chat turns up late and nothing was written since it gave up", async () => {
+    it("stays on the screen when the chat turns up late and the message box holds words", async () => {
         const { room, pass } = screen();
         const { into } = realChat();
         room.begin();
+        room.readTypedFrom(() => "hi");
         pass(SETUP_WAIT_MS);
         await expect(room.handOver(into)).resolves.toBe("stayed");
         expect(into.showReal).not.toHaveBeenCalled();
         expect(room.failed).toBe(true);
+    });
+
+    it("takes the chat's place when it turns up late and the message box is empty", async () => {
+        const { room, pass } = screen();
+        const { into } = realChat();
+        room.begin();
+        room.readTypedFrom(() => "<br>");
+        pass(SETUP_WAIT_MS);
+        await expect(room.handOver(into)).resolves.toBe("switched");
+        expect(into.showReal).toHaveBeenCalledOnce();
     });
 });
 
