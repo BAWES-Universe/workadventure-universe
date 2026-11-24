@@ -91,6 +91,9 @@ export interface RunnerJobState {
     resumed?: boolean;
     /** The pause that resumed took the screen back from the person (they held it when the month or a limit was reached): the agent asks them for their step again before touching the page. */
     askAgain?: boolean;
+    /** How many times the person had this job's computer restarted (after the check before a take over found a program still running), and the ask that was open then (until they have had the screen and handed back). */
+    restarts?: number;
+    restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer'; what: string | null; where: string | null };
     /** What the person told the job that the agent has not been given yet, in order. */
     notes?: JobNote[];
 }
@@ -256,6 +259,20 @@ export const ASK_AGAIN_HEAD =
 
 /** A resumed job's first turn: told it was paused (and, when the pause took the screen from the person, to ask them first), then the job as at its start. */
 export const resumedPrompt = (job: { jobId: string; title: string; brief: string | null; writes: boolean }, askAgain = false): string => `${askAgain ? ASK_AGAIN_HEAD : RESUMED_HEAD}\n\n${jobPrompt(job)}`;
+
+/**
+ * The first words after the person had the computer restarted (a program was still running and they chose "Restart first"): everything on the computer was closed,
+ * the browser and its pages included, while the job, its files and its sign-ins are kept. Brick gets its page ready again, then asks the person the SAME thing again.
+ */
+export const RESTARTED_HEAD =
+    'The person had this computer restarted, so everything on it was closed, the browser and every page you had open included. The job is still on and its files and sign-ins are kept. Open the page you were on again and get it ready for the person, change nothing else, then ask them the same thing again with the same handover line, in the same words:';
+
+/** The handover line to say again, exactly as it was asked before the restart. */
+export const handoverLineOf = (ask: { kind: string; what: string | null; where: string | null }): string =>
+    ask.kind === 'details' && ask.what && ask.where ? `[[handover details | ${ask.what} | ${ask.where}]]` : `[[handover ${ask.kind}]]`;
+
+/** The turn after a restart the person asked for: told it was restarted, to get its page ready again, and to ask again with the same line. */
+export const restartedPrompt = (ask: { kind: string; what: string | null; where: string | null }): string => `${RESTARTED_HEAD}\n${handoverLineOf(ask)}`;
 
 /** The turn after one that was cut short so the person's new words reach the agent at once. */
 export const NOTE_PROMPT =
@@ -1336,6 +1353,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const follow = (prompt: string) => pending ?? prompt;
         // Whether this worker has read that the job was paused before (its first words are then the resumed ones), so it is read once
         let resumedRead = false;
+        // The highest restart the person asked for that this worker has told the agent about, so each restart is told once
+        let restartsRead = 0;
         // The person's notes: the highest number the agent has had (for this job, across workers), and the highest offered in the words of the turn being read
         const given = (): number => notesGiven.get(job.jobId) ?? 0;
         let offered = 0;
@@ -1495,6 +1514,12 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 badTurns = [];
             }
             lastGeneration = generation;
+            // The person had the computer restarted (a program was still running before their take over): the agent is told, once for each restart, to get its page ready
+            // again and ask them the same thing again. Only while that ask is open: after the person has had the screen and handed back, Orbit gives no ask
+            if (state.restartAsk && (state.restarts ?? 0) > restartsRead) {
+                restartsRead = state.restarts ?? 0;
+                input = follow(restartedPrompt(state.restartAsk));
+            }
             // An action refused as stale: the job changed hands or paused meanwhile. It is read again, and this turn's words are not acted on
             const readAgain = async () => {
                 input = follow(RESUME_PROMPT);
@@ -1908,6 +1933,8 @@ export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs
                       ...(job.finishPending ? { finishPending: job.finishPending } : {}),
                       ...(job.resumed ? { resumed: true } : {}),
                       ...(job.askAgain ? { askAgain: true } : {}),
+                      ...(job.restarts ? { restarts: job.restarts } : {}),
+                      ...(job.restartAsk ? { restartAsk: job.restartAsk } : {}),
                       ...(job.notes && job.notes.length > 0 ? { notes: job.notes } : {}),
                   }
                 : null;

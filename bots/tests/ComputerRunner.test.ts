@@ -6,6 +6,8 @@ import { createComputerModelRelay, RELAY_GUARDS } from '../server/ComputerModelR
 import { describe, expect, it, vi } from 'vitest';
 import {
     RESUME_PROMPT,
+    RESTARTED_HEAD,
+    restartedPrompt,
     CONTINUE_PROMPT,
     RUNNER_GUARDS,
     createComputerRunner,
@@ -38,7 +40,7 @@ const done = (words: string): RunnerEvent[] => [{ type: 'created', id: 'r', sess
 const stream = (events: RunnerEvent[]): TurnOpened => ({ ok: true, events: (async function* () { for (const event of events) yield event; })() });
 
 /** A scripted Orbit: each turn answers with the next script, and `look` says how the job stands each time the runner asks. */
-function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number } | null = () => ({ status: 'running', control: 'brick' })) {
+function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number; restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer'; what: string | null; where: string | null } } | null = () => ({ status: 'running', control: 'brick' })) {
     const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], prepareFacts: [] as Array<{ run?: string } | undefined>, actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
     let renewAnswer: (n: number) => Record<string, unknown> = () => ({ ok: true, renewInSeconds: 240 });
     let handoverFails = 0;
@@ -687,6 +689,62 @@ describe('the person’s part', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
     });
 
+    describe('after the person had the computer restarted (the check before a take over found a program still running)', () => {
+        /** Brick asks, the person has the computer (a restart happens meanwhile), and Brick is its own again: the look after the person's wait says what the restart was. */
+        const afterRestart = (back: { restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer'; what: string | null; where: string | null } }) => {
+            const states = [{ status: 'running', control: 'brick' }, { status: 'running', control: 'brick' }, { status: 'waiting', control: 'brick' }, { status: 'running', control: 'brick', generation: 2, ...back }];
+            return (look: number) => states[Math.min(look, states.length - 1)] ?? states[0];
+        };
+
+        it('is told the computer was restarted, to get its page ready again, and to ask the same thing again with the same line (a sign-in)', async () => {
+            let looks = 0;
+            const state = afterRestart({ restarts: 1, restartAsk: { kind: 'signin', what: null, where: null } });
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[handover signin]]'), done('[[done]]')], () => state(looks++));
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(restartedPrompt({ kind: 'signin', what: null, where: null }));
+            expect(seen.turns[1].startsWith(RESTARTED_HEAD)).toBe(true);
+            expect(seen.turns[1].endsWith('[[handover signin]]')).toBe(true);
+            expect(seen.turns[1]).not.toBe(RESUME_PROMPT);
+        });
+
+        it('says what Brick was ready to put in and where, exactly as it asked before, when the ask was for details', async () => {
+            let looks = 0;
+            const state = afterRestart({ restarts: 1, restartAsk: { kind: 'details', what: 'Your passport number', where: 'visa.example.com' } });
+            const { orbit, seen } = fakeOrbit([done('[[handover details | Your passport number | visa.example.com]]'), done('[[done]]')], () => state(looks++));
+            await runJob(orbit);
+            expect(seen.turns[1].endsWith('[[handover details | Your passport number | visa.example.com]]')).toBe(true);
+            // and what it says is a line the runner reads back as the same ask
+            expect(endingOf(seen.turns[1])).toEqual(endingOf('[[handover details | Your passport number | visa.example.com]]'));
+        });
+
+        it('says nothing of a restart once Orbit gives no ask (the person has had the screen and handed back since): a plain look at the page', async () => {
+            let looks = 0;
+            const state = afterRestart({ restarts: 1 });
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')], () => state(looks++));
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(RESUME_PROMPT);
+        });
+
+        it('is told once for each restart: the same restart read again is not told twice', async () => {
+            let looks = 0;
+            const restarted = { restarts: 1, restartAsk: { kind: 'signin' as const, what: null, where: null } };
+            // ask, restart, ask again, the person has the screen and hands back with the same restart still on the job
+            const states = [
+                { status: 'running', control: 'brick' },
+                { status: 'running', control: 'brick' },
+                { status: 'waiting', control: 'brick' },
+                { status: 'running', control: 'brick', generation: 2, ...restarted },
+                { status: 'running', control: 'brick', generation: 2, ...restarted },
+                { status: 'waiting', control: 'brick', generation: 2, ...restarted },
+                { status: 'running', control: 'brick', generation: 3, ...restarted },
+            ];
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[handover signin]]'), done('[[done]]')], () => states[Math.min(looks++, states.length - 1)]);
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(restartedPrompt({ kind: 'signin', what: null, where: null }));
+            expect(seen.turns[2]).toBe(RESUME_PROMPT);
+        });
+    });
+
     it('drops what the agent said when the person took over meanwhile, and waits until they hand it back', async () => {
         let looks = 0;
         // the first look is Brick's, after the turn the person has it, then Brick's again
@@ -1113,6 +1171,15 @@ describe('a turn that is lost, or room that is gone', () => {
                 answer({ finishPending: bad });
                 expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
             }
+            // the restart the person asked for: how many, and the ask that was open (only a known kind, trimmed words)
+            answer({ restarts: 2, restartAsk: { kind: 'details', what: '  Your name ', where: 'visa.example.com' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', restarts: 2, restartAsk: { kind: 'details', what: 'Your name', where: 'visa.example.com' } });
+            answer({ restarts: 0, restartAsk: { kind: 'sing along', what: 'x', where: 'y' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
+            answer({ restarts: 1.5, restartAsk: { kind: 'pay', what: 3, where: '' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', restartAsk: { kind: 'pay', what: null, where: null } });
+            const restartedAdmin = { computerRunningJobs: vi.fn(), getComputerJob: vi.fn(async () => ({ id: 'j', status: 'running', control: 'brick', restarts: 1, restartAsk: { kind: 'signin' as const, what: null, where: null } })), computerJobAction: vi.fn() };
+            expect(await runnerOrbitFor(restartedAdmin as never).job('b', 'j')).toEqual({ status: 'running', control: 'brick', restarts: 1, restartAsk: { kind: 'signin', what: null, where: null } });
             // and the runner's own Orbit hands it on
             const admin = { computerRunningJobs: vi.fn(), getComputerJob: vi.fn(async () => ({ id: 'j', status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed' as const, cause: 'ours' as const } })), computerJobAction: vi.fn() };
             expect(await runnerOrbitFor(admin as never).job('b', 'j')).toEqual({ status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed', cause: 'ours' } });

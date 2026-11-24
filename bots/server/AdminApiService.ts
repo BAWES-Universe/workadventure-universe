@@ -611,6 +611,18 @@ export function jobNotesOf(raw: unknown): Array<{ seq: number; text: string }> {
     return notes.sort((a, b) => a.seq - b.seq);
 }
 
+const RESTART_KINDS = ['details', 'signin', 'upload', 'pay', 'submit', 'answer'] as const;
+
+/** The ask that was open when the person had the computer restarted (what Brick waited for, and for details what it was ready to put in and where): only a known kind, words trimmed. Null when Orbit gave none. */
+export function restartAskOf(raw: unknown): { kind: (typeof RESTART_KINDS)[number]; what: string | null; where: string | null } | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const row = raw as Record<string, unknown>;
+    const kind = (RESTART_KINDS as readonly unknown[]).includes(row.kind) ? (row.kind as (typeof RESTART_KINDS)[number]) : null;
+    if (!kind) return null;
+    const text = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim().slice(0, 150) : null);
+    return { kind, what: text(row.what), where: text(row.where) };
+}
+
 function finishPendingOf(raw: unknown): { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null {
     if (!isPlainObject(raw) || (raw.outcome !== 'done' && raw.outcome !== 'failed')) return null;
     const turns = Array.isArray(raw.turns) ? raw.turns.filter((one): one is number => typeof one === 'number' && Number.isInteger(one) && one >= 0) : [];
@@ -2268,9 +2280,9 @@ export class AdminApiService {
     }
 
     /** The job as Orbit has it (#2000), with its control generation when Orbit gives one; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
-    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null; resumed?: boolean; askAgain?: boolean; notes?: Array<{ seq: number; text: string }> } | null> {
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null; resumed?: boolean; askAgain?: boolean; restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer'; what: string | null; where: string | null }; notes?: Array<{ seq: number; text: string }> } | null> {
         try {
-            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; ownerEpoch?: unknown; finishPending?: unknown; resumed?: unknown; askAgain?: unknown; notes?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
+            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; ownerEpoch?: unknown; finishPending?: unknown; resumed?: unknown; askAgain?: unknown; restarts?: unknown; restartAsk?: unknown; notes?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
             if (job && typeof job.id === 'string' && typeof job.status === 'string') {
                 // The control generation, when Orbit gives one (an Orbit that does not is not asked to fence)
@@ -2291,6 +2303,9 @@ export class AdminApiService {
                     ...(job.resumed === true ? { resumed: true } : {}),
                     // That pause took the screen back from the person (Orbit piece 3, held screen): on carrying on, the agent asks them for their step again
                     ...(job.askAgain === true ? { askAgain: true } : {}),
+                    // The person had the computer restarted (post 0.5.0, 1B): how many times, and the ask that was open then, so Brick asks again with the same words once its page is ready
+                    ...(typeof job.restarts === 'number' && Number.isInteger(job.restarts) && job.restarts > 0 ? { restarts: job.restarts } : {}),
+                    ...(restartAskOf(job.restartAsk) ? { restartAsk: restartAskOf(job.restartAsk) as NonNullable<ReturnType<typeof restartAskOf>> } : {}),
                     ...(notes.length > 0 ? { notes } : {}),
                 };
             }
