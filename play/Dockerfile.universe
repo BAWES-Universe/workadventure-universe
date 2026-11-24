@@ -58,20 +58,17 @@ RUN export NODE_OPTIONS="$NODE_OPTIONS" && \
 # Source maps. With GENERATE_SOURCEMAP=hidden (the `universe` prod push) the maps exist only in this stage:
 # they are uploaded to Sentry under the release name and then deleted, so neither the image nor the public
 # site carries them and readable error traces come from Sentry. The Sentry token is a BuildKit secret, never
-# a build argument. A failed upload never fails the build (the warning is in the log), but the maps are
-# deleted either way.
+# a build argument. If the upload fails the build fails (readable traces are not optional on prod); the
+# expensive client build above stays cached, so a re-run only repeats this step.
 RUN --mount=type=secret,id=SENTRY_AUTH_TOKEN \
     if [ "$GENERATE_SOURCEMAP" = "hidden" ]; then \
-        cd play/dist/public && \
-        if [ -s /run/secrets/SENTRY_AUTH_TOKEN ] && [ -n "$RELEASE_VERSION" ]; then \
-            export SENTRY_AUTH_TOKEN="$(cat /run/secrets/SENTRY_AUTH_TOKEN)" SENTRY_ORG=bawes-co && \
-            ( npx --yes @sentry/cli@3.4.3 sourcemaps inject . && \
-              npx --yes @sentry/cli@3.4.3 sourcemaps upload --project universe-play --release "$RELEASE_VERSION" . ) \
-            || echo "WARNING: source maps were NOT uploaded to Sentry"; \
-        else \
-            echo "WARNING: no Sentry token or release name: source maps were NOT uploaded to Sentry"; \
-        fi && \
-        find . -name '*.map' -delete; \
+        [ -s /run/secrets/SENTRY_AUTH_TOKEN ] || { echo "ERROR: no SENTRY_AUTH_TOKEN secret: cannot upload source maps"; exit 1; }; \
+        [ -n "$RELEASE_VERSION" ] || { echo "ERROR: no RELEASE_VERSION: cannot name the Sentry release"; exit 1; }; \
+        unset SENTRY_URL SENTRY_PROJECT SENTRY_ENVIRONMENT SENTRY_RELEASE && \
+        export SENTRY_AUTH_TOKEN="$(cat /run/secrets/SENTRY_AUTH_TOKEN)" SENTRY_ORG=bawes-co SENTRY_URL=https://sentry.io/ && \
+        npx --yes @sentry/cli@3.4.3 sourcemaps inject /usr/src/play/dist/public && \
+        npx --yes @sentry/cli@3.4.3 sourcemaps upload --project universe-play --release "$RELEASE_VERSION" /usr/src/play/dist/public && \
+        find /usr/src/play/dist/public -name '*.map' -delete; \
     fi
 
 # final production image

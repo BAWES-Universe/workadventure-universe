@@ -15,6 +15,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fast
+            fast: "true"
+            release: v0.5.0-ci-maps-test-fast
+          - name: full
+            fast: ""
+            release: v0.5.0-ci-maps-test-full
+    name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v4
@@ -47,9 +58,9 @@ jobs:
             SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
           build-args: |
             NODE_OPTIONS=--max-old-space-size=30720
-            FAST_BUILD=
+            FAST_BUILD=${{ matrix.fast }}
             GENERATE_SOURCEMAP=hidden
-            RELEASE_VERSION=v0.5.0-ci-maps-test
+            RELEASE_VERSION=${{ matrix.release }}
             SENTRY_URL=
             SENTRY_AUTH_TOKEN=
             SENTRY_ORG=
@@ -65,7 +76,7 @@ jobs:
             echo "map files in image: $(find . -name "*.map" | wc -l)"
             echo "js files with a sourceMappingURL comment: $(grep -rl "sourceMappingURL=" --include=*.js assets | wc -l)"
             echo "js files with a debug id: $(grep -rl "debugId" --include=*.js assets | wc -l)"
-            echo "legacy files: $(ls assets | grep -c legacy)"
+            echo "legacy files: $(ls assets | grep -c legacy || true)"
           '
 
       - name: Delete the throw-away Sentry release
@@ -73,4 +84,4 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: bawes-co
-        run: npx -y @sentry/cli@3.4.3 releases delete v0.5.0-ci-maps-test --project universe-play || true
+        run: npx -y @sentry/cli@3.4.3 releases delete ${{ matrix.release }} --project universe-play || true
