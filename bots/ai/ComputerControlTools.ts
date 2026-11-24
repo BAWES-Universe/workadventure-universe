@@ -863,6 +863,8 @@ async function askNarrowed(
     if (named.every((job) => !hasStarted(job))) {
         return once(context, `stop|${named.map((job) => job.id).join('|')}`, async () => {
             const lines: string[] = [];
+            // Whether every cancel is known: one that broke may or may not have been taken, so the batch is never told to the model as done (CodeRabbit on the round 10 head)
+            let known = true;
             for (const job of named) {
                 // A newer message came while the cancels were going: no more are sent on the strength of the older one, and what was already done is still said (CodeRabbit on the round 9 head)
                 if (context.state.turn !== origin) break;
@@ -873,12 +875,13 @@ async function askNarrowed(
                 } catch {
                     // A request that broke may have been taken: said as not known (never as done, never as "nothing changed"), and the cancels that were done stay told
                     lines.push(CONTROL_REFUSALS.unknown);
+                    known = false;
                 }
             }
             // Only when nothing was said at all (a newer message came before the first cancel went) is there nothing to tell
             if (lines.length === 0) return { result: { done: false, stale: true }, lines: [] };
             if (narrowed.leftOut.length > 0) lines.push(CONTROL_WORDS.notStopped(othersOf(narrowed.leftOut)));
-            return { result: { done: true }, lines: [lines.join('\n')] };
+            return { result: known ? { done: true } : { done: false, unknown: true }, lines: [lines.join('\n')] };
         });
     }
     if (named.length === 1) {

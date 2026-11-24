@@ -53,6 +53,8 @@ describe('jobs of one title are told apart', () => {
         expect(ended([{ title: 'Visa form', at: ago(25) }, { title: 'Visa form' }])).toBe('Which “Visa form” do you mean: the newer one, or the older one?');
         expect(ended([{ title: 'Visa form', at: ago(125) }, { title: 'Visa form', at: ago(130) }, { title: 'Visa form', at: ago(3 * 24 * 60) }])).toBe('Which “Visa form” do you mean: the newest one, the one before it, or the oldest one?');
         expect(ended([{ title: 'Visa form' }, { title: 'Visa form' }, { title: 'Taxi booking' }])).toBe('Which job do you mean: “Visa form” (newer), “Visa form” (older) or “Taxi booking”?');
+        // three of one title in a mixed list: each has its own word (CodeRabbit on the round 10 head)
+        expect(ended([{ title: 'Visa form' }, { title: 'Visa form' }, { title: 'Visa form' }, { title: 'Taxi booking' }])).toBe('Which job do you mean: “Visa form” (newest), “Visa form” (middle), “Visa form” (oldest) or “Taxi booking”?');
     });
     it('no title shown twice: the plain question, unchanged', () => {
         expect(ended([{ title: 'Visa form', at: ago(25) }, { title: 'Taxi booking', at: ago(60) }])).toBe('Which job do you mean: “Visa form” or “Taxi booking”?');

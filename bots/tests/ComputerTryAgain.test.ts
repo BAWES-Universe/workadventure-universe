@@ -632,9 +632,56 @@ describe('try_again with no job named for this turn', () => {
             expect(down.startComputerJob).not.toHaveBeenCalled();
             // a title nobody retried is still startable in this turn
             const other = await runComputerTool({ job: 'Flight search' }, ctx(down, { startKeys: memory }));
-            expect(String(other.note ?? '')).not.toContain('NOTHING was started');
+            // (it really started: a note that merely lacks the words would pass for a start that never went out)
+            expect(other.started).toBe(true);
+            expect(down.startComputerJob).toHaveBeenCalledTimes(1);
+            expect(down.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ title: 'Flight search' }));
             forgetSettledStarts(memory);
             expect(memory.size).toBe(0);
+        });
+
+        // CodeRabbit on the round 10 head: the hold is checked against the words that are about to be SENT
+        it('an open start of a held title is not sent for a request of another title, and the request of its own unheld words stays free', async () => {
+            const down = { ...world(null), lookUpComputerStart: vi.fn().mockResolvedValue('none') };
+            const memory = new Map<string, StartKeyEntry>([[OPEN_START_SLOT, { key: 'my-own-key-0001', at: Date.now() - 1000, open: true, sent: true, payload: { title: 'Taxi', writes: false } }]]);
+            await runComputerTool({ job: 'Taxi', try_again: true }, ctx(down as never, { startKeys: memory }));
+            const answer = await runComputerTool({ job: 'Flight search' }, ctx(down as never, { startKeys: memory }));
+            expect(answer).toMatchObject({ started: false, success: false });
+            expect(down.startComputerJob).not.toHaveBeenCalled();
+        });
+
+        // CodeRabbit on the round 10 head: a late older question never puts its choices back over a newer one
+        it('an older question delivered after a newer one leaves the newer choices, and a number picks from the list that was shown when they replied', async () => {
+            const [newest, older] = twins();
+            const admin = world(twins());
+            const shown: { ids?: string[]; at?: number; seq?: number } = {};
+            const first = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: first, endedShown: shown, startKeys: new Map() }));
+            const second = new ConfirmationQueue();
+            admin.computerEndedJobs.mockResolvedValue([older, newest]);
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: second, endedShown: shown, startKeys: new Map() }));
+            second.tell();
+            await second.deliver('$newer');
+            expect(shown.ids).toEqual([older.id, newest.id]);
+            first.tell();
+            await first.deliver('$older');
+            expect(shown.ids).toEqual([older.id, newest.id]);
+        });
+
+        it('a number is resolved against the list shown when the person replied, even if a question is delivered while Orbit\'s list is read', async () => {
+            const [newest, older] = twins();
+            const shown = { ids: [newest.id, older.id], at: Date.now() };
+            const admin = world(twins());
+            let resolveLookup: (value: unknown) => void = () => undefined;
+            admin.computerEndedJobs.mockReturnValue(new Promise((resolve) => (resolveLookup = resolve)));
+            const settleMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+            const going = runComputerTool({ job: 'Visa form', try_again: true, pick: 2 }, ctx(admin, { endedShown: shown, startKeys: new Map() }));
+            await settleMicrotasks();
+            shown.ids = [older.id, newest.id];
+            shown.at = Date.now();
+            resolveLookup(twins());
+            await going;
+            expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: older.id }));
         });
 
         it('a retry that named no title holds every title, even after a titled one', async () => {

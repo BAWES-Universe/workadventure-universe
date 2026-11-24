@@ -2478,7 +2478,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
         try {
             const botId = await this.botForRoom(event.room_id, true);
             if (!botId || this.purgedBots.has(botId)) return 'nothing';
-            const config = await this.deps.getBotConfig(botId).catch(() => null);
+            // Read fresh (a copy kept up to a minute may not know the owner deleted the Brick). A notice that is kept for a retry is NOT sent when the deletion cannot be checked: it is tried again
+            // after the back-off (CodeRabbit on the round 10 head); a note sent once, with no outbox, goes on as before
+            const config = await (delivery ? this.deps.getBotConfig(botId, true) : this.deps.getBotConfig(botId, true).catch(() => null));
             // A Brick its owner deleted (Undo can still give it back) says nothing, as in `handleMessage`: a notice kept for a retry is not sent after that (CodeRabbit on the round 9 head)
             if (config?.brick?.deleted) return 'nothing';
             const language = detectLanguage(String(event.content?.body ?? ''));

@@ -538,6 +538,23 @@ describe('a message that arrives while the store that knows the chat is down', (
             await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-1', again: true })).resolves.toBe('nothing');
             expect(client.sendMessage).not.toHaveBeenCalled();
         });
+
+        // CodeRabbit on the round 10 head: the deletion is read fresh, and a kept notice waits when it cannot be read
+        it('a kept notice is sent again later when the Brick cannot be read, a note without an outbox goes on, and the Brick is read fresh', async () => {
+            const client = makeClient();
+            const stores = makeStores();
+            const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+            await bridge.onEvent(invite());
+            stores.deps.getBotConfig = vi.fn(async () => {
+                throw new Error('Orbit is down');
+            });
+            client.sendMessage.mockClear();
+            await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-2', again: false })).resolves.toBe('failed');
+            expect(client.sendMessage).not.toHaveBeenCalled();
+            stores.deps.getBotConfig = vi.fn(async () => ({ botId: BOT, name: 'Nora', enabled: true, aiProviderRef: 'p' }) as never);
+            await bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-3', again: false });
+            expect(stores.deps.getBotConfig).toHaveBeenCalledWith(BOT, true);
+        });
     });
 
     it('the reply is kept as something the person was told only when Matrix gave the id of its text: a send that was suppressed keeps nothing', async () => {

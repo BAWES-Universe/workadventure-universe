@@ -546,8 +546,10 @@ describe('stop everything: always asks, naming every job, and ends exactly those
         });
 
         it('four live jobs with one title that read the same are asked about as three, and the numbers kept are those three: the third is never the fourth', async () => {
-            const same = (id: string, over: Job = {}) => inLine(id, 'Visa form', { askedAt: minutesAgo(10), ...over });
-            const orbit = door(viewOf(working({ id: 'job-1', askedAt: minutesAgo(10) }), [same('job-2'), same('job-3'), same('job-4')]));
+            // one moment for all four (read once: four reads a millisecond apart would sort them by that difference and make the test depend on the clock)
+            const when = minutesAgo(10);
+            const same = (id: string, over: Job = {}) => inLine(id, 'Visa form', { askedAt: when, ...over });
+            const orbit = door(viewOf(working({ id: 'job-1', askedAt: when }), [same('job-2'), same('job-3'), same('job-4')]));
             const c = chat(orbit.admin);
             await c.run(PAUSE_JOB_TOOL, { job: 'Visa form' });
             const said = await c.deliver();
@@ -755,7 +757,9 @@ describe('stop everything: always asks, naming every job, and ends exactly those
                 return original(bot, user, ask);
             });
             c.nextMessage('Yes, cancel Taxi booking and Hotel booking');
-            await c.run(STOP_COMPUTER_TOOL);
+            const result = await c.run(STOP_COMPUTER_TOOL);
+            // an uncertain batch is never given to the model as done (CodeRabbit on the round 10 head)
+            expect(result).toMatchObject({ done: false, unknown: true });
             const said = (await c.deliver()).join('\n');
             expect(said).toContain(lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking'));
             expect(said).toContain(CONTROL_REFUSALS.unknown);

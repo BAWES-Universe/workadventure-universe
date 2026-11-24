@@ -242,7 +242,7 @@ export function timedKey(issued: number, rest: string): string {
 export interface ComputerToolContext {
     admin: Pick<AdminApiService, 'startComputerJob'> & Partial<Pick<AdminApiService, 'lookUpComputerStart' | 'ackComputerStart' | 'computerEndedJobs' | 'retireComputerStart'>>;
     /** The ended jobs the last "which job do you mean?" named, in the order it named them (kept across messages): the answer picks one of them by its number, never by a list read again. */
-    endedShown?: { ids?: string[]; at?: number };
+    endedShown?: { ids?: string[]; at?: number; seq?: number };
     /** The apps this person has connected to this Brick in this reply (their names), so a job an app can do is not started on the computer. */
     apps?: string[];
     botId: string;
@@ -525,6 +525,14 @@ function terminalAnswer(reason: string, title: string | undefined, context: Comp
 const titleKey = (value: string): string => value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 const sameTitle = (one: string, other: string): boolean => titleKey(one) === titleKey(other);
 
+/** The number of the last question put against a list of shown jobs (kept beside it, not in it). */
+const askedSeqs = new WeakMap<object, number>();
+const nextAskedSeq = (shown: object): number => {
+    const next = (askedSeqs.get(shown) ?? 0) + 1;
+    askedSeqs.set(shown, next);
+    return next;
+};
+
 /** How long the jobs a "which job do you mean?" named are kept for the answer to pick from. */
 const ENDED_SHOWN_KEEP_MS = 6 * 60 * 60_000;
 
@@ -535,6 +543,9 @@ const ENDED_SHOWN_KEEP_MS = 6 * 60 * 60_000;
 async function tryAgainWithoutJob(args: Record<string, unknown>, context: ComputerToolContext, stillThisTurn: () => boolean): Promise<{ carryOn: { id: string; title: string } } | { answer: Record<string, unknown>; asked: boolean }> {
     // The title is compared as the person's words gave it, up to what Orbit keeps (200), NEVER cut to the 120 a start carries first: a longer title would never match itself (CodeRabbit on the round 8 head, 2)
     const named = typeof args.job === 'string' ? args.job.replace(/\s+/g, ' ').trim().slice(0, ENDED_TITLE_READ_MAX) : '';
+    // The pick means the list the person was shown WHEN THEY REPLIED: a question delivered while Orbit's list is read must not change which job a number names (CodeRabbit on the round 10 head)
+    const shownIds = context.endedShown?.ids;
+    const picked = typeof args.pick === 'number' && Number.isInteger(args.pick) && shownIds && context.endedShown?.at !== undefined && Date.now() - context.endedShown.at < ENDED_SHOWN_KEEP_MS ? shownIds[args.pick - 1] : undefined;
     let ended: Array<{ id: string; title: string; endedAt?: number }> | null = null;
     try {
         ended = (await context.admin.computerEndedJobs?.(context.botId, context.userId)) ?? null;
@@ -545,8 +556,6 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
     if (!stillThisTurn()) return { asked: false, answer: { started: false, success: false, note: OVERTAKEN_NOTE } };
     if (!ended) return { asked: false, answer: { started: false, success: false, note: 'The computer could not be reached just now, so nothing was started. Say so in one plain sentence; they can ask again in a moment.' } };
     // The answer to a question that named several jobs: the one they chose, by its number in that question, among the jobs it named and Orbit still lists (never a list read anew)
-    const shownIds = context.endedShown?.ids;
-    const picked = typeof args.pick === 'number' && Number.isInteger(args.pick) && shownIds && context.endedShown?.at !== undefined && Date.now() - context.endedShown.at < ENDED_SHOWN_KEEP_MS ? shownIds[args.pick - 1] : undefined;
     // The pick is held to the title they named: a pick kept from an earlier question (up to 6 hours) never carries on a job of another title
     const chosen = picked ? ended.find((one) => one.id === picked && (!named || sameTitle(one.title, named))) : undefined;
     if (chosen) return { carryOn: { id: chosen.id, title: chosen.title } };
@@ -569,10 +578,13 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
         const line = whichDated('ended', shown.map((one) => ({ title: one.title, ...(one.endedAt === undefined ? {} : { at: one.endedAt }) })), Date.now(), sameTitle, (quoted) => TRY_AGAIN_WORDS.whichEarlierJob(quoted));
         // The jobs the question named, in its order: the answer picks one of these
         // They are kept only once the question is delivered: a question that never reached the person must not replace the choices they were last shown (CodeRabbit on the round 9 head)
+        // Each question gets a number when it is made; a late delivery of an older question never puts its choices back over those of a newer one that was kept already (CodeRabbit on the round 10 head)
+        const seq = context.endedShown ? nextAskedSeq(context.endedShown) : 0;
         const keep = (): void => {
-            if (context.endedShown) {
+            if (context.endedShown && (context.endedShown.seq ?? 0) <= seq) {
                 context.endedShown.ids = shown.map((one) => one.id);
                 context.endedShown.at = Date.now();
+                context.endedShown.seq = seq;
             }
         };
         if (!context.confirmations) {
@@ -817,7 +829,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
                 return { started: false, success: false, note: TRY_AGAIN_ASKED_NOTE };
             }
             // A retry beside this call that found nothing to carry on: this ordinary start of its title is held back too (the retry may have settled while this call waited)
-            const heldNote = args.try_again === true ? undefined : heldBack(context.startKeys, job);
+            // (checked against the words that are about to be SENT, not the words of this call: an open start of another title may be what goes out, and a request whose own payload is not held stays free: CodeRabbit on the round 10 head)
+            const heldNote = args.try_again === true ? undefined : heldBack(context.startKeys, firstWords.title);
             if (heldNote) {
                 if (!priorSend) await dropKey();
                 return { started: false, success: false, note: heldNote };

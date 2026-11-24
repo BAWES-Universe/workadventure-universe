@@ -289,7 +289,8 @@ export function whichDated(kind: 'ended' | 'live', jobs: DatedJob[], now: number
         if (group.length === 1) return quoted[index];
         const ages = phrases(group);
         const place = group.indexOf(job);
-        if (!ages) return `${quoted[index]} (${place === 0 ? 'newer' : 'older'})`;
+        // Told apart by order, every one by its own word: two are the newer and the older; three the newest, the middle and the oldest; more are numbered (CodeRabbit on the round 10 head)
+        if (!ages) return `${quoted[index]} (${group.length === 2 ? ['newer', 'older'][place] : group.length === 3 ? ['newest', 'middle', 'oldest'][place] : `no. ${place + 1}`})`;
         const age = ages[place];
         return `${quoted[index]} (${kind === 'ended' ? `ended ${age}` : `asked for ${age}`})`;
     });

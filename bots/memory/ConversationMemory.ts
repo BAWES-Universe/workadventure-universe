@@ -192,7 +192,7 @@ export interface BotPlayerMemory {
     /** "Try again" (piece 8): the ended job Orbit named for THIS turn, when the person asked to try it again (`ComputerTryAgain`); `use_computer` with `try_again` carries it on. Set fresh each turn. Runtime only. */
     computerRetry?: { id: string; title: string };
     /** The ended jobs the last "which job do you mean?" named, in its order, so the answer picks one by its number (see `ComputerToolContext.endedShown`). Runtime only. */
-    computerEndedShown?: { ids?: string[]; at?: number };
+    computerEndedShown?: { ids?: string[]; at?: number; seq?: number };
     /** The jobs of an App that someone else asked for in the turn being answered and that may have run (no answer came back), by job and
      * inputs: the same one is not sent again in this turn (#2006). Cleared when the next turn starts. Runtime only. */
     sharedUncertain?: Set<string>;
