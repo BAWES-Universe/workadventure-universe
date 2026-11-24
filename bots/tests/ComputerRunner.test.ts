@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     RESUME_PROMPT,
     RESTARTED_HEAD,
+    RESTARTED_PERSON,
+    RESTARTED_SIGNED_OUT,
     restartedPrompt,
     CONTINUE_PROMPT,
     RUNNER_GUARDS,
@@ -40,7 +42,7 @@ const done = (words: string): RunnerEvent[] => [{ type: 'created', id: 'r', sess
 const stream = (events: RunnerEvent[]): TurnOpened => ({ ok: true, events: (async function* () { for (const event of events) yield event; })() });
 
 /** A scripted Orbit: each turn answers with the next script, and `look` says how the job stands each time the runner asks. */
-function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number; restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer'; what: string | null; where: string | null } } | null = () => ({ status: 'running', control: 'brick' })) {
+function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number; restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer' | 'person'; what: string | null; where: string | null } } | null = () => ({ status: 'running', control: 'brick' })) {
     const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], prepareFacts: [] as Array<{ run?: string } | undefined>, actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
     let renewAnswer: (n: number) => Record<string, unknown> = () => ({ ok: true, renewInSeconds: 240 });
     let handoverFails = 0;
@@ -691,7 +693,7 @@ describe('the person’s part', () => {
 
     describe('after the person had the computer restarted (the check before a take over found a program still running)', () => {
         /** Brick asks, the person has the computer (a restart happens meanwhile), and Brick is its own again: the look after the person's wait says what the restart was. */
-        const afterRestart = (back: { restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer'; what: string | null; where: string | null } }) => {
+        const afterRestart = (back: { restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer' | 'person'; what: string | null; where: string | null } }) => {
             const states = [{ status: 'running', control: 'brick' }, { status: 'running', control: 'brick' }, { status: 'waiting', control: 'brick' }, { status: 'running', control: 'brick', generation: 2, ...back }];
             return (look: number) => states[Math.min(look, states.length - 1)] ?? states[0];
         };
@@ -705,6 +707,11 @@ describe('the person’s part', () => {
             expect(seen.turns[1].startsWith(RESTARTED_HEAD)).toBe(true);
             expect(seen.turns[1].endsWith('[[handover signin]]')).toBe(true);
             expect(seen.turns[1]).not.toBe(RESUME_PROMPT);
+            // a sign-in is asked for again anyway: nothing more to say about being signed out
+            expect(seen.turns[1]).not.toContain(RESTARTED_SIGNED_OUT);
+            // the words never promise what a restart cannot keep: sign-ins the browser saved are "usually" kept, and a signed-out page is covered
+            expect(seen.turns[1]).toContain('Sign-ins the browser saved are usually kept too');
+            expect(seen.turns[1]).not.toContain('sign-ins are kept');
         });
 
         it('says what Brick was ready to put in and where, exactly as it asked before, when the ask was for details', async () => {
@@ -712,9 +719,24 @@ describe('the person’s part', () => {
             const state = afterRestart({ restarts: 1, restartAsk: { kind: 'details', what: 'Your passport number', where: 'visa.example.com' } });
             const { orbit, seen } = fakeOrbit([done('[[handover details | Your passport number | visa.example.com]]'), done('[[done]]')], () => state(looks++));
             await runJob(orbit);
-            expect(seen.turns[1].endsWith('[[handover details | Your passport number | visa.example.com]]')).toBe(true);
-            // and what it says is a line the runner reads back as the same ask
-            expect(endingOf(seen.turns[1])).toEqual(endingOf('[[handover details | Your passport number | visa.example.com]]'));
+            const line = '[[handover details | Your passport number | visa.example.com]]';
+            expect(seen.turns[1]).toBe(`${RESTARTED_HEAD}\n${line}\n${RESTARTED_SIGNED_OUT}`);
+            // and what it says to end with is a line the runner reads back as the same ask
+            expect(endingOf(line)).toEqual(endingOf(`ok ${line}`));
+            // if the site signed it out, it asks for the sign-in instead
+            expect(endingOf(RESTARTED_SIGNED_OUT)).toMatchObject({ kind: 'handover', waitingFor: 'signin' });
+        });
+
+        it('after a take over in the middle of its work (no ask was open), is told to open the page again, change nothing, and say it is ready for the person with an answer line', async () => {
+            let looks = 0;
+            const state = afterRestart({ restarts: 1, restartAsk: { kind: 'person', what: null, where: null } });
+            const { orbit, seen } = fakeOrbit([done('Working. [[handover answer]]'), done('[[handover answer]]'), done('[[done]]')], () => state(looks++));
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(restartedPrompt({ kind: 'person', what: null, where: null }));
+            expect(seen.turns[1]).toBe(RESTARTED_PERSON);
+            expect(seen.turns[1]).toContain('change nothing');
+            expect(seen.turns[1]).toContain('end your reply with [[handover answer]]');
+            expect(seen.turns[1]).not.toContain('ask them the same thing again');
         });
 
         it('says nothing of a restart once Orbit gives no ask (the person has had the screen and handed back since): a plain look at the page', async () => {
@@ -1174,6 +1196,8 @@ describe('a turn that is lost, or room that is gone', () => {
             // the restart the person asked for: how many, and the ask that was open (only a known kind, trimmed words)
             answer({ restarts: 2, restartAsk: { kind: 'details', what: '  Your name ', where: 'visa.example.com' } });
             expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', restarts: 2, restartAsk: { kind: 'details', what: 'Your name', where: 'visa.example.com' } });
+            answer({ restarts: 1, restartAsk: { kind: 'person', what: null, where: null } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', restarts: 1, restartAsk: { kind: 'person', what: null, where: null } });
             answer({ restarts: 0, restartAsk: { kind: 'sing along', what: 'x', where: 'y' } });
             expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
             answer({ restarts: 1.5, restartAsk: { kind: 'pay', what: 3, where: '' } });

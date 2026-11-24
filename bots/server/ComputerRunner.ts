@@ -93,7 +93,7 @@ export interface RunnerJobState {
     askAgain?: boolean;
     /** How many times the person had this job's computer restarted (after the check before a take over found a program still running), and the ask that was open then (until they have had the screen and handed back). */
     restarts?: number;
-    restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer'; what: string | null; where: string | null };
+    restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer' | 'person'; what: string | null; where: string | null };
     /** What the person told the job that the agent has not been given yet, in order. */
     notes?: JobNote[];
 }
@@ -262,17 +262,24 @@ export const resumedPrompt = (job: { jobId: string; title: string; brief: string
 
 /**
  * The first words after the person had the computer restarted (a program was still running and they chose "Restart first"): everything on the computer was closed,
- * the browser and its pages included, while the job, its files and its sign-ins are kept. Brick gets its page ready again, then asks the person the SAME thing again.
+ * the browser and its pages included, while the job and its files are kept. Brick gets its page ready again, then asks the person the SAME thing again.
+ * (The agent's own instructions: never shown to people.)
  */
-export const RESTARTED_HEAD =
-    'The person had this computer restarted, so everything on it was closed, the browser and every page you had open included. The job is still on and its files and sign-ins are kept. Open the page you were on again and get it ready for the person, change nothing else, then ask them the same thing again with the same handover line, in the same words:';
+const RESTARTED_FACTS =
+    'The person had this computer restarted before taking over, so everything on it was closed, the browser and every page you had open included. The job is still on and its files are kept.';
+export const RESTARTED_HEAD = `${RESTARTED_FACTS} Sign-ins the browser saved are usually kept too. Open the page you were on again and get it ready for the person as it was. Do nothing else first, and start nothing again besides the browser: the person restarted to close what was running. Then ask them the same thing again, ending your reply with exactly this line:`;
+/** Said after the line for every ask but a sign-in: a restart keeps what the browser saved to disk, not sign-ins that lasted only while it ran. */
+export const RESTARTED_SIGNED_OUT = 'If the site signed you out, ask for the sign-in instead and end with [[handover signin]].';
+/** A restart after a take over in the middle of Brick's work, with no ask open: nothing to ask again, the person wanted the screen. */
+export const RESTARTED_PERSON = `${RESTARTED_FACTS} Open the page you were on again and change nothing. The person wanted to use the computer themselves: say in one short line that it is ready for them, and end your reply with [[handover answer]].`;
 
 /** The handover line to say again, exactly as it was asked before the restart. */
 export const handoverLineOf = (ask: { kind: string; what: string | null; where: string | null }): string =>
-    ask.kind === 'details' && ask.what && ask.where ? `[[handover details | ${ask.what} | ${ask.where}]]` : `[[handover ${ask.kind}]]`;
+    ask.kind === 'details' && ask.what && ask.where ? `[[handover details | ${ask.what} | ${ask.where}]]` : ask.kind === 'person' ? '[[handover answer]]' : `[[handover ${ask.kind}]]`;
 
-/** The turn after a restart the person asked for: told it was restarted, to get its page ready again, and to ask again with the same line. */
-export const restartedPrompt = (ask: { kind: string; what: string | null; where: string | null }): string => `${RESTARTED_HEAD}\n${handoverLineOf(ask)}`;
+/** The turn after a restart the person asked for: told it was restarted, to get its page ready again, and to ask again with the same line (or, with no ask open, to say it is ready for them). */
+export const restartedPrompt = (ask: { kind: string; what: string | null; where: string | null }): string =>
+    ask.kind === 'person' ? RESTARTED_PERSON : `${RESTARTED_HEAD}\n${handoverLineOf(ask)}${ask.kind === 'signin' ? '' : `\n${RESTARTED_SIGNED_OUT}`}`;
 
 /** The turn after one that was cut short so the person's new words reach the agent at once. */
 export const NOTE_PROMPT =

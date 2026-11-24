@@ -611,9 +611,9 @@ export function jobNotesOf(raw: unknown): Array<{ seq: number; text: string }> {
     return notes.sort((a, b) => a.seq - b.seq);
 }
 
-const RESTART_KINDS = ['details', 'signin', 'upload', 'pay', 'submit', 'answer'] as const;
+const RESTART_KINDS = ['details', 'signin', 'upload', 'pay', 'submit', 'answer', 'person'] as const;
 
-/** The ask that was open when the person had the computer restarted (what Brick waited for, and for details what it was ready to put in and where): only a known kind, words trimmed. Null when Orbit gave none. */
+/** The ask that was open when the person had the computer restarted (what Brick waited for, or `person` when it was working and the person took over, and for details what it was ready to put in and where): only a known kind, words trimmed. Null when Orbit gave none. */
 export function restartAskOf(raw: unknown): { kind: (typeof RESTART_KINDS)[number]; what: string | null; where: string | null } | null {
     if (!raw || typeof raw !== 'object') return null;
     const row = raw as Record<string, unknown>;
@@ -2280,7 +2280,7 @@ export class AdminApiService {
     }
 
     /** The job as Orbit has it (#2000), with its control generation when Orbit gives one; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
-    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null; resumed?: boolean; askAgain?: boolean; restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer'; what: string | null; where: string | null }; notes?: Array<{ seq: number; text: string }> } | null> {
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null; resumed?: boolean; askAgain?: boolean; restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer' | 'person'; what: string | null; where: string | null }; notes?: Array<{ seq: number; text: string }> } | null> {
         try {
             const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; ownerEpoch?: unknown; finishPending?: unknown; resumed?: unknown; askAgain?: unknown; restarts?: unknown; restartAsk?: unknown; notes?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
