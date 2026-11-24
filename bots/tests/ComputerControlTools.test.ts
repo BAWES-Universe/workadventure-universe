@@ -766,6 +766,40 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             expect(said).not.toContain(CONTROL_REFUSALS.couldNot);
         });
 
+        // CodeRabbit on the round 10 head: only a batch in which EVERY selected job was cancelled is done
+        it.each([
+            ['an answer that is not known (a timeout or a 5xx)', { ok: false, reason: 'unknown' }, { done: false, unknown: true }],
+            ['a refusal', { ok: false, reason: 'not_found' }, { done: false }],
+        ])('a cancel batch with %s is never done', async (_name, second, expected) => {
+            const hotel = () => inLine('job-hotel', 'Hotel booking');
+            const { orbit, c } = await askedAll([visa(), taxi(), hotel()], { cancel: { ...viewOf(null) } });
+            const original = orbit.admin.controlComputerJobs.getMockImplementation()!;
+            let cancels = 0;
+            orbit.admin.controlComputerJobs.mockImplementation(async (bot: string, user: string, ask: ComputerControlAsk) => (ask.action === 'cancel' && ++cancels === 2 ? (second as never) : original(bot, user, ask)));
+            c.nextMessage('Yes, cancel Taxi booking and Hotel booking');
+            const result = await c.run(STOP_COMPUTER_TOOL);
+            expect(result).toMatchObject(expected as Record<string, unknown>);
+            expect(result.done).toBe(false);
+            expect(cancels).toBe(2);
+        });
+
+        it('a cancel batch that a newer message cut short is not done, and a batch where every cancel went through is', async () => {
+            const hotel = () => inLine('job-hotel', 'Hotel booking');
+            const cut = await askedAll([visa(), taxi(), hotel()], { cancel: { ...viewOf(null) } });
+            const original = cut.orbit.admin.controlComputerJobs.getMockImplementation()!;
+            let cancels = 0;
+            cut.orbit.admin.controlComputerJobs.mockImplementation(async (bot: string, user: string, ask: ComputerControlAsk) => {
+                const answer = await original(bot, user, ask);
+                if (ask.action === 'cancel' && ++cancels === 1) startControlTurn(cut.c.state, 'No, wait');
+                return answer;
+            });
+            cut.c.nextMessage('Yes, cancel Taxi booking and Hotel booking');
+            expect((await cut.c.run(STOP_COMPUTER_TOOL)).done).toBe(false);
+            const whole = await askedAll([visa(), taxi(), hotel()], { cancel: { ...viewOf(null) } });
+            whole.c.nextMessage('Yes, cancel Taxi booking and Hotel booking');
+            expect(await whole.c.run(STOP_COMPUTER_TOOL)).toMatchObject({ done: true });
+        });
+
         it('the jobs left alone: more than three, or any without a title, are "the other job" / "the other n jobs"', () => {
             expect(othersOf(['Taxi booking'])).toBe('“Taxi booking”');
             expect(othersOf(['A', 'B', 'C'])).toBe('“A”, “B” and “C”');

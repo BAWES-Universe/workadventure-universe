@@ -863,7 +863,9 @@ async function askNarrowed(
     if (named.every((job) => !hasStarted(job))) {
         return once(context, `stop|${named.map((job) => job.id).join('|')}`, async () => {
             const lines: string[] = [];
-            // Whether every cancel is known: one that broke may or may not have been taken, so the batch is never told to the model as done (CodeRabbit on the round 10 head)
+            // `done` only when EVERY selected job was cancelled: a cancel that broke or came back unknown may or may not have been taken, a refused one was not, and one never sent (a newer message came) was not
+            // (CodeRabbit on the round 10 head). `unknown` says some cancel may have gone through
+            let cancelled = 0;
             let known = true;
             for (const job of named) {
                 // A newer message came while the cancels were going: no more are sent on the strength of the older one, and what was already done is still said (CodeRabbit on the round 9 head)
@@ -871,6 +873,8 @@ async function askNarrowed(
                 try {
                     // eslint-disable-next-line no-await-in-loop
                     const answer = await door({ action: 'cancel', jobId: job.id, commandId: commandIdOf(context.state, context.inbound?.eventId, 'cancel', job.id, '') });
+                    if (answer.ok) cancelled += 1;
+                    else if (reasonOf(answer) === 'unknown') known = false;
                     lines.push(answer.ok ? lineOf(CONTROL_WORDS.cancelledQueued, job.title) : refused(reasonOf(answer), job, view).lines[0]);
                 } catch {
                     // A request that broke may have been taken: said as not known (never as done, never as "nothing changed"), and the cancels that were done stay told
@@ -881,7 +885,7 @@ async function askNarrowed(
             // Only when nothing was said at all (a newer message came before the first cancel went) is there nothing to tell
             if (lines.length === 0) return { result: { done: false, stale: true }, lines: [] };
             if (narrowed.leftOut.length > 0) lines.push(CONTROL_WORDS.notStopped(othersOf(narrowed.leftOut)));
-            return { result: known ? { done: true } : { done: false, unknown: true }, lines: [lines.join('\n')] };
+            return { result: cancelled === named.length ? { done: true } : { done: false, ...(known ? {} : { unknown: true }) }, lines: [lines.join('\n')] };
         });
     }
     if (named.length === 1) {
