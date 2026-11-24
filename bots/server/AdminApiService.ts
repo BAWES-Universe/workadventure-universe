@@ -1424,7 +1424,7 @@ export class AdminApiService {
         };
     }
 
-    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<AxiosResponse<T>> {
+    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch' | 'delete', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -1463,6 +1463,21 @@ export class AdminApiService {
     async claimBrickOffer(viaBotId: string, userId: string, topic: string): Promise<{ show: boolean; topic: string }> {
         const response = await this.brickCall<{ show?: unknown; topic?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });
         return { show: response.data?.show === true, topic: typeof response.data?.topic === 'string' ? response.data.topic : topic };
+    }
+
+    /**
+     * The card for this topic was claimed (`claimBrickOffer`) but never reached the person (the chat refused it twice): Orbit takes the claim back, so the topic is suggested again
+     * another time and a card nobody saw never closes it (GPT's fifth note, after release). Orbit takes back only a claim the person has not answered. Never throws; says whether Orbit
+     * took it back (an older Orbit without this answers 404 or 405: nothing changes, as before).
+     */
+    async releaseBrickOffer(viaBotId: string, userId: string, topic: string): Promise<boolean> {
+        try {
+            const response = await this.brickCall<{ released?: unknown }>('delete', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });
+            return response.data?.released === true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not take back an offer that was never shown:', error instanceof Error ? error.message : error);
+            return false;
+        }
     }
 
     /**

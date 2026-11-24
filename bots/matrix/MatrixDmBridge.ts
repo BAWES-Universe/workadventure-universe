@@ -2223,13 +2223,17 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (offer && offer.kind === 'offer' && topic) {
                 const { ask, name, line, instructions } = offer;
                 const content = { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } };
-                // Orbit counted it as shown when it allowed it, so a send that fails once is tried again before it is lost.
+                // Orbit counted it as shown when it allowed it, so a send that fails once is tried again; one that fails twice gives the claim back (releaseOffer).
                 // Both tries are one message to Matrix: a first try that arrived but whose answer was lost is not sent twice.
                 const txnId = randomUUID();
                 await out
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
-                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
+                    .catch(async (error) => {
+                        console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error);
+                        // The card never reached the person: Orbit takes the claim back, so the topic is not spent on a card nobody saw
+                        await reply.releaseOffer?.().catch(() => undefined);
+                    });
             }
             // The button to start a job afresh that Orbit would not carry on (finding 6), after the answer like the one above. The words are already under the answer, so the card
             // carries only its title: the game draws the button from that
@@ -2252,7 +2256,11 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 await out
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
-                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
+                    .catch(async (error) => {
+                        console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error);
+                        // The same: the card never reached the person, so Orbit takes the claim back
+                        await reply.releaseApp?.().catch(() => undefined);
+                    });
             }
             // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
             const justConnected = reply.text ? connectedApp : null;

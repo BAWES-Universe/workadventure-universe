@@ -254,6 +254,22 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Connect your calendar?', [APP_OFFER_KEY]: card }, expect.any(String)]);
     });
 
+    it('gives the claim back to Orbit when the card could not be sent even on the second try (GPT\'s fifth note, after release)', async () => {
+        const { bridge, client, deps } = makeBridge();
+        const releaseApp = vi.fn(async () => undefined);
+        deps.reply.mockResolvedValue({ text: "I can't see your calendar yet.", media: [], bricks: [offer], claimApp: vi.fn(async () => 'app google calendar'), releaseApp });
+        await bridge.onEvent(invite());
+
+        // got through on the second try: nothing is given back
+        client.sendMessage.mockRejectedValueOnce(new Error('homeserver busy'));
+        await bridge.onEvent(message("What's on my calendar tomorrow?"));
+        expect(releaseApp).not.toHaveBeenCalled();
+
+        client.sendMessage.mockRejectedValueOnce(new Error('homeserver busy')).mockRejectedValueOnce(new Error('homeserver busy'));
+        await bridge.onEvent(message('And on Friday?'));
+        expect(releaseApp).toHaveBeenCalledTimes(1);
+    });
+
     it('puts which call connects the App on the card, so the game signs in a ready-made App the ready-made way', async () => {
         const { bridge, client, deps } = makeBridge();
         const gmail = { ...offer, topic: 'app gmail', app: 'gmail', name: 'Gmail', connectKind: 'readyMade', other: null };
