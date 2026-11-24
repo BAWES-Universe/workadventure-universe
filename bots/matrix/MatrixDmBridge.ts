@@ -268,6 +268,8 @@ export const NOTICE_TXN_KEY = 'universe.notice_txn';
 const NOTICE_LOOK_BACK = 50;
 /** A message left with a resting bot is answered when it is back within this long; older ones are dropped. */
 const WAITING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/** The version of what a kept waiting message carries about its time: 2 = an event with no time of its own is marked (`universe_no_ts`); a record without it was kept before that. */
+const WAITING_TS_VERSION = 2;
 /**
  * How long a lookup of the room's bot that cannot be answered strictly (a tap, a person or the bot leaving) waits for a store that is
  * reconnecting, asking again every ROOM_LOOKUP_POLL_MS, before it counts the room as unknown. Before the shared store started to say that it
@@ -2632,15 +2634,14 @@ export class MatrixDmBridge implements MatrixEventHandler {
             origin_server_ts: event.origin_server_ts ?? arrived ?? Date.now(),
             type: 'm.room.message',
             content: kept,
-            ...(attempts > 0 || connected || typeof event.origin_server_ts !== 'number' || event.unsigned?.universe_no_ts === true
-                ? {
-                      unsigned: {
-                          ...(attempts > 0 ? { universe_attempts: attempts } : {}),
-                          ...(connected ? { universe_connected_app: connected } : {}),
-                          ...(typeof event.origin_server_ts !== 'number' || event.unsigned?.universe_no_ts === true ? { universe_no_ts: true } : {}),
-                      },
-                  }
-                : {}),
+            // `universe_ts_v` says this record was written by code that marks an event with no time of its own. A record without it was kept before that (its `origin_server_ts` may be an
+            // arrival time), so `readWaiting` reads it as having no time of its own (CodeRabbit round 3)
+            unsigned: {
+                universe_ts_v: WAITING_TS_VERSION,
+                ...(attempts > 0 ? { universe_attempts: attempts } : {}),
+                ...(connected ? { universe_connected_app: connected } : {}),
+                ...(typeof event.origin_server_ts !== 'number' || event.unsigned?.universe_no_ts === true ? { universe_no_ts: true } : {}),
+            },
         });
         if (this.deps.waiting?.hasSharedStore()) {
             try {
@@ -2735,6 +2736,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 continue;
             }
             if (Date.now() - (event.origin_server_ts ?? 0) >= WAITING_MAX_AGE_MS) continue;
+            // A record kept before the version mark existed may carry an arrival time as its time: it is answered, but never as the moment of a consent
+            if (event.unsigned?.universe_ts_v !== WAITING_TS_VERSION) event.unsigned = { ...event.unsigned, universe_no_ts: true };
             // Written by this bridge when it kept the message; never read from a live event
             const connected = connectedAppOf(event.unsigned?.universe_connected_app);
             if (connected) this.connectedNotes.set(event, connected);

@@ -501,9 +501,11 @@ const LINE_SAID = 'A fixed line under your reply already tells them this, in its
 export function runComputerControlTool(name: string, args: Record<string, unknown>, context: ComputerControlContext): Promise<Record<string, unknown>> {
     // The message this call began on: when a newer one has come by the time the call is about to change something, the call is abandoned
     const turn = context.state.turn;
+    // The choices the person was shown when this call was made: a newer question may commit other choices while the job list is read, and their number picks from the ones they saw (CodeRabbit round 3)
+    const shown = context.state.shown;
     const run = context.state.chain.then(
-        () => control(name, args, context, turn),
-        () => control(name, args, context, turn)
+        () => control(name, args, context, turn, shown),
+        () => control(name, args, context, turn, shown)
     );
     context.state.chain = run.catch(() => undefined);
     return run.catch((error) => {
@@ -540,9 +542,8 @@ function pickOf(args: Record<string, unknown>): number | undefined {
  * The job a `pick` names: the nth job of the last live "which one?" question, only if it is still on the computer, and only if it is one the words fit (a pick kept from a question about another
  * title never reaches a job of that title). null: a pick that names no job now; it is never read as the title (the one they turned down could be the one left).
  */
-function pickedJob(args: Record<string, unknown>, words: string, jobs: ComputerControlJob[], state: ControlState): ComputerControlJob | null {
+function pickedJob(args: Record<string, unknown>, words: string, jobs: ComputerControlJob[], shown: ControlState['shown']): ComputerControlJob | null {
     const n = pickOf(args);
-    const shown = state.shown;
     if (n === undefined || !shown || Date.now() - shown.at >= SHOWN_KEEP_MS) return null;
     const job = jobs.find((one) => one.id === shown.ids[n - 1]);
     if (!job) return null;
@@ -571,7 +572,7 @@ function recordedControl(name: string, args: Record<string, unknown>, state: Con
     return key && state.calls.has(key) ? key : null;
 }
 
-async function control(name: string, args: Record<string, unknown>, context: ComputerControlContext, turn: number): Promise<Record<string, unknown>> {
+async function control(name: string, args: Record<string, unknown>, context: ComputerControlContext, turn: number, shown: ControlState['shown']): Promise<Record<string, unknown>> {
     if (!isComputerControlTool(name)) return { error: 'Unknown tool.' };
     const door = (ask: Omit<ComputerControlAsk, 'isGuest'>): Promise<ComputerControlAnswer> =>
         context.admin.controlComputerJobs(context.botId, context.userId, { ...ask, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}) });
@@ -591,7 +592,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     const jobs = jobsOf(view);
     const words = clean(args.job, JOB_WORDS_MAX);
 
-    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, args, context.state, view, jobs, door, context.confirmations);
+    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, args, context.state, view, jobs, door, context.confirmations, shown);
     // The list was read while a newer message may have come: a call that began on an older message changes nothing (a cancel or a stop must not run on the strength of a message that is no longer the latest)
     if (context.state.turn !== turn) return STALE_CALL;
     // A yes that named only some of the jobs a Stop listed ended nothing: Brick says what it will do, and asks about exactly those jobs (GPT's eighth note, D). Whichever of the two tools the model calls
@@ -617,7 +618,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     if (resolved) found = { job: resolved };
     else if (args.pick !== undefined && args.pick !== null) {
         // The answer to "which one?": that job by its number, or the question again; a pick that names no job is never read as the title
-        const chosen = pickedJob(args, words, jobs, context.state);
+        const chosen = pickedJob(args, words, jobs, shown);
         if (chosen) found = { job: chosen };
         else {
             const again = findJob(words, jobs, fallback);
@@ -952,7 +953,7 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
 }
 
 /** "How is it going?": the jobs as Orbit has them, in words for the model (no fixed line: it changes nothing), and the steps a named job took so far when Orbit keeps them. */
-async function seeJobs(words: string, args: Record<string, unknown>, state: ControlState, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>, queue?: ConfirmationQueue): Promise<Record<string, unknown>> {
+async function seeJobs(words: string, args: Record<string, unknown>, state: ControlState, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>, queue?: ConfirmationQueue, shown?: ControlState['shown']): Promise<Record<string, unknown>> {
     const result: Record<string, unknown> = {
         jobs: jobs.map((job) => shownJob(job, view)),
         note: jobs.length
@@ -961,7 +962,7 @@ async function seeJobs(words: string, args: Record<string, unknown>, state: Cont
     };
     if ((!words && (args.pick === undefined || args.pick === null)) || !jobs.length) return result;
     const hasPick = args.pick !== undefined && args.pick !== null;
-    const chosen = hasPick ? pickedJob(args, words, jobs, state) : undefined;
+    const chosen = hasPick ? pickedJob(args, words, jobs, shown) : undefined;
     const found: Found = hasPick ? (chosen ? { job: chosen } : { none: true }) : findJob(words, jobs);
     if (!('job' in found)) {
         if (!('which' in found)) return { ...result, notFound: true };

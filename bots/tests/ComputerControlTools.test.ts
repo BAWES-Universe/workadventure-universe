@@ -478,6 +478,21 @@ describe('stop everything: always asks, naming every job, and ends exactly those
                 await second.c.run(PAUSE_JOB_TOOL, { job: 'Visa form', pick: 1 });
                 expect(second.orbit.acted()).toEqual([{ action: 'pause', jobId: 'job-visa-2' }]);
             });
+            it('a newer question that commits other choices while the list is read does not change who the pick names (CodeRabbit round 3)', async () => {
+                const { orbit, c } = await asked({ pause: { ...viewOf(null), ok: true } });
+                const before = c.state.shown;
+                expect(before?.ids).toHaveLength(2);
+                const reading = orbit.admin.controlComputerJobs;
+                // The person's number was chosen from these choices; while Orbit's list is read, a newer question commits the same two jobs in the other order
+                orbit.admin.controlComputerJobs = vi.fn(async (bot: string, user: string, ask: ComputerControlAsk) => {
+                    const answer = await reading(bot, user, ask);
+                    if (ask.action === 'list') c.state.shown = { ids: [...before!.ids].reverse(), at: Date.now(), seq: (before!.seq ?? 0) + 1 };
+                    return answer;
+                });
+                await c.run(PAUSE_JOB_TOOL, { job: 'Visa form', pick: 2 });
+                // pick 2 of the choices they saw is the older job, whichever order the newer question holds now
+                expect(orbit.acted()).toEqual([{ action: 'pause', jobId: 'job-visa' }]);
+            });
             it('cancel: asks about the picked job (by its id), never the other one', async () => {
                 // both have started (a job that never started is cancelled at once, with no question)
                 const orbit = door(viewOf(working({ askedAt: minutesAgo(125) }), [paused('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) })]));
