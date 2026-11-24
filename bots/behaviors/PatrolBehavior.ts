@@ -7,6 +7,7 @@
 
 import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
+import { greetingReplyId } from '../client/GreetingReply';
 import type { PositionInterface } from '../../play/src/front/Connection/ConnexionModels';
 import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { movementLogger } from '../utils/MovementLogger';
@@ -14,6 +15,7 @@ import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd, moodOf, WAVE_MOOD } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
+import type { Heard } from '../memory/Heard';
 
 export interface PatrolBehaviorConfig extends BehaviorConfig {
     type: 'patrol';
@@ -1341,7 +1343,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
 
         try {
             // Special prompt for leading completion
@@ -1357,7 +1359,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1494,11 +1496,11 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
 
         // Get conversation context (includes memory, emotions, relationship history)
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
-        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory);
+        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory, spaceName);
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
 
         try {
             // Natural prompt: person approached, respond naturally based on context
@@ -1527,7 +1529,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1544,7 +1546,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, greetingResponseId, "", true, finalContent);
                     }
-                    greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    greetingResponseId = greetingReplyId(botId, playerId);
                     fullMessage = "";
                     emotionBlockStarted = false;
                     pendingPrefix = '';
@@ -1661,6 +1663,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
         let historyMessage = message;
         let keepFiles: () => void = () => undefined;
+        // With files, who heard the message when it came: someone who walks up while they are read never got it (#1993)
+        let arrived: { heard: Heard | undefined } | undefined;
 
         // Only respond if respondToPlayers is enabled (default true)
         if (config.respondToPlayers === false) {
@@ -1675,6 +1679,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
             message = files.augmented;
             historyMessage = files.line;
             keepFiles = files.keep;
+            arrived = files.arrived;
         }
 
         // Start conversation in memory if needed
@@ -1705,7 +1710,8 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         }
         
         // Store player's message in memory (original, without augmented file content)
-        this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+        if (arrived) this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName, true, arrived);
+        else this.conversationMemory?.addMessage(botId, senderId, historyMessage, 'person', spaceName);
         keepFiles();
         
         // Store player's message in conversation storage (original, without augmented file content)
@@ -1718,7 +1724,7 @@ if (shouldRespond && !this.bot.getState().isMoving() && !this.bot.getIsFollowing
         }
         
         // Extract personal information from original user message
-        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage);
+        this.conversationMemory?.extractPersonalInfo(botId, senderId, originalUserMessage, arrived ? arrived.heard : spaceName);
 
         // Start typing indicator
         this.bot?.startTyping(spaceName);

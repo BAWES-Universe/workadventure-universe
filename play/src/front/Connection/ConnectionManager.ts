@@ -84,6 +84,8 @@ class ConnectionManager {
     /** Work held back while the page was being left, done if the browser shows the page again from its back cache. */
     private shownAgain: (() => void)[] = [];
     private authToken: string | null = null;
+    /** Orbit's own id for this person: the only thing the analytics are told about who they are (never the email). */
+    private analyticsUserId: string | null = null;
     private _currentRoom: Room | null = null;
 
     private serviceWorker?: _ServiceWorker;
@@ -226,9 +228,12 @@ class ConnectionManager {
      * Logout
      */
     public logout() {
+        analyticsClient.forgetPerson();
         // save the current token to use it in the redirect logout url
         const tokenTmp = localUserStore.getAuthToken();
         localUserStore.dropGuestTokenAside();
+        // A chat a guest had with the Brick does not stay on the device for the next person
+        localUserStore.dropGuestBrickChat();
         // Read before the token goes: a guest whose token was refused is not an account that signs out.
         const wasSignedIn = localUserStore.isLogged();
         //remove token in localstorage
@@ -517,7 +522,7 @@ class ConnectionManager {
             return Promise.reject(new Error("Invalid URL"));
         }
         if (this.localUser) {
-            analyticsClient.identifyUser(this.localUser.uuid, this.localUser.email);
+            analyticsClient.identifyUser(this.analyticsUserId);
         }
 
         //if limit room active test headband
@@ -555,6 +560,10 @@ class ConnectionManager {
         localUserStore.dropGuestTokenAside();
         this.localUser = new LocalUser(data.userUuid, data.email);
         this.authToken = data.authToken;
+        // A new guest is nobody Orbit has told us about yet: the analytics keep them anonymous until it does, and not
+        // linked to whoever used this browser before.
+        this.analyticsUserId = null;
+        analyticsClient.forgetPerson();
         if (!isBenchmark) {
             // In benchmark, we don't have a local storage.
             localUserStore.saveUser(this.localUser);
@@ -855,10 +864,14 @@ class ConnectionManager {
             throw new Error("playUri is undefined");
         }
 
+        // When the request goes: whether the guest token is still valid is judged at this one moment, for sending it and for renewing it
+        // when the answer comes back (a token valid at the moment it went is not dropped for being a millisecond late)
+        const sentAt = Date.now();
+
         // Right after a sign-in: the guest token this device kept aside goes along once, so Orbit can join the guest's
         // visits to the account. Only with an account's token. It goes once: it is removed when the pusher has signed the
         // person in, and stays if the request fails or is refused, so a retry still carries it (it expires on its own).
-        const guestToken = localUserStore.peekGuestTokenAside();
+        const guestToken = localUserStore.peekGuestTokenAside(sentAt);
         const sendGuestToken = guestToken !== null && localUserStore.storedTokenIsAccounts();
 
         // TODO: the call to "/me" could be completely removed and the request data could come from the FrontController
@@ -885,6 +898,10 @@ class ConnectionManager {
         const response = MeResponse.parse(data);
 
         if (response.status === "error") {
+            // Orbit asked for the same sign-in again, with the guest id that went along: it is kept aside for 30 more minutes from now, so
+            // a hand-over that takes longer than the first 30 still has it on the last try
+            if (response.type === "retry" && sendGuestToken)
+                localUserStore.renewGuestTokenAside(Date.now(), sentAt, guestToken);
             // A refusal the pusher sent after renewing the token carries it: keep it, the old one may no longer work.
             const renewedToken = (data as { authToken?: unknown } | null)?.authToken;
             if (typeof renewedToken === "string") {
@@ -915,6 +932,7 @@ class ConnectionManager {
         }
 
         localUserStore.setAuthToken(authToken);
+        this.analyticsUserId = response.userId ?? null;
         this.localUser = new LocalUser(userUuid, email, matrixUserId /*, isMatrixRegistered*/);
         localUserStore.saveUser(this.localUser);
         this.authToken = authToken;

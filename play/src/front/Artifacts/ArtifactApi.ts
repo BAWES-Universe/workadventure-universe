@@ -14,8 +14,18 @@ export interface ArtifactVersionInfo {
     askedByName: string | null;
     sizeBytes: number;
     createdAt: string;
-    /** Where the file is served from: an address outside the game's own, so a page that runs from it is cut off. */
-    url: string;
+    /**
+     * Where the file is served from: an address outside the game's own, so a page that runs from it is cut off. None for
+     * a "Just you" artifact (game #1994) anywhere but in the answer to its owner opening it.
+     */
+    url: string | null;
+    /**
+     * How long that address goes on working: the one a "Just you" artifact opens at is for that opening only. None for an
+     * address that never stops.
+     */
+    urlLifeMs?: number;
+    /** The page has songs, pictures or videos beside it, which it may fetch from that address at any moment. */
+    urlHasMedia?: boolean;
 }
 
 export interface OpenedArtifact {
@@ -59,7 +69,8 @@ export interface ChatArtifactPage {
 
 /** An artifact request the game's server refused or could not make. */
 export class ArtifactRequestError extends Error {
-    constructor(public readonly status: number, public readonly code: string) {
+    /** `unsure`: a payment start that was refused may still have made an order; Check payment stays offered for that wish */
+    constructor(public readonly status: number, public readonly code: string, public readonly unsure = false) {
         super(code);
         this.name = "ArtifactRequestError";
     }
@@ -69,20 +80,27 @@ export class ArtifactRequestError extends Error {
     }
 }
 
-async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+async function post<T>(path: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     let response: Response;
     try {
         response = await fetch(`${ABSOLUTE_PUSHER_URL}artifacts/${path}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: localUserStore.getAuthToken() ?? "" },
             body: JSON.stringify(body),
+            signal,
         });
     } catch {
         throw new ArtifactRequestError(0, "offline");
     }
     if (!response.ok) {
-        const answer = (await response.json().catch(() => undefined)) as { error?: unknown } | undefined;
-        throw new ArtifactRequestError(response.status, typeof answer?.error === "string" ? answer.error : "failed");
+        const answer = (await response.json().catch(() => undefined)) as
+            | { error?: unknown; unsure?: unknown }
+            | undefined;
+        throw new ArtifactRequestError(
+            response.status,
+            typeof answer?.error === "string" ? answer.error : "failed",
+            answer?.unsure === true
+        );
     }
     return (await response.json()) as T;
 }
@@ -120,7 +138,8 @@ export function restoreArtifactVersion(
     return post<OpenedArtifact>(`${encodeURIComponent(id)}/restore`, { chat, number });
 }
 
-export type ArtifactOpenScope = "chat" | "link";
+/** Who can open it: just its owner, people in the chat it was made in, or anyone with the link. */
+export type ArtifactOpenScope = "me" | "chat" | "link";
 export type ArtifactChangeScope = "owner" | "openers";
 
 /** The owner says who can open it and who can ask for changes; the answer is the artifact as it now is. */
@@ -147,4 +166,65 @@ export function fetchArtifactCode(
     chat: ArtifactChat | undefined
 ): Promise<{ version: ArtifactVersionInfo; content: string }> {
     return post(`${encodeURIComponent(id)}/versions/${number}`, { chat });
+}
+
+/** The payment side of a page that takes payments (game #2044): nothing but what the page's window may know. */
+export interface ArtifactPay {
+    enabled?: boolean;
+    orderId?: string | null;
+    /** Where the buyer pays; only an https address is ever opened */
+    checkoutUrl?: string | null;
+    app?: string;
+    /** `none`: a restore found no purchase of this buyer's */
+    status?: "checking" | "paid" | "not_paid" | "cant_confirm" | "none";
+    testPayment?: boolean;
+    /** How long to wait before asking about the order again, in milliseconds (the server slows it down for an order that waits) */
+    pollAfterMs?: number;
+    /**
+     * Of a `checking` answer: the order closed and the payment service has not had the last word. There is no link and nothing to wait on for
+     * twenty minutes: the line says it is still being checked. An answer without it (an older Orbit) is read as before.
+     */
+    longWait?: boolean;
+    /** When a restored purchase was paid (ISO), so the line can say "Your purchase from 19 Nov is back." */
+    paidAt?: string | null;
+    /** A start sent again found the order it had made, and made no second one */
+    reused?: boolean;
+    /**
+     * What Orbit used for the person who ASKED: `account` for a real signed-in account, `guest` for the recovery code (a signed-in person
+     * whose Orbit account is a guest account is a guest). It is the asking person's kind, not the order's: never given to the page.
+     */
+    buyer?: "account" | "guest";
+    /**
+     * Of a restore: the buyer's own order (`own`), or the one of a receipt link they opened (`receipt`, never asked again). An `own` order that is
+     * `checking` with no `checkoutUrl` is a start that has not finished yet (an early reload): Restore is asked again after `pollAfterMs`.
+     */
+    via?: "own" | "receipt";
+}
+
+/** What the window asks of the payment side of a page: one of start, order, check or restore. */
+export interface ArtifactPayRequest {
+    /** A checkout for the owner's amount. With `intentId`, a start sent again finds the order it made. */
+    start?: boolean;
+    /** Where one order stands */
+    order?: string;
+    /** The window's own id for one purchase wish: made here for each tap, never by the page */
+    intentId?: string;
+    /** Check payment: where the order that wish made stands */
+    check?: boolean;
+    /** Restore purchase: this buyer's verified paid order for the page's offer */
+    restore?: boolean;
+    /** What a guest's window keeps for them (Orbit stores only its hash), and the code of a receipt link they opened */
+    recoveryCode?: string;
+    receiptCode?: string;
+}
+
+/** Whether the page takes payments; `start` makes a checkout for the owner's amount, `order` asks where an order stands, `check` and `restore` get back to a purchase. */
+export function payOnArtifact(
+    id: string,
+    chat: ArtifactChat | undefined,
+    request: ArtifactPayRequest = {},
+    /** Lets the caller stop waiting for the answer for good (the request is dropped, its answer never read) */
+    signal?: AbortSignal
+): Promise<ArtifactPay> {
+    return post<ArtifactPay>(`${encodeURIComponent(id)}/pay`, { chat, ...request }, signal);
 }

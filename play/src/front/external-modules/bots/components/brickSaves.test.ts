@@ -1,0 +1,159 @@
+import { describe, expect, it } from "vitest";
+import type { BotData } from "../types";
+import { brickAfterTemplate, brickChangeBetween, brickPutBack, brickSavedAfter, brickSavedOf } from "./brickSaves";
+
+const bot = (over: Partial<BotData> = {}): BotData => ({
+    id: "b1",
+    name: "Brick",
+    description: "Your own Brick",
+    chatInstructions: "Be brief.",
+    aiProviderRef: "universe-ai",
+    aiModel: null,
+    behaviorType: "idle",
+    companionTextureId: null,
+    behaviorConfig: {
+        behaviorType: "idle",
+        assignedSpace: { center: { x: 0, y: 0 }, radius: 0 },
+        // What the other parts keep there: never sent from a Brick's page
+        showToolCalls: true,
+        apps: { waitsSeconds: 90 },
+    },
+    ...over,
+});
+
+describe("what a Brick's page saves (Slice 13)", () => {
+    it("sends nothing while nothing changed, and never what other parts keep in the behavior config", () => {
+        const saved = brickSavedOf(bot());
+        expect(brickChangeBetween(saved, brickSavedOf(bot()))).toEqual({});
+        expect(Object.keys(saved.behavior).sort()).toEqual(["assignedSpace", "behaviorType"]);
+    });
+
+    it("sends only what changed: the key it runs on with its model, a behavior key, the companion, its words", () => {
+        const saved = brickSavedOf(bot());
+        const now = brickSavedOf(
+            bot({
+                aiProviderRef: "key-1",
+                aiModel: "m-2",
+                companionTextureId: "dog-2",
+                description: "  Keeps recipes ",
+                behaviorType: "social",
+                behaviorConfig: {
+                    ...bot().behaviorConfig,
+                    behaviorType: "social",
+                    moves: "wander",
+                    goesToPeople: false,
+                    assignedSpace: { center: { x: 0, y: 0 }, radius: 150 },
+                },
+            })
+        );
+        expect(brickChangeBetween(saved, now)).toEqual({
+            description: "Keeps recipes",
+            aiProviderRef: "key-1",
+            aiModel: "m-2",
+            behaviorType: "social",
+            behaviorConfig: {
+                behaviorType: "social",
+                moves: "wander",
+                goesToPeople: false,
+                assignedSpace: { center: { x: 0, y: 0 }, radius: 150 },
+            },
+            companionTextureId: "dog-2",
+        });
+    });
+
+    it("sends a cleared companion and a cleared line as none", () => {
+        const saved = brickSavedOf(bot({ companionTextureId: "dog-2" }));
+        const now = brickSavedOf(bot({ companionTextureId: null, description: "  " }));
+        expect(brickChangeBetween(saved, now)).toEqual({ description: null, companionTextureId: null });
+    });
+
+    it("counts a change as saved only for the parts it carried, so a later change is still sent", () => {
+        const saved = brickSavedOf(bot());
+        const now = brickSavedOf(bot({ aiProviderRef: "key-1", companionTextureId: "dog-2" }));
+        const after = brickSavedAfter(saved, now, { aiProviderRef: "key-1" });
+        expect(after.aiProviderRef).toBe("key-1");
+        expect(brickChangeBetween(after, now)).toEqual({ companionTextureId: "dog-2" });
+    });
+
+    it("puts only the refused parts back, keeping what was typed or picked since", () => {
+        const saved = brickSavedOf(bot());
+        const shown = bot({
+            aiProviderRef: "key-1",
+            description: "Typed after",
+            behaviorConfig: { ...bot().behaviorConfig, moves: "wander" },
+        });
+        const back = brickPutBack(shown, saved, { aiProviderRef: "key-1", behaviorConfig: { moves: "wander" } });
+        expect(back.aiProviderRef).toBe("universe-ai");
+        expect(back.behaviorConfig.moves).toBeUndefined();
+        expect(back.behaviorConfig.showToolCalls).toBe(true);
+        expect(back.description).toBe("Typed after");
+    });
+    it("keeps a part the person edited while the refused change was on its way", () => {
+        const saved = brickSavedOf(bot());
+        const sent = brickSavedOf(bot({ aiProviderRef: "key-1", description: "First" }));
+        // Meanwhile the person picked another key and typed more: only the description still matches what was sent
+        const shown = bot({ aiProviderRef: "key-2", description: "First" });
+        const back = brickPutBack(shown, saved, { aiProviderRef: "key-1", description: "First" }, sent);
+        expect(back.aiProviderRef).toBe("key-2");
+        expect(back.description).toBe(saved.description ?? "");
+    });
+
+    it("sends a route's direction and pause, which the Behavior group changes for a Brick saved with a route", () => {
+        const saved = brickSavedOf(bot());
+        const now = brickSavedOf(
+            bot({ behaviorConfig: { ...bot().behaviorConfig, loop: false, pauseAtWaypoints: 5 } })
+        );
+        expect(brickChangeBetween(saved, now)).toEqual({ behaviorConfig: { loop: false, pauseAtWaypoints: 5 } });
+    });
+});
+
+describe("a Brick's page after template parts were taken (#2008)", () => {
+    const fresh = bot({
+        description: "Songs and jingles",
+        chatInstructions: "You are a music companion.",
+        characterTexture: "brick-violet",
+        characterTextureIds: ["brick-violet"],
+    });
+
+    it("shows what was taken as saved, so the next edit starts from it and not from the old text", () => {
+        const here = bot();
+        const after = brickAfterTemplate(here, brickSavedOf(here), fresh, ["instructions", "look"]);
+        expect(after.bot.chatInstructions).toBe("You are a music companion.");
+        expect(after.bot.characterTexture).toBe("brick-violet");
+        // The line was not taken
+        expect(after.bot.description).toBe("Your own Brick");
+        expect(brickChangeBetween(after.saved, brickSavedOf(after.bot))).toEqual({});
+    });
+
+    it("keeps what the person is typing now, and still sends it", () => {
+        const here = bot({ chatInstructions: "Be brief, and funny." });
+        const after = brickAfterTemplate(here, brickSavedOf(bot()), fresh, ["instructions"]);
+        expect(after.bot.chatInstructions).toBe("Be brief, and funny.");
+        expect(brickChangeBetween(after.saved, brickSavedOf(after.bot))).toEqual({
+            chatInstructions: "Be brief, and funny.",
+        });
+    });
+
+    it("counts what Orbit has now as saved even where the person is typing, so going back to the old text is sent", () => {
+        // Orbit had "Be brief.", the person typed "Be brief, and funny.", the update stored the music companion text
+        const here = bot({ chatInstructions: "Be brief, and funny.", description: "My own line" });
+        const after = brickAfterTemplate(here, brickSavedOf(bot()), fresh, ["instructions", "description"]);
+        expect(after.bot.chatInstructions).toBe("Be brief, and funny.");
+        expect(after.bot.description).toBe("My own line");
+        expect(after.saved.chatInstructions).toBe(brickSavedOf(fresh).chatInstructions);
+        expect(after.saved.description).toBe(brickSavedOf(fresh).description);
+        // They go back to the text Orbit had before the update: it is not what Orbit stores now, so it is sent
+        const back = { ...after.bot, chatInstructions: "Be brief.", description: "Your own Brick" };
+        expect(brickChangeBetween(after.saved, brickSavedOf(back))).toEqual({
+            chatInstructions: "Be brief.",
+            description: "Your own Brick",
+        });
+    });
+
+    it("changes nothing when nothing that the page shows was taken", () => {
+        const here = bot();
+        const after = brickAfterTemplate(here, brickSavedOf(here), fresh, ["firstThing", "routines"]);
+        expect(after.bot).toEqual(here);
+        expect(after.saved).toEqual(brickSavedOf(here));
+    });
+});

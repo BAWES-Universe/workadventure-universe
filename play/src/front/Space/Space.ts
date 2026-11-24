@@ -67,6 +67,17 @@ export interface VideoBox {
     isMegaphoneSpace?: boolean;
 }
 
+/**
+ * Applies the changes of an update to a user. Lodash `merge` combines arrays by position and never makes one shorter, so for tags
+ * (a Brick says who it is visiting from them) a tag that was taken away would stay: when tags are in the update, the array is
+ * replaced by a copy of the new one, and `merge` keeps doing the rest.
+ */
+function mergeUserChanges(user: Partial<SpaceUser>, changes: Partial<SpaceUser>, updateMask: string[]): void {
+    const { tags, ...others } = changes;
+    merge(user, others);
+    if (updateMask.includes("tags")) user.tags = [...(tags ?? [])];
+}
+
 export class Space implements SpaceInterface {
     private readonly name: string;
 
@@ -74,6 +85,8 @@ export class Space implements SpaceInterface {
     private readonly privateEventsObservables: PrivateEventsObservables = {};
     private _onLeaveSpace = new Subject<void>();
     public readonly onLeaveSpace = this._onLeaveSpace.asObservable();
+    private _reconnected = new Subject<void>();
+    public readonly reconnected = this._reconnected.asObservable();
     private _peerManager: SpacePeerManager;
     public allVideoStreamStore: MapStore<string, VideoBox> = new MapStore<string, VideoBox>();
     public allScreenShareStreamStore: MapStore<string, VideoBox> = new MapStore<string, VideoBox>();
@@ -664,7 +677,11 @@ export class Space implements SpaceInterface {
 
         const audienceHand = this._audienceHands.get(newData.spaceUserId);
         if (audienceHand) {
-            merge(audienceHand, applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>);
+            mergeUserChanges(
+                audienceHand,
+                applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>,
+                updateMask
+            );
             if (this.isAudienceHand(audienceHand)) {
                 // Still in the audience: only the row changes, and their camera shows or not (#1623).
                 this._audienceHands.set(newData.spaceUserId, audienceHand);
@@ -685,7 +702,7 @@ export class Space implements SpaceInterface {
         // For some reason, the WithFieldMask type seems to apply recursively on array. I think it is a bug in our context.
         const maskedNewData = applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>;
 
-        merge(userToUpdate, maskedNewData);
+        mergeUserChanges(userToUpdate, maskedNewData, updateMask);
 
         // Back in the audience with a hand still up: listed, without a video.
         if (this.isAudienceHand(userToUpdate)) {
@@ -735,14 +752,18 @@ export class Space implements SpaceInterface {
                 this.allScreenShareStreamStore.delete(userToUpdate.spaceUserId);
             }
         }
-        /*if (this._setUsers) {
+        // The list is told only about tags: they are read from the list (a Brick says who it is visiting from them), and a change
+        // in place is not an add or a remove. Other changes have their own stores, so every update does not wake every reader.
+        if (updateMask.includes("tags") && this._setUsers) {
             this._setUsers(this._users);
-        }*/
+        }
     }
 
     private extendSpaceUser(user: SpaceUser): SpaceUserExtended {
         const extendedUser = {
             ...user,
+            // Always present, so the people list hears when it changes (a flag that is not there has no store to update)
+            onACall: user.onACall === true,
             pictureStore: readable<string | undefined>(undefined, (set) => {
                 CharacterLayerManager.wokaBase64(user.characterTextures)
                     .then((wokaBase64) => {
@@ -1132,6 +1153,8 @@ export class Space implements SpaceInterface {
             }
 
             console.log("Reconnected to space ", this.name);
+            // The server has a fresh copy of our user: whoever sets flags of their own on it must say them again.
+            this._reconnected.next();
         })().catch((e) => {
             if (e instanceof AbortError && !(e instanceof TimeoutError)) {
                 // Retry was aborted, do nothing

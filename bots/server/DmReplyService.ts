@@ -17,15 +17,71 @@ import type { PendingMedia } from '../memory/ConversationMemory';
 import type { ArtifactCard } from '../ai/ArtifactTools';
 import { ReplySteps, type StepsField } from '../ai/ToolSteps';
 import type { ReplyLimitReached } from '../ai/types';
+import type { ToolSignInCard, ToolSignInDelivery } from '../mcp/ToolSignInCard';
 import type { ParsedFile } from '../services/FileParser';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
+import { BRICK_CHAT_LINK } from '../ai/BrickTools';
+import { withJobLines } from '../ai/JobStatusLine';
+import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
 import type { BotManager } from './BotManager';
 
 /** Label stored with direct messages in memory and analytics, where bubble messages store their space name. */
 export const DM_SPACE_NAME = 'matrix-dm';
 const DEFAULT_INSTRUCTIONS = 'You are a helpful bot.';
+
+/** How a Brick talks until its owner writes its own instructions (#1995). */
+const BRICK_PERSONALITY =
+    "You are this person's own helper in Universe. Be warm, plain and brief, like a capable friend who gets things done. " +
+    'Use everyday words. Give the answer first, then the next step if there is one.';
+
+/**
+ * What stays true of every Brick, whatever its owner writes (#1995). It comes with the bot's own instructions, which the
+ * rules after them yield to. Where it lives is said again in those rules (ai/systemPrompt.ts, the ones for a bot with no room).
+ */
+function brickFacts(name: string): string {
+    return [
+        'About you (this stays true whatever else is written here):',
+        `- Your name is ${name}. You are a Brick. People also say "bot": to you the two words mean the same thing, you answer to both and you never correct anyone for using either.`,
+        '- You belong to the person you are talking with, and you live in their chats, not in a room on the map.',
+        '- Speak of yourself as "I". You are neither a "he" nor a "she".',
+        '- Only offer what you can do in this chat today, with what you have. When they ask what you can do, give three or four short, concrete ideas you can really carry out right now. When they ask for something you cannot do yet, say so in one plain sentence and offer the closest thing you can do today.',
+    ].join('\n');
+}
+
+/** The instructions a bot answers by: its own, or the built-in ones for its kind. */
+export function instructionsFor(config: Pick<BotConfiguration, 'chatInstructions' | 'brick' | 'name'>): string {
+    if (!config.brick) return config.chatInstructions || DEFAULT_INSTRUCTIONS;
+    return `${config.chatInstructions || BRICK_PERSONALITY}\n\n${brickFacts(config.name || 'Brick')}`;
+}
+
+/** The marker a message carries when the person tapped a starter under a Brick's hello (#1995), and the one starter there is. */
+export const STARTER_IDEAS = 'ideas';
+/**
+ * A Brick's answer to "See what I can do" (#1995): fixed words, so it asks no model and counts toward nothing. The game
+ * shows them in the person's language with the ideas to tap; these are for the bot's memory and for other chat apps.
+ */
+export const BRICK_IDEAS_TEXT = 'A few things I could take off your plate. Pick one, or just ask in your own words.';
+
+/** The Brick a suggestion card described (#1996), as the game sends it back when the person taps "Make it". */
+export interface OfferedBrick {
+    topic: string;
+    name: string;
+    line: string;
+    instructions: string;
+}
+
+/** A Brick's words once it made the Brick it suggested (#1996): fixed, so no model is asked. For memory and other chat apps; the game shows its own. */
+/** With the Brick's id, "Open its chat" is the link the game opens that chat from; without, the same words plain. */
+/** `made` false: they already had a Brick of that name, so nothing new was made and the words do not say "Done". */
+export const brickMadeText = (name: string, id?: string, made = true): string => {
+    const open = id ? `[Open its chat](${BRICK_CHAT_LINK}${id})` : 'Open its chat';
+    return made
+        ? `Done. ${name} is ready and knows its job. ${open}, or find it in Chats any time.`
+        : `You already have ${name}, so I didn't make another. ${open}, or find it in Chats any time.`;
+};
+export const BRICK_NOT_MADE_TEXT = "I couldn't make it just now. Ask me again in a moment.";
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
 const CONFIG_CACHE_MS = 60 * 1000;
@@ -71,10 +127,25 @@ export interface DmReplyHooks {
     onSteps?: (field: StepsField, text: string) => Promise<void>;
     /** The Matrix room the message came in. Live artifacts made in this chat belong to it. */
     roomId?: string;
+    /** The Matrix event of the message (its id): the key of a computer start made for it is made from it, so the same event delivered again makes no second job. */
+    eventId?: string;
+    /** When the person wrote it (the event's own `origin_server_ts`): the moment of their consent, which the key of a computer start made for it carries. */
+    eventTs?: number;
     /** The artifacts the person pointed at by replying to a card (game #1781): the bot may open those even when another bot made them. */
     pointedArtifactIds?: string[];
     /** A line from the system about something the person did (a card they tapped), not words they typed: nothing is learned about them from it. */
     note?: boolean;
+    /** The App the person just connected from a Brick's card (game #2001): the reply's steps line starts with "Connected {name}". */
+    connectedApp?: { app: string; name: string };
+    /** The person tapped this starter under a Brick's hello (#1995): the message is the starter's own words. */
+    starter?: string;
+    /** The person tapped "Make it" on a Brick's suggestion (#1996): the Brick the card described. Their message is the button's own words. */
+    makeOffered?: OfferedBrick;
+    /**
+     * The person tapped "Start a new job" on a card for a job Orbit would not carry on (GPT's sixth answer, finding 6): the job's title. Their message is the title, and the start
+     * is an ORDINARY new one (its own key, no continuation), so "try again" is not offered to the model in this turn.
+     */
+    newJobAsked?: { title: string };
 }
 
 export interface DmReply {
@@ -84,7 +155,7 @@ export interface DmReply {
     /** The AI provider failed on this message, so there is no answer; the person can send it again. */
     failed?: boolean;
     /** Remembers the text as said. Call it once the text reached the person, so an answer that never arrived isn't. */
-    keep?: () => void;
+    keep?: (eventId?: string) => void;
     /** Puts a file in `media` on the person's list of files (#1508). Call it once it reached them. */
     mediaSent?: (item: PendingMedia) => void;
     /** The bot's room, when the text names it: the game shows a card under the message to go there. */
@@ -93,6 +164,26 @@ export interface DmReply {
     artifacts?: ArtifactCard[];
     /** The person reached a reply limit (#1159): no AI was called, and the game shows the fixed card instead. */
     replyLimit?: ReplyLimitReached;
+    /** The text is a Brick's fixed "what I can do" (#1995): the game shows its ideas to tap with it. */
+    ideas?: boolean;
+    /** What this turn did about Bricks (#1996): Bricks it made go with the text, a suggestion goes out as a card after it. */
+    bricks?: BrickNote[];
+    /**
+     * Orbit refused to carry a job on and a new job is a sensible next step (GPT's sixth answer, finding 6): a card with one "Start a new job" button goes out after the text, for
+     * the job of this title. Nothing was started; the tap is an ordinary new start.
+     */
+    newJob?: { title: string };
+    /**
+     * For a reply with a suggestion: asks Orbit, right before its card is sent, whether it may be shown now. The topic
+     * as Orbit keeps it, or null to leave the card out. Asks once however often it is called.
+     */
+    claimOffer?: () => Promise<string | null>;
+    /** The same for an App offer's card (game #2001). */
+    claimApp?: () => Promise<string | null>;
+    /** A tool's sign-in expired and this person manages the bot (#1819): the Reconnect card to send after the reply. */
+    toolSignIn?: ToolSignInCard;
+    /** Says how the Reconnect card's send went (see AIStreamChunk.toolSignInDelivery) */
+    toolSignInDelivery?: ToolSignInDelivery;
     /**
      * This message waited behind an answer in progress and was answered together with the others that waited (#1159):
      * nothing is sent for it. True once that one answer was given, false when it failed or was a reply limit card.
@@ -120,7 +211,79 @@ const MAX_LAST_FILES = 500;
 export class DmReplyService extends BaseBehavior {
     private queues = new Map<string, Promise<unknown>>();
     /** Per chat, the words that wait behind the answer in progress, to be answered together once it is done. */
-    private waiting = new Map<string, { texts: string[]; pointed: string[]; note: boolean; answer: Promise<DmReply | null> }>();
+    private waiting = new Map<string, { texts: string[]; pointed: string[]; note: boolean; starter: boolean; answer: Promise<DmReply | null> }>();
+    /**
+     * What a model reads of the files a guest sent the Brick for guests (plan v3 section 5): the same reading every bot does (the
+     * text of each file, then the pictures for a model that sees them), from bytes the caller already read and checked. Nothing
+     * else is fetched while it reads, so a document that names other addresses never reaches the network.
+     */
+    async readCheckedFiles(text: string, files: { url: string; type: string; bytes: ArrayBuffer }[], readChars: number): Promise<{ text: string; images: string[] }> {
+        const [primary, ...gallery] = files;
+        if (!primary) return { text, images: [] };
+        const { FileParser } = await import('../services/FileParser');
+        const loaded = new Map(files.map((file) => [file.url, { bytes: file.bytes, type: file.type }]));
+        const mediaOf = (type: string) => (type.startsWith('image/') ? 'image' : type.startsWith('audio/') ? 'audio' : type.startsWith('video/') ? 'video' : 'file');
+        return FileParser.withLoadedFiles(loaded, async () => {
+            const galleryUrls = gallery.map((file) => file.url);
+            const read = await this.formatParsedAttachment(text, primary.url, primary.type, mediaOf(primary.type), galleryUrls, undefined, undefined, readChars);
+            const pictures = await this.collectImageUrls(primary.url, mediaOf(primary.type), primary.type, galleryUrls);
+            // The model gets each picture from its checked bytes, never its stored link: a signed link runs out long before its receipt
+            const { sniffedType } = await import('../ai/providers/inlineImages');
+            const images = pictures.map((url) => {
+                const file = loaded.get(url);
+                if (!file) return url;
+                const bytes = Buffer.from(file.bytes);
+                const type = file.type.startsWith('image/') ? file.type : (sniffedType(bytes) ?? 'image/png');
+                return `data:${type};base64,${bytes.toString('base64')}`;
+            });
+            return { text: read, images };
+        });
+    }
+
+    /** Bricks whose settings must be read again before their next answer (#1996): one that was just deleted stops at once. */
+    forgetConfig(botId: string): void {
+        this.configCache.delete(botId);
+        this.missingCache.delete(botId);
+        this.fenceOff(botId);
+    }
+
+    /**
+     * Settings read before a change must not be kept after it: each bot has a generation, raised when its settings are forgotten while
+     * a read of them is out, and a read that finishes under another generation than it began in is used once and never cached.
+     */
+    private configFence?: Map<string, { generation: number; reading: number }>;
+
+    private fenceOf(botId: string): { generation: number; reading: number } {
+        this.configFence ??= new Map();
+        let fence = this.configFence.get(botId);
+        if (!fence) this.configFence.set(botId, (fence = { generation: 0, reading: 0 }));
+        return fence;
+    }
+
+    /** A read of this bot's settings that is out now is of the old ones. Nothing is kept for a bot nobody is reading for. */
+    private fenceOff(botId: string): void {
+        const fence = this.configFence?.get(botId);
+        if (fence && fence.reading > 0) fence.generation++;
+    }
+
+    /**
+     * The same, when the owner says their Brick changed: only a Brick this server holds as theirs is read again, so
+     * nobody else can make it ask Orbit for bots. One it does not hold is read fresh anyway when it is next needed.
+     */
+    forgetBrickOf(botId: string, ownerId: string): boolean {
+        const cached = this.configCache.get(botId);
+        if (!cached) {
+            // Nothing held: a read that is out now may still bring back the settings from before this change, and is not kept (this
+            // makes Orbit be asked nothing, it only keeps one answer from being cached)
+            this.fenceOff(botId);
+            return false;
+        }
+        if (cached.config.brick?.ownerId !== ownerId) return false;
+        this.configCache.delete(botId);
+        this.fenceOff(botId);
+        return true;
+    }
+
     private playerIds = new Map<string, number>();
     private nextPlayerId = -1;
     private loadedBots = new Set<string>();
@@ -157,8 +320,11 @@ export class DmReplyService extends BaseBehavior {
         // One reply at a time (#1159): messages that come in while the bot is answering wait, and the ones that are
         // only words get one answer together. A message with a file is answered on its own, as before.
         const waiting = this.waiting.get(key);
-        // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently
-        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note) {
+        // A note the system wrote is never answered together with what a person typed: the two are kept and learned from differently.
+        // Nor is a starter they tapped (#1995): its answer is fixed words, which would leave what they typed unanswered
+        // Nor an App they just connected: each one gets its own steps line ("Connected Notion"), which one batch cannot show twice
+        // Nor a "Start a new job" they tapped: its title, its event and its fresh start belong to that one reply, and words typed beside it are answered on their own
+        if (waiting && attachments.length === 0 && waiting.note === !!hooks.note && !waiting.starter && !hooks.starter && !hooks.makeOffered && !hooks.connectedApp && !hooks.newJobAsked) {
             waiting.texts.push(text);
             // A card replied to in a message that waits is pointed at by the one answer that covers it (game #1781)
             waiting.pointed.push(...(hooks.pointedArtifactIds ?? []));
@@ -169,7 +335,13 @@ export class DmReplyService extends BaseBehavior {
             }));
         }
         const previous = this.queues.get(key);
-        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note } as { texts: string[]; pointed: string[]; note: boolean; answer: Promise<DmReply | null> };
+        const batch = { texts: [text], pointed: [...(hooks.pointedArtifactIds ?? [])], note: !!hooks.note, starter: !!hooks.starter || !!hooks.makeOffered || !!hooks.connectedApp || !!hooks.newJobAsked } as {
+            texts: string[];
+            pointed: string[];
+            note: boolean;
+            starter: boolean;
+            answer: Promise<DmReply | null>;
+        };
         const next = (previous ?? Promise.resolve())
             .catch(() => undefined)
             .then(() => {
@@ -234,7 +406,21 @@ export class DmReplyService extends BaseBehavior {
         // Without the admin API settings the answer would read as "no such bot", which counts toward closing chats
         if (!admin.isConfigured()) throw new Error('The admin API is not configured, so bot settings cannot be loaded');
         // Bounded, as every caller waits on it: a chat's next events, and the game's bot states
-        const config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS);
+        // Direct messages are where a Brick lives (#1995), so this is the one place that asks Orbit for one
+        const fence = this.fenceOf(botId);
+        const generation = fence.generation;
+        fence.reading++;
+        let config: BotConfiguration | null;
+        let stale = false;
+        try {
+            config = await admin.getBotConfiguration(botId, CONFIG_TIMEOUT_MS, { bricks: true });
+        } finally {
+            fence.reading--;
+            stale = fence.generation !== generation;
+            if (fence.reading === 0 && this.configFence?.get(botId) === fence) this.configFence.delete(botId);
+        }
+        // Forgotten while it was being read: this answer may be from before the change, so it is used this once and not kept
+        if (stale) return config;
         this.configCache.delete(botId);
         this.missingCache.delete(botId);
         if (config) {
@@ -251,12 +437,15 @@ export class DmReplyService extends BaseBehavior {
      * One short in-character line from a resting bot, in the language of the person's message. Empty when the bot has
      * no AI provider or the provider fails; the plain note explains it either way. Not kept in memory.
      */
-    async restingLine(config: BotConfiguration, text: string): Promise<string> {
+    async restingLine(config: BotConfiguration, text: string, asker?: string): Promise<string> {
         if (!config.aiProviderRef || !this.aiService || !text.trim()) return '';
-        const instructions = `${config.chatInstructions || DEFAULT_INSTRUCTIONS}\n\n${RESTING_PROMPT}`;
+        const instructions = `${instructionsFor(config)}\n\n${RESTING_PROMPT}`;
         try {
+            // A Brick is known before it is asked about someone: the first direct message after a restart can be this line, and
+            // a Brick not yet known would reach Orbit with no asker, bypassing who it is for
+            this.aiService.noteBrick?.(config.botId, config.brick);
             // With the bot id, so a bot on Universe AI or on a lent key reaches its key the way its replies do
-            const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500), config.botId);
+            const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500), config.botId, undefined, asker);
             return parseEmotionsFromResponse(line).cleanedResponse.trim().slice(0, 300);
         } catch (error) {
             console.warn(`[DmReplyService] Resting line failed for bot ${config.botId}:`, (error as Error)?.message ?? error);
@@ -281,13 +470,62 @@ export class DmReplyService extends BaseBehavior {
     private async replyNow(botId: string, person: DmPerson, text: string, attachments: DmAttachment[], hooks: DmReplyHooks): Promise<DmReply | null> {
         const config = await this.getBotConfig(botId);
         if (!config?.aiProviderRef || !this.aiService || !this.conversationMemory) return null;
-        const chatInstructions = config.chatInstructions || DEFAULT_INSTRUCTIONS;
+        // A Brick its owner deleted answers nobody while it waits for Undo (#1996)
+        if (config.brick?.deleted) return null;
+        // A person's own first Brick can make Bricks and suggest one (#1996)
+        this.aiService.noteBrick?.(botId, config.brick);
+        const chatInstructions = instructionsFor(config);
         const playerId = this.playerIdFor(person.matrixUserId);
         const memory = this.conversationMemory;
 
         await this.ensureMemoriesLoaded(botId);
         const withUuid = memory as unknown as { setUserUuid?: (b: string, p: number, u: string, l: boolean) => void };
         withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+        // "See what I can do" under a Brick's hello (#1995): fixed words, so no model is asked and nothing is counted. Both
+        // lines are remembered like any others, so the bot knows what it offered when the person picks one or asks on.
+        if (config.brick && hooks.starter === STARTER_IDEAS && attachments.length === 0) {
+            const lastMet = memory.getMemory(botId, playerId)?.relationship?.lastMet ?? 0;
+            if (Date.now() - lastMet > NEW_CONVERSATION_AFTER_MS) memory.startConversation(botId, playerId);
+            // Their tap, not words they typed: nothing is learned about them from it
+            memory.addMessage(botId, playerId, text, 'person', DM_SPACE_NAME, false);
+            if (memory.getMemory(botId, playerId)?.userUuid !== person.uuid) {
+                withUuid.setUserUuid?.(botId, playerId, person.uuid, !person.isGuest);
+            }
+            let said = false;
+            const keep = () => {
+                if (said) return;
+                said = true;
+                memory.addMessage(botId, playerId, BRICK_IDEAS_TEXT, 'bot', DM_SPACE_NAME);
+            };
+            return { text: BRICK_IDEAS_TEXT, media: [], ideas: true, keep };
+        }
+        // "Make it" on the Brick's own suggestion (#1996): made right away by Orbit, with fixed words, so no model is asked
+        // and nothing is counted. Only a person's first Brick suggests, and only to its owner (Orbit checks whose it is).
+        if (config.brick?.isDefault && hooks.makeOffered && attachments.length === 0) {
+            const offered = hooks.makeOffered;
+            const admin = this.adminApiService;
+            memory.addMessage(botId, playerId, text, 'person', DM_SPACE_NAME, false);
+            let said = false;
+            const keepAs = (words: string) => () => {
+                if (said) return;
+                said = true;
+                memory.addMessage(botId, playerId, words, 'bot', DM_SPACE_NAME);
+            };
+            if (!admin) return { text: BRICK_NOT_MADE_TEXT, media: [], keep: keepAs(BRICK_NOT_MADE_TEXT) };
+            try {
+                const { made, brick } = await admin.makeBrickFor(botId, person.uuid, {
+                    name: offered.name,
+                    ...(offered.line ? { description: offered.line } : {}),
+                    ...(offered.instructions ? { chatInstructions: offered.instructions } : {}),
+                });
+                void admin.answerBrickOffer(botId, person.uuid, offered.topic, 'made');
+                // Remembered in plain words: the link is for the game, not something to repeat later
+                return { text: brickMadeText(brick.name, brick.id, made), media: [], keep: keepAs(brickMadeText(brick.name, undefined, made)), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
+            } catch (error) {
+                console.warn(`[DmReplyService] Bot ${botId} could not make the Brick it suggested:`, error instanceof Error ? error.message : error);
+                return { text: BRICK_NOT_MADE_TEXT, media: [], keep: keepAs(BRICK_NOT_MADE_TEXT) };
+            }
+        }
         // A direct message takes the media its tools made with its answer, so anything still here is from a turn that
         // failed, or was queued in a bubble: it is dropped, never sent with an answer it doesn't belong to. After the
         // uuid is set, because that restores the person's saved memory, queued media included.
@@ -295,6 +533,12 @@ export class DmReplyService extends BaseBehavior {
 
         // Same attachment handling as a bubble: parsed text for the model, image URLs for vision.
         let augmented = text;
+        // "Start a new job" tapped on the card for a job Orbit would not carry on (GPT's sixth answer, finding 6): the tap says only the button's words, so which job it is comes
+        // from the card, in a line that is from the system and not theirs. It is an ORDINARY start: "try again" is not offered in this turn (`newJobAsked` in memory)
+        if (hooks.newJobAsked) {
+            const asked = hooks.newJobAsked.title.replace(/["“”]/g, "'");
+            augmented = `${text}\n[They tapped “Start a new job” on the card for the job "${asked}". Start it now: call use_computer with job "${asked}" and WITHOUT try_again, since it carries nothing on. This line is from the system, not words they typed.]`;
+        }
         let images: string[] = [];
         const read = new Map<string, ParsedFile | null>();
         const [primary, ...gallery] = attachments;
@@ -352,7 +596,7 @@ export class DmReplyService extends BaseBehavior {
             sameFiles;
         if (!alreadyKept) {
             memory.addMessage(botId, playerId, original, 'person', DM_SPACE_NAME, !hooks.note);
-            if (!hooks.note) memory.extractPersonalInfo(botId, playerId, text);
+            if (!hooks.note) memory.extractPersonalInfo(botId, playerId, text, DM_SPACE_NAME);
             noted?.keep();
         }
         // A first message creates the memory after the uuid was set, so it starts as "temp-<id>": name it now, before
@@ -365,9 +609,18 @@ export class DmReplyService extends BaseBehavior {
         const turnMemory = memory.getMemory(botId, playerId);
         if (turnMemory) {
             turnMemory.dmRoomId = hooks.roomId;
+            turnMemory.dmEventId = hooks.eventId;
+            turnMemory.dmEventTs = hooks.eventTs;
             // Only this turn's reply: a card pointed at earlier is not pointed at again by the next message
             turnMemory.pointedArtifacts = hooks.pointedArtifactIds ?? [];
             turnMemory.pendingArtifacts = [];
+            turnMemory.pendingBricks = [];
+            // An offer of a failed turn (a stream that set it and threw) is not shown under a later reply
+            delete turnMemory.pendingNewJob;
+            // They tapped "Start a new job" (finding 6): this turn starts that job afresh, so carrying one on is not offered in
+            // it. Written here, after the memory exists and the person's saved memory is in place, and only for this turn.
+            if (hooks.newJobAsked) turnMemory.newJobAsked = { title: hooks.newJobAsked.title };
+            else delete turnMemory.newJobAsked;
         }
 
         const context = memory.getConversationContext(botId, playerId);
@@ -379,12 +632,23 @@ export class DmReplyService extends BaseBehavior {
         let promptTokens = 0;
         let completionTokens = 0;
         let providerFailed = false;
+        let toolSignIn: ToolSignInCard | undefined;
+        let toolSignInDelivery: ToolSignInDelivery | undefined;
         // The bot's own "Show tool calls" switch (#742) decides whether this reply shows its steps line (#1545)
         let steps: ReplySteps | undefined;
         let showSteps: boolean | undefined;
         const showStepsNow = async () => {
             if (steps && hooks.onSteps) await hooks.onSteps(steps.field(), steps.text());
         };
+        // The App the person just connected is the first thing the line says, shown whatever the bot's tool-calls switch says
+        // (it is what they did, not a call the bot made), as in the mock: "Connected Google Calendar · Used Find Events"
+        if (hooks.connectedApp && hooks.onSteps) {
+            const id = `app-connected-${hooks.connectedApp.app}`;
+            steps = new ReplySteps();
+            steps.start([{ id, doing: `Connecting ${hooks.connectedApp.name}`, done: `Connected ${hooks.connectedApp.name}`, group: id }]);
+            steps.finish([{ id, ok: true }]);
+            await showStepsNow();
+        }
         const stopSteps = async () => {
             if (!steps) return;
             steps.stop();
@@ -430,9 +694,15 @@ export class DmReplyService extends BaseBehavior {
                     if (steps?.finish(chunk.toolStepResults)) await showStepsNow();
                     continue;
                 }
+                if (chunk.toolSignIn) {
+                    toolSignIn = chunk.toolSignIn;
+                    toolSignInDelivery = chunk.toolSignInDelivery;
+                    continue;
+                }
                 // A reply limit: nothing was said and nothing is remembered as said
                 if (chunk.replyLimit) {
                     await stopSteps();
+                    toolSignInDelivery?.(false);
                     return { text: '', media: [], replyLimit: chunk.replyLimit };
                 }
                 if (chunk.content) fullMessage = appendStreamedChunk(fullMessage, chunk.content);
@@ -447,11 +717,14 @@ export class DmReplyService extends BaseBehavior {
         } catch (error) {
             console.error(`[DmReplyService] AI error for bot ${botId}:`, error);
             await stopSteps();
+            // The reply failed before the card could go with it: it is shown at a later reply
+            toolSignInDelivery?.(false);
             return { text: '', media: [], failed: true };
         }
         if (providerFailed) {
             console.error(`[DmReplyService] AI provider failed for bot ${botId}; the answer so far is dropped`);
             await stopSteps();
+            toolSignInDelivery?.(false);
             return { text: '', media: [], failed: true };
         }
 
@@ -507,12 +780,18 @@ export class DmReplyService extends BaseBehavior {
             replyText = withoutRoomCardMark(replyText);
         } catch (error) {
             await stopSteps();
+            toolSignInDelivery?.(false);
             throw error;
         }
         // Kept only once it was sent: if sending fails the person's message stays the last thing said, so a retry
         // answers it afresh instead of seeing a reply they never got.
         let kept = false;
-        const keep = () => {
+        // The computer jobs this reply names are confirmed to Orbit once it is delivered to the person's chat (the bridge calls `keep` after a send without error), never before. A reply that
+        // failed or was not sent never calls it, and a newer message drops them
+        const confirmations = memory.getMemory(botId, playerId)?.computerConfirmations;
+        const keep = (eventId?: string) => {
+            // Only the event Matrix accepted (its id) confirms the jobs whose lines it carries: a send that was suppressed, or that gave no id, confirmed nothing
+            if (replyText.trim()) void confirmations?.deliver(eventId);
             if (kept || !replyText) return;
             kept = true;
             memory.addMessage(botId, playerId, replyText, 'bot', DM_SPACE_NAME);
@@ -528,6 +807,24 @@ export class DmReplyService extends BaseBehavior {
         const playerMemory = memory.getMemory(botId, playerId);
         const media = playerMemory?.pendingMedia?.splice(0) ?? [];
         const artifacts = playerMemory?.pendingArtifacts?.splice(0) ?? [];
+        let bricks = playerMemory?.pendingBricks?.splice(0) ?? [];
+        // Orbit refused to carry a job on: the button that starts it afresh (finding 6). Taken whatever the words are, and sent only with words of some kind (below)
+        const newJob = playerMemory?.pendingNewJob;
+        if (playerMemory) delete playerMemory.pendingNewJob;
+        // A Brick it made with no words around it (the model said nothing else): the fixed line, so the person still gets
+        // its chat one tap away instead of a "couldn't answer" note
+        const madeOne = bricks.find((note) => note.kind === 'made');
+        if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
+        // A reply that names a computer job but has no words of its own (the model made only a card or a file) says so in one fixed sentence: the job is confirmed to Orbit only once the person
+        // received an event that tells them of it, so there is always one
+        // Every job this reply names has its fixed status line APPENDED to the reply's own words, built from what Orbit really said of it (started, waiting and not started yet, still going, done,
+        // ended), in the SAME text event: that event is the only one that confirms those jobs. The model's own sentence can say anything (or something else: "The clock is ready.")
+        const lines = confirmations?.tell() ?? [];
+        replyText = withJobLines(replyText, lines);
+        // A suggestion goes out only with words, and Orbit is asked about it only as its card is sent (claimOffer)
+        if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer' && note.kind !== 'app');
+        const claimOffer = this.offerClaim(bricks, botId, person.uuid);
+        const claimApp = this.appClaim(bricks, botId, person.uuid);
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
@@ -545,7 +842,61 @@ export class DmReplyService extends BaseBehavior {
             const made = this.aiService?.madeFor(item.originalUrl, item.url) ?? null;
             void chatFileKeeper.keepAll(admin, [sentMediaJob({ ...item, mimeType: item.mimeType || null, caption: item.caption || null }, where, made)]);
         };
-        return { text: replyText, media, keep, mediaSent, ...(roomLink ? { roomLink } : {}), ...(artifacts.length ? { artifacts } : {}) };
+        return {
+            text: replyText,
+            media,
+            keep,
+            mediaSent,
+            ...(roomLink ? { roomLink } : {}),
+            ...(artifacts.length ? { artifacts } : {}),
+            ...(bricks.length ? { bricks } : {}),
+            ...(newJob && replyText.trim() ? { newJob } : {}),
+            ...(claimOffer ? { claimOffer } : {}),
+            ...(claimApp ? { claimApp } : {}),
+            ...(toolSignIn ? { toolSignIn, ...(toolSignInDelivery ? { toolSignInDelivery } : {}) } : {}),
+        };
+    }
+
+    /**
+     * Asks Orbit whether this reply's suggestion may be shown now (once per person and topic, on every device), and
+     * says the topic as Orbit keeps it, or null to leave the card out. Called by whoever sends the card, right before
+     * it does, so a turn that failed, came back empty or was never sent never uses up a topic the person was not shown
+     * (#1996). Asks once however often it is called.
+     */
+    private offerClaim(bricks: BrickNote[], botId: string, userId: string): (() => Promise<string | null>) | undefined {
+        const offer = bricks.find((note): note is BrickOfferNote => note.kind === 'offer');
+        const admin = this.adminApiService;
+        if (!offer || !admin) return undefined;
+        let asked: Promise<string | null> | undefined;
+        return () =>
+            (asked ??= admin
+                .claimBrickOffer(botId, userId, offer.topic)
+                .then((claim) => (claim.show ? claim.topic : null))
+                .catch((error: unknown) => {
+                    console.warn('[DmReplyService] Could not ask Orbit about a Brick suggestion:', error instanceof Error ? error.message : error);
+                    return null;
+                }));
+    }
+
+    /**
+     * The same for an App offer (game #2001): one the person asked for by name needs no asking, and any other is shown once per
+     * person and App, as Orbit keeps it, so "Not now" holds on every device.
+     */
+    private appClaim(bricks: BrickNote[], botId: string, userId: string): (() => Promise<string | null>) | undefined {
+        const offer = bricks.find((note): note is AppOfferNote => note.kind === 'app');
+        const admin = this.adminApiService;
+        if (!offer) return undefined;
+        if (offer.asked) return () => Promise.resolve(offer.topic);
+        if (!admin) return undefined;
+        let asked: Promise<string | null> | undefined;
+        return () =>
+            (asked ??= admin
+                .claimBrickOffer(botId, userId, offer.topic)
+                .then((claim) => (claim.show ? claim.topic : null))
+                .catch((error: unknown) => {
+                    console.warn('[DmReplyService] Could not ask Orbit about an App offer:', error instanceof Error ? error.message : error);
+                    return null;
+                }));
     }
 
     /**

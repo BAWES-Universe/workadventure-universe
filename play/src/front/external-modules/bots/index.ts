@@ -12,10 +12,14 @@ import { gameManager } from "../../Phaser/Game/GameManager";
 import { wokaMenuStore, type WokaMenuData, type WokaMenuAction } from "../../Stores/WokaMenuStore";
 import { warningMessageStore } from "../../Stores/ErrorStore";
 import { refreshThisDeviceOnce } from "../../Notification/Push/PushDevice";
+import { provideOwnPosition } from "../../Chat/Bricks/BrickVisitStore";
+import { provideBrickLocator } from "../../Chat/Bricks/BrickHomeStore";
+import { addTemplateAction } from "../../Chat/Bricks/Templates/TemplateCardAction";
 import { getBotServerUrl } from "./services/BotServerUrl";
 import { botApiService } from "./services/BotApiService";
 import { summonFailureLine, type SummonFailure } from "./services/summonFailure";
 import { destroyBotEditorTool } from "./phaser/BotEditorTool";
+import { waitForPlace } from "./waitForPlace";
 import { IconMapPin, IconRobot } from "@wa-icons";
 
 const BOT_EDITOR_TOOL_NAME = "BotEditor" as EditorToolName;
@@ -788,6 +792,72 @@ function setupBotEditor(options: ExtensionModuleOptions) {
     }
 }
 
+/**
+ * Has the bot server put the Brick this person brought along beside them on this room's map (game #2005), once they are
+ * signed in and the game has their place. The Brick stays where the person is brought along or walks in; nothing happens
+ * for a guest, who brings nobody along.
+ */
+function ownPlace(): { x: number; y: number } | undefined {
+    const player = gameManager.getCurrentGameScene()?.CurrentPlayer;
+    return player ? { x: player.x, y: player.y } : undefined;
+}
+
+/** Points the camera at a Brick the game has been sent (the Brick page's "Show on map"); false when it is not among them. */
+function showBrick(brickId: string): boolean {
+    const scene = gameManager.getCurrentGameScene();
+    if (!scene) return false;
+    for (const player of scene.MapPlayersByKey.values()) {
+        if (player.userUuid !== `bot-${brickId}`) continue;
+        scene.getCameraManager().setPosition({ x: player.x, y: player.y }, 500);
+        return true;
+    }
+    return false;
+}
+
+/** Points the camera at a spot of this room's map: where a Brick that lives here stands, when the game has not been sent it. */
+function showSpot(spot: { x: number; y: number }): boolean {
+    const scene = gameManager.getCurrentGameScene();
+    if (!scene) return false;
+    scene.getCameraManager().setPosition(spot, 500);
+    return true;
+}
+
+function putVisitingBrickBeside(): void {
+    // The Brick page brings a Brick along from where the person stands, and shows one that lives here
+    provideOwnPosition(ownPlace);
+    provideBrickLocator(showBrick, showSpot);
+    // A Brick that dropped off the map while its person is still here is put back beside them
+    botApiService.setOwnPlaceProvider(ownPlace);
+    const sync = () => {
+        // The player's sprite is made a moment after the room loads: the Brick appears where they stand, once the game knows
+        // where that is. Never without it: the bot server would not put the Brick on the map
+        stopWaitingForPlace?.();
+        stopWaitingForPlace = waitForPlace(ownPlace, (place) => {
+            stopWaitingForPlace = undefined;
+            void botApiService.syncVisitingBrick(place, { entry: true });
+        });
+    };
+    // One wait at a time: a room entered again replaces the wait of the one before
+    stopWaitingToSignIn?.();
+    stopWaitingToSignIn = undefined;
+    stopWaitingForPlace?.();
+    stopWaitingForPlace = undefined;
+    if (get(userIsConnected)) {
+        sync();
+        return;
+    }
+    let done = false;
+    const unsubscribe = userIsConnected.subscribe((connected) => {
+        if (!connected || done) return;
+        done = true;
+        sync();
+    });
+    stopWaitingToSignIn = unsubscribe;
+}
+
+let stopWaitingToSignIn: (() => void) | undefined;
+let stopWaitingForPlace: (() => void) | undefined;
+
 // Function to notify bot-server when player enters room (for all users, authenticated or not)
 function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
     // Initialize API service with minimal config (just for bot-server calls)
@@ -800,6 +870,8 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
         // Notify bot-server that a player entered the room (spawns bots)
         // This should happen for ALL users, not just authenticated ones
         console.log(`[Bot Extension] Notifying room enter for: ${options.roomId}`);
+        // The Brick the person brought along walks into this room with them (game #2005): signed-in people only
+        putVisitingBrickBeside();
         botApiService
             .notifyRoomEnter(options.roomId)
             .then(() => {
@@ -819,11 +891,15 @@ function notifyRoomEnterForAllUsers(options: ExtensionModuleOptions) {
 }
 
 // Store registered actions per RemotePlayer UUID so we can add them when menu opens
-const registeredActionsByUuid = new Map<string, WokaMenuAction[]>();
+/** Exported for tests. */
+export const registeredActionsByUuid = new Map<string, WokaMenuAction[]>();
 
 // Subscribe to wokaMenuStore to add our actions when menu is initialized
 let wokaMenuUnsubscriber: (() => void) | null = null;
-let lastProcessedMenu: { userUuid: string; actionCount: number } | null = null;
+let lastProcessedMenu: { userUuid: string; actionCount: number; shown: number } | null = null;
+// The card whose template button was asked for (`shown`: the store's own count of that card's opening, so the same person's card
+// replaced by another, a search card by the avatar's card, asks again), and the opening it was asked under
+let templateAsked: { userUuid: string; shown: number; opening: number } | null = null;
 
 // Counts the menus opened, so an answer that arrives after the card was closed (or reopened) adds nothing to it
 let wokaMenuOpening = 0;
@@ -836,13 +912,15 @@ const summonAnswers = new CardAnswers(
     (answer) => (answer.allowed === null ? 0 : CARD_ANSWER_KEPT_MS)
 );
 
-function setupWokaMenuHook() {
+/** Exported for tests. */
+export function setupWokaMenuHook() {
     if (wokaMenuUnsubscriber) return; // Already set up
 
     wokaMenuUnsubscriber = wokaMenuStore.subscribe((menuData: WokaMenuData | undefined) => {
         // When the menu is cleared, an answer still on its way adds nothing
         if (!menuData) {
             lastProcessedMenu = null;
+            templateAsked = null;
             wokaMenuOpening++;
             return;
         }
@@ -850,20 +928,32 @@ function setupWokaMenuHook() {
         // Only process if this is a fresh menu initialization
         // Fresh menu = actions array is empty (just initialized)
         // AND we haven't already processed this exact menu state
-        const currentState = { userUuid: menuData.userUuid, actionCount: menuData.actions.length };
+        const currentState = {
+            userUuid: menuData.userUuid,
+            actionCount: menuData.actions.length,
+            shown: menuData.opening,
+        };
         const isNewMenu =
             menuData.userUuid &&
             menuData.actions.length === 0 &&
             (!lastProcessedMenu ||
                 lastProcessedMenu.userUuid !== currentState.userUuid ||
+                lastProcessedMenu.shown !== currentState.shown ||
                 lastProcessedMenu.actionCount !== 0);
 
         if (isNewMenu) {
+            // A bot that shares a template offers "Use template" on its card whether or not Summon was registered for it yet (a bot
+            // can appear between two registration polls): asked once for each card that opens, under the opening of that card
+            if (templateAsked?.userUuid !== menuData.userUuid || templateAsked.shown !== menuData.opening) {
+                const asked = { userUuid: menuData.userUuid, shown: menuData.opening, opening: ++wokaMenuOpening };
+                templateAsked = asked;
+                addTemplateAction(menuData.userUuid, () => asked.opening === wokaMenuOpening);
+            }
             const actions = registeredActionsByUuid.get(menuData.userUuid);
-            if (actions && actions.length > 0) {
+            if (actions && actions.length > 0 && templateAsked) {
                 // Mark as processed immediately
                 lastProcessedMenu = currentState;
-                const opening = ++wokaMenuOpening;
+                const opening = templateAsked.opening;
 
                 // Check if "Summon" action already exists (safety check)
                 const hasSummon = menuData.actions.some((a) => a.actionName === "Summon");
@@ -1256,6 +1346,13 @@ const botExtensionModule: ExtensionModule = {
         // Don't clear lastRoomIdWhenEditorWasOpen - we need it to detect room changes
         // when the editor is reopened after navigating to a new map
         // Also, don't clear botEditorOpen state - we'll check if tool is still selected in init()
+
+        // The waits of the room that is left (for the sign-in, for the player's sprite) end with it: they would post an entry sync for a
+        // room the person is no longer in
+        stopWaitingToSignIn?.();
+        stopWaitingToSignIn = undefined;
+        stopWaitingForPlace?.();
+        stopWaitingForPlace = undefined;
 
         // Notify bot-server that player left the room (may despawn bots if room is empty)
         if (_extensionOptions?.roomId && botApiService.isInitialized()) {

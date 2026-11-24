@@ -5,7 +5,7 @@ import type { ResponseWithUserIdentifier } from "../middlewares/Authenticated";
 import { authenticated } from "../middlewares/Authenticated";
 import { PerUserRateLimiter } from "../services/LinkPreviewService";
 import { ArtifactsError, artifactsService, CHANGE_SCOPES, OPEN_SCOPES } from "../services/ArtifactsService";
-import type { ArtifactViewer } from "../services/ArtifactsService";
+import type { ArtifactPayRequest, ArtifactViewer } from "../services/ArtifactsService";
 import { socketManager } from "../services/SocketManager";
 import { isBubbleSpaceName } from "../services/SpaceJoinPolicy";
 import { BaseHttpController } from "./BaseHttpController";
@@ -32,6 +32,40 @@ const ViewerBody = z.object({ chat: Chat.optional() });
 const InChatBody = z.object({ chat: Chat, offset: z.number().int().min(0).max(1_000_000).optional() });
 const OwnedBody = z.object({ offset: z.number().int().min(0).max(1_000_000).optional() });
 const RestoreBody = z.object({ chat: Chat.optional(), number: z.number().int().min(1) });
+const PayBody = z
+    .object({
+        chat: Chat.optional(),
+        start: z.boolean().optional(),
+        order: z.string().min(1).max(100).optional(),
+        /** The window's own id for one purchase wish (never the page's): the same one again finds the order it made. */
+        intentId: z
+            .string()
+            .regex(/^[A-Za-z0-9_-]{8,64}$/)
+            .optional(),
+        /** Check payment: where the order made for `intentId` stands. */
+        check: z.boolean().optional(),
+        /** Restore purchase: this buyer's verified paid order for the page's offer. */
+        restore: z.boolean().optional(),
+        /** What a guest's window keeps for them (Orbit stores only its hash), and the code of a receipt link they opened. Orbit checks their form. */
+        recoveryCode: z.string().max(200).optional(),
+        receiptCode: z.string().max(200).optional(),
+    })
+    .strict();
+/**
+ * One thing at a time: a checkout, a look at an order, a check of a wish, or a restore. A check is about one wish, and a wish
+ * only goes with a start or a check. Null for anything else.
+ */
+export function parsePayBody(
+    raw: unknown
+): { chat: z.infer<typeof Chat> | undefined; request: ArtifactPayRequest } | null {
+    const body = PayBody.safeParse(raw);
+    if (!body.success) return null;
+    const { chat, ...request } = body.data;
+    if ([request.start, request.order, request.check, request.restore].filter(Boolean).length > 1) return null;
+    if (request.check && !request.intentId) return null;
+    if (request.intentId && !request.start && !request.check) return null;
+    return { chat, request };
+}
 const ShareBody = z
     .object({
         chat: Chat.optional(),
@@ -58,7 +92,7 @@ export function viewerOf(
 
 function sendError(res: Response, error: unknown, what: string): void {
     if (error instanceof ArtifactsError) {
-        res.status(error.status).json({ error: error.code });
+        res.status(error.status).json({ error: error.code, ...(error.unsure ? { unsure: true } : {}) });
         return;
     }
     // Never the artifact or the person: only that it broke
@@ -79,11 +113,13 @@ export class ArtifactController extends BaseHttpController {
          *   post:
          *     description: Opens a live artifact for the signed token's person. Answers with the artifact, the version to
          *       show (the latest unless one is asked for), the address its file is served from, and what the person may do.
+         *       The address of a "Just you" artifact is for this one opening, and `urlLifeMs` says how long it goes on working.
          *     responses:
          *       200:
          *         description: The artifact and what the person may do with it
          *       404:
-         *         description: No such artifact, or the person may not open it
+         *         description: No such artifact, or the person may not open it ("kept_private" when its owner keeps it
+         *           to themselves and the person is in the chat it was made in)
          *       429:
          *         description: Too many requests; try again in a minute
          */
@@ -106,6 +142,9 @@ export class ArtifactController extends BaseHttpController {
             res.status(200).send("");
         });
         this.app.options("/artifacts/:id/share", (req: Request, res: Response) => {
+            res.status(200).send("");
+        });
+        this.app.options("/artifacts/:id/pay", (req: Request, res: Response) => {
             res.status(200).send("");
         });
 
@@ -230,7 +269,7 @@ export class ArtifactController extends BaseHttpController {
          * @openapi
          * /artifacts/{id}/share:
          *   post:
-         *     description: The owner says who can open it ("chat" or "link") and who can ask for changes ("owner" or
+         *     description: The owner says who can open it ("me", "chat" or "link") and who can ask for changes ("owner" or
          *       "openers"), one or both. Answers with the artifact as it now is.
          *     responses:
          *       200:
@@ -241,6 +280,9 @@ export class ArtifactController extends BaseHttpController {
          *         description: The person may open it but is not its owner
          *       404:
          *         description: No such artifact, or the person may not open it
+         *       503:
+         *         description: '"me" was asked for and Orbit cannot keep files private as it is set up
+         *           ("private_files_not_configured"); nothing changed'
          */
         this.app.post(
             "/artifacts/:id/share",
@@ -254,6 +296,35 @@ export class ArtifactController extends BaseHttpController {
                 });
             }
         );
+
+        /**
+         * @openapi
+         * /artifacts/{id}/pay:
+         *   post:
+         *     description: The payment side of a page that takes payments (game #2044). With neither `start` nor `order`,
+         *       answers { enabled }. `start: true` starts a checkout for the amount its owner set (the body holds no amount)
+         *       and answers { orderId, checkoutUrl, app }; with the window's own `intentId` a start sent again finds the order
+         *       it made. `order` answers where that order stands { status, checkoutUrl, testPayment, pollAfterMs }. `check`
+         *       (with `intentId`) answers the same for the order that wish made, and `restore` answers { status: paid | checking
+         *       | none } for this buyer's purchase. A guest's window sends its `recoveryCode`. Whoever may open the artifact may pay on it.
+         *     responses:
+         *       200:
+         *         description: What was asked
+         *       404:
+         *         description: No such artifact, or the person may not open it
+         *       409:
+         *         description: Payments are unavailable on this page ("unavailable")
+         *       429:
+         *         description: Too many tries ("limit"), or too many requests
+         */
+        this.app.post("/artifacts/:id/pay", [authenticated], async (req: Request, res: ResponseWithUserIdentifier) => {
+            await this.answer(req, res, "pay on", async (viewer, id) => {
+                const parsed = parsePayBody(req.body ?? {});
+                if (!parsed) throw new ArtifactsError("invalid_request", 400);
+                const { chat, request } = parsed;
+                return artifactsService.pay(id, request, viewer(chat));
+            });
+        });
     }
 
     private async answer(

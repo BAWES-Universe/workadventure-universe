@@ -18,12 +18,27 @@ import type { RemoteParticipant, RemoteTrack, RemoteTrackPublication } from '@li
 import type { Counters } from './counters.ts';
 import { TTS_RATE } from './audioFormat.ts';
 import { type Mode, modeListens, modePlays } from './protocol.ts';
-import type { InputSink, OutputFrame, OutputTarget } from './transport.ts';
+import type { InputSink, OutputFrame, OutputTarget, Reach } from './transport.ts';
 
 const CONNECT_TIMEOUT_MS = 15000;
 /** Audio the media stack may hold for the bot's track. Short, so a stop leaves little to play out. */
 const OUTPUT_QUEUE_MS = 200;
 const INPUT_RATE = 16000;
+/**
+ * How long after the last frame of a reply for one person alone some of it may still be on its way out: what the bot's
+ * track holds (`OUTPUT_QUEUE_MS`) and a moment more for the media stack.
+ */
+const PRIVATE_TAIL_MS = OUTPUT_QUEUE_MS + 300;
+/**
+ * Asking again for a microphone the bot was subscribed to before. The media server this repository runs (livekit-server
+ * 1.8.4) may never deliver a subscription asked for again more than about a second after it was dropped; dropping the
+ * ask and making it again a moment later brings it (#2011; newer servers deliver it the first time). So when a microphone the
+ * bot heard before has not come back by RESUBSCRIBE_CHECK_MS, the bot asks again, at most RESUBSCRIBE_TRIES times, each
+ * time waiting twice as long, and only while the person may still be heard.
+ */
+const RESUBSCRIBE_CHECK_MS = 1000;
+const RESUBSCRIBE_GAP_MS = 100;
+const RESUBSCRIBE_TRIES = 3;
 
 export interface RoomDeps {
     counters: Counters;
@@ -43,6 +58,17 @@ export class RoomTransport implements OutputTarget {
     private readonly people = new Map<string, Mode>();
     private source?: AudioSource;
     private readonly readers = new Map<string, AudioStream>();
+    /** The person the last frames of a reply for one person alone were for, and until when some may still be on the way out. */
+    private privateFor?: string;
+    private privateUntil = 0;
+    /** Publications the bot has been subscribed to at some point, by track sid: asking for them again is watched. */
+    private readonly heardBefore = new Set<string>();
+    /**
+     * A watched ask again, by track sid: its timer and how many times it has been made again. `watching`: the bot asked and waits to see
+     * the microphone arrive. `gap`: it let go of the subscription and waits to ask once more; a microphone that arrives then belongs
+     * to the ask before, which is already undone.
+     */
+    private readonly asking = new Map<string, { timer: NodeJS.Timeout; tries: number; phase: 'watching' | 'gap' }>();
 
     constructor(readonly epoch: number, private readonly serverUrl: string, private readonly token: string, private readonly deps: RoomDeps) {}
 
@@ -51,6 +77,9 @@ export class RoomTransport implements OutputTarget {
         room.on(RoomEvent.TrackPublished, (publication, participant) => this.consider(participant, publication));
         room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => this.onSubscribed(track, publication, participant));
         room.on(RoomEvent.TrackUnsubscribed, (track) => this.stopReading(track.sid ?? ''));
+        // Someone connected to the room: whatever is still held of a reply that was for another person alone is dropped
+        // at once (#1993). The game has named them before this (see `setPeople`), so this is the second guard
+        room.on(RoomEvent.ParticipantConnected, (participant) => this.keepPrivateFrom(participant.identity));
         room.on(RoomEvent.Disconnected, () => {
             if (!this.gone) this.deps.onGone(this, 'closed');
         });
@@ -84,10 +113,15 @@ export class RoomTransport implements OutputTarget {
         this.deps.onConnected(this);
     }
 
-    /** Replaces who the bot may hear. Tracks of anyone no longer named are dropped at once. */
+    /**
+     * Replaces who the bot may hear: the people the game says are in the bubble. Tracks of anyone no longer named are
+     * dropped at once. Someone newly named is in the bubble from now on, whether or not they have connected to the
+     * room yet: what is still held of a reply for another person alone is dropped before they can take any of it.
+     */
     setPeople(people: { participantId: string; mode: Mode }[]): void {
         this.people.clear();
         for (const person of people) this.people.set(person.participantId, person.mode);
+        for (const person of people) this.keepPrivateFrom(person.participantId);
         this.reconcile();
     }
 
@@ -124,9 +158,53 @@ export class RoomTransport implements OutputTarget {
         if (this.gone) return;
         const wanted =
             publication.kind === TrackKind.KIND_AUDIO && publication.source === TrackSource.SOURCE_MICROPHONE && this.mayHear(participant.identity);
+        const sid = publication.sid ?? '';
+        if (!wanted) this.stopAsking(sid);
         if (wanted === publication.subscribed) return;
+        // Already asked again and being watched: the watch makes the next ask
+        if (wanted && this.asking.has(sid)) return;
         publication.setSubscribed(wanted);
         this.deps.counters.inc(wanted ? 'room_subscribed' : 'room_unsubscribed');
+        if (wanted && this.heardBefore.has(sid)) this.watchAsk(participant, publication, 0);
+    }
+
+    /** Checks that a microphone asked for again arrives, and asks once more when it has not (see RESUBSCRIBE_CHECK_MS). */
+    private watchAsk(participant: RemoteParticipant, publication: RemoteTrackPublication, tries: number): void {
+        const sid = publication.sid ?? '';
+        const timer = setTimeout(() => {
+            this.asking.delete(sid);
+            // Arrived, no longer wanted, or the bot has left: nothing to do
+            if (this.gone || publication.subscribed || !this.stillPublished(participant, sid) || !this.mayHear(participant.identity)) return;
+            if (tries >= RESUBSCRIBE_TRIES) {
+                this.deps.counters.inc('room_resubscribe_gave_up');
+                return;
+            }
+            this.deps.counters.inc('room_resubscribe_retries');
+            publication.setSubscribed(false);
+            const again = setTimeout(() => {
+                this.asking.delete(sid);
+                // Not "already subscribed": the media server sets that before it says so, so a late arrival from the ask before shows it here,
+                // while the unsubscribe asked for above is still on its way and would leave the microphone off with nothing to ask again
+                if (this.gone || !this.stillPublished(participant, sid) || !this.mayHear(participant.identity)) return;
+                publication.setSubscribed(true);
+                this.watchAsk(participant, publication, tries + 1);
+            }, RESUBSCRIBE_GAP_MS);
+            again.unref?.();
+            this.asking.set(sid, { timer: again, tries, phase: 'gap' });
+        }, RESUBSCRIBE_CHECK_MS * 2 ** tries);
+        timer.unref?.();
+        this.asking.set(sid, { timer, tries, phase: 'watching' });
+    }
+
+    private stillPublished(participant: RemoteParticipant, sid: string): boolean {
+        return this.room.remoteParticipants.get(participant.identity)?.trackPublications.has(sid) === true;
+    }
+
+    private stopAsking(sid: string): void {
+        const ask = this.asking.get(sid);
+        if (!ask) return;
+        clearTimeout(ask.timer);
+        this.asking.delete(sid);
     }
 
     private onSubscribed(track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant): void {
@@ -138,6 +216,9 @@ export class RoomTransport implements OutputTarget {
             publication.setSubscribed(false);
             return;
         }
+        // The microphone arrived: the watch for it is over. Not the wait to ask once more, which a late arrival from the ask before must not cancel
+        if (this.asking.get(publication.sid ?? '')?.phase !== 'gap') this.stopAsking(publication.sid ?? '');
+        this.heardBefore.add(publication.sid ?? '');
         const stream = new AudioStream(track, { sampleRate: INPUT_RATE, numChannels: 1 });
         this.readers.set(sid, stream);
         void this.read(stream, participant.identity, sid);
@@ -167,6 +248,11 @@ export class RoomTransport implements OutputTarget {
         this.readers.delete(sid);
     }
 
+    /** Who the media server has told the bot is connected to the room besides itself, for tests and status. */
+    participants(): string[] {
+        return [...this.room.remoteParticipants.values()].map((participant) => participant.identity);
+    }
+
     /** What the bot is subscribed to right now, for tests and status. */
     subscriptions(): { identity: string; source: TrackSource | undefined; kind: TrackKind | undefined }[] {
         const out: { identity: string; source: TrackSource | undefined; kind: TrackKind | undefined }[] = [];
@@ -180,14 +266,53 @@ export class RoomTransport implements OutputTarget {
 
     // ---- outbound ----
 
-    plays(): boolean {
+    plays(onlyFor?: string): boolean {
         if (this.gone || !this.connected || !this.deps.voiceActive()) return false;
+        if (onlyFor !== undefined) {
+            const mode = this.people.get(onlyFor);
+            return mode !== undefined && modePlays(mode);
+        }
         for (const mode of this.people.values()) if (modePlays(mode)) return true;
         return false;
     }
 
-    sendFrame(frame: OutputFrame): void {
-        if (!this.plays() || !this.source) return;
+    /**
+     * The bot has one track here, and everyone connected to the room can take it. So what goes into it reaches a person
+     * alone only while nobody else is in the bubble and nobody else is connected to the room.
+     *
+     * Who is in the bubble is what the game says (`setPeople`), and it comes first: the game names a newcomer before
+     * they can connect to the room. The room's own list is asked too (another bot, anyone the game did not name), but
+     * it cannot be the only guard: the media server tells the bot about someone who sends nothing a few seconds late.
+     * With that person not connected, the room reaches them not at all.
+     */
+    reach(participantId: string): Reach {
+        for (const named of this.people.keys()) if (named !== participantId) return 'shared';
+        let there = false;
+        for (const participant of this.room.remoteParticipants.values()) {
+            if (participant.identity !== participantId) return 'shared';
+            there = true;
+        }
+        return there ? 'alone' : 'elsewhere';
+    }
+
+    /** Someone else is here now (named by the game, or connected to the room): nothing of a reply for another person alone is left to be sent out. */
+    private keepPrivateFrom(identity: string): void {
+        if (this.privateFor === undefined || identity === this.privateFor || performance.now() > this.privateUntil) return;
+        this.source?.clearQueue();
+        this.deps.counters.inc('room_private_cleared');
+    }
+
+    sendFrame(frame: OutputFrame, onlyFor?: string): void {
+        if (!this.plays(onlyFor) || !this.source) return;
+        if (onlyFor !== undefined) {
+            // Checked here again, at the moment the frame is handed over, whatever the caller saw a moment ago
+            if (this.reach(onlyFor) !== 'alone') {
+                this.deps.counters.inc('private_frames_refused');
+                return;
+            }
+            this.privateFor = onlyFor;
+            this.privateUntil = performance.now() + PRIVATE_TAIL_MS;
+        }
         const samples = new Int16Array(frame.pcm24k);
         this.source.captureFrame(new AudioFrame(samples, TTS_RATE, 1, samples.length)).catch(() => this.deps.counters.inc('room_out_errors'));
         this.deps.counters.inc('room_frames_out');
@@ -200,6 +325,7 @@ export class RoomTransport implements OutputTarget {
     async stop(): Promise<void> {
         this.gone = true;
         this.connected = false;
+        for (const sid of [...this.asking.keys()]) this.stopAsking(sid);
         for (const sid of [...this.readers.keys()]) this.stopReading(sid);
         await this.disconnectQuietly();
         try {

@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { onDestroy } from "svelte";
-    import LL from "../../../i18n/i18n-svelte";
+    import { onDestroy, onMount } from "svelte";
+    import LL, { locale } from "../../../i18n/i18n-svelte";
     import type { ArtifactCoWebsite } from "../../WebRtc/CoWebsite/ArtifactCoWebsite";
     import {
         ArtifactRequestError,
@@ -15,6 +15,8 @@
         type OpenedArtifact,
     } from "../../Artifacts/ArtifactApi";
     import { artifactBadge } from "../../Artifacts/artifactBadge";
+    import { pagePayments } from "../../Artifacts/PagePayments";
+    import { describePayLine, type PayAction } from "../../Artifacts/payLineView";
     import { nearbyPeopleNames } from "../../Artifacts/nearbyPeople";
     import type { ArtifactKind } from "../../Artifacts/artifactCard";
     import { whenLabel } from "../../Artifacts/whenLabel";
@@ -23,6 +25,7 @@
     import { versionMenuRoom, VERSION_MENU_MIN_ROOM } from "../../Artifacts/versionMenuRoom";
     import { chatOwnSheetHeightStore } from "../../Chat/ChatSheetStore";
     import { windowSize } from "../../Stores/CoWebsiteStore";
+    import { localUserStore } from "../../Connection/LocalUserStore";
     import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
@@ -48,6 +51,21 @@
     const MAX_CODE_LINES = 4000;
     /** How long Copy link reads "Link copied", as on the invite bar. */
     const COPIED_FOR_MS = 3000;
+    /** A "Just you" address is asked for again this long before it stops, or a tenth of its life if that is less. */
+    const RENEW_LEAD_MS = 60_000;
+    /** Never asked for again sooner than this, however short its life. */
+    const RENEW_MIN_WAIT_MS = 10_000;
+    /** A new address that could not be fetched is asked for again after this long. */
+    const RENEW_RETRY_MS = 30_000;
+    /** The longest wait a browser's timer takes. */
+    const MAX_TIMER_MS = 2 ** 31 - 1;
+    /** How the artifacts' server says its owner keeps one to themselves, to someone in the chat it was made in. */
+    const KEPT_PRIVATE = "kept_private";
+    /**
+     * How it says "Just you" cannot be had from it as it is: it is set up without what private files need, or it does not
+     * know the choice yet. Nothing changed then.
+     */
+    const NO_PRIVATE_FILES = ["private_files_not_configured", "invalid_open_scope"];
 
     const id = actualCowebsite.artifactId;
     const versionStore = actualCowebsite.version;
@@ -57,7 +75,8 @@
     let panelWidth = 0;
     let panelHeight = 0;
     let phase: "opening" | "ready" | "failed" = "opening";
-    let failure: "gone" | "offline" = "offline";
+    /** `private`: its owner keeps it to themselves ("Just you"), said to someone in the chat it was made in. */
+    let failure: "gone" | "private" | "offline" = "offline";
     let opened: OpenedArtifact | undefined;
     let versions: ArtifactVersionInfo[] | undefined;
     let versionsFailed = false;
@@ -92,10 +111,100 @@
     let attempt = 0;
     let textAttempt = 0;
     let destroyed = false;
+    /**
+     * When the address on show stops working. A "Just you" artifact opens at an address made for that one opening
+     * (game #1994); every other address goes on working, and has none.
+     */
+    let addressEndsAt: number | undefined;
+    let renewTimer: ReturnType<typeof setTimeout> | undefined;
+    /** Counts the times the version on show was opened again: only the answer to the last one is used. */
+    let renewal = 0;
+    /** A renewal was asked for while another opening was on its way, and is still wanted if that one does not come on show. */
+    let renewWhenFree = false;
+    /** An opening started while a version was on show, and dropped its renewal: set when it starts, cleared when it comes on show. */
+    let renewalDropped = false;
+    /** Counts the openings that came on show: a checkout asked for by the page of one is never told to the page of another. */
+    let opening = 0;
+    /** The address on show has stopped and a new one is on its way: nothing is drawn from the old one meanwhile. */
+    let addressOver = false;
+
+    // A page that takes payments asks for its checkout by message (game #2044); only this window's own frame is listened to
+    let frameElement: HTMLIFrameElement | null | undefined;
+    // Whether the page in the frame on show has loaded: a frame has a window before its page is there, and a payment result
+    // sent in that time reaches nobody. Cleared each time the frame is drawn again (a new element, or another address).
+    let frameLoaded = false;
+    let frameDrawn: { element: HTMLIFrameElement | null | undefined; url: string | null | undefined } | undefined;
+    function watchFrame(element: HTMLIFrameElement | null | undefined, url: string | null | undefined) {
+        if (frameDrawn && frameDrawn.element === element && frameDrawn.url === url) return;
+        frameDrawn = { element, url };
+        frameLoaded = false;
+    }
+    $: watchFrame(frameElement, opened?.version.url);
+    const payments = pagePayments({
+        artifactId: id,
+        chat: () => actualCowebsite.chat,
+        frame: () => frameElement?.contentWindow,
+        loaded: () => frameLoaded,
+        opening: () => opening,
+        openWindow: () => window.open("about:blank", "_blank"),
+        // A signed-in buyer's account is the buyer; a guest's own recovery code is (kept in this browser, for this page)
+        buyer: () => (localUserStore.isLogged() ? "account" : "guest"),
+        // A guest's receipt link opens Orbit's public page, which only exists for a page anyone with the link may open
+        pageUrl: () => (openScope === "link" ? link : undefined),
+    });
+    const payLine = payments.line;
+    // The line under the page: what it says and what can be pressed (the approved mock M1)
+    let receiptCopied = false;
+    // The receipt link, shown to be selected by hand when the browser would not copy it: it is the guest's way back to the purchase on another device
+    let receiptByHand: string | undefined;
+    let receiptTimer: ReturnType<typeof setTimeout> | undefined;
+    $: if (!$payLine.paid) {
+        receiptCopied = false;
+        receiptByHand = undefined;
+    }
+    $: payView = describePayLine(
+        $payLine,
+        { copied: receiptCopied, locale: $locale, owner: opened?.you.owner ? { maker: makerName } : undefined },
+        $LL.chat.artifacts
+    );
+    function payAction(action: PayAction) {
+        if (action.kind === "check") payments.checkPayment();
+        else if (action.kind === "restore") payments.restorePurchase();
+        else if (action.kind === "copy") copyReceipt();
+    }
+    function copyReceipt() {
+        const receipt = payments.receiptLink();
+        if (!receipt) return;
+        // The paid line this copy was started from: a guest's receipt link is the same for every checkout of this page, so it is the line that tells
+        // whether the outcome still belongs to what the buyer sees
+        const copiedFrom = $payLine.paid;
+        const copying = navigator.clipboard?.writeText(receipt) ?? Promise.reject(new Error("No clipboard"));
+        copying.then(
+            () => {
+                // Only for the line that was being copied from: a new checkout may have taken the line since
+                if (destroyed || $payLine.paid !== copiedFrom) return;
+                receiptByHand = undefined;
+                receiptCopied = true;
+                if (receiptTimer) clearTimeout(receiptTimer);
+                receiptTimer = setTimeout(() => (receiptCopied = false), 8_000);
+            },
+            () => {
+                if (destroyed || $payLine.paid !== copiedFrom) return;
+                receiptByHand = receipt;
+            }
+        );
+    }
+    onMount(() => {
+        window.addEventListener("message", payments.onMessage);
+        return () => window.removeEventListener("message", payments.onMessage);
+    });
 
     onDestroy(() => {
+        payments.destroy();
         destroyed = true;
         if (copiedTimer) clearTimeout(copiedTimer);
+        if (receiptTimer) clearTimeout(receiptTimer);
+        renewIn(undefined);
     });
 
     $: compact = panelWidth > 0 && panelWidth < COMPACT_WIDTH;
@@ -143,6 +252,8 @@
             if (opened) {
                 request++;
                 phase = "ready";
+                // The opening that was cancelled had dropped the renewal of the one on show
+                lookAfterRenewal();
             }
             return;
         }
@@ -156,6 +267,13 @@
 
     async function load(version: number | undefined) {
         const mine = ++request;
+        // A renewal of the version on show that is still on its way is out of date from the moment another opening starts:
+        // if it answers "kept private" while this opening is still loading, it must not put away the opening that is coming.
+        // One that is only waiting for its time is cancelled too, and renewAddress does nothing until this opening ends.
+        renewal++;
+        renewIn(undefined);
+        // A version on show (if any) lost its renewal: it is set up again if this opening does not come on show
+        renewalDropped = true;
         switchFailed = false;
         // A failed restore was about the version that was showing
         restoreFailed = false;
@@ -165,6 +283,13 @@
             if (destroyed || mine !== request) return;
             opened = answer;
             shownNumber = answer.version.number;
+            // What this opening shows is newer than any renewal of a version that was on show before it: that one is not used,
+            // also when the same version is on show again (1, then 2, then 1)
+            renewal++;
+            renewWhenFree = false;
+            // This opening brings its own address and timer (watchAddress below): nothing was dropped that needs setting up again
+            renewalDropped = false;
+            opening++;
             text = undefined;
             textFailed = false;
             summaryStore.set({
@@ -174,15 +299,23 @@
             });
             // What the window shows is now a concrete version, so a card for it can show as open.
             if ($versionStore !== answer.version.number) versionStore.set(answer.version.number);
+            watchAddress(answer.version);
             phase = "ready";
         } catch (error) {
             if (destroyed || mine !== request) return;
-            failure = error instanceof ArtifactRequestError && error.status === 404 ? "gone" : "offline";
+            failure = failureOf(error);
+            if (failure === "private") {
+                // Its owner made it "Just you" while it was open here: what was showing goes too
+                putAway("private");
+                return;
+            }
             if (opened) {
                 // Another version could not be opened: keep the one showing, and say so.
                 switchFailed = true;
                 versionStore.set(opened.version.number);
                 phase = "ready";
+                // A renewal of the one showing that was due or on its way was dropped when this opening started: look after it again
+                lookAfterRenewal();
                 return;
             }
             phase = "failed";
@@ -200,12 +333,134 @@
         }
     }
 
+    function failureOf(error: unknown): "gone" | "private" | "offline" {
+        if (!(error instanceof ArtifactRequestError) || error.status !== 404) return "offline";
+        return error.code === KEPT_PRIVATE ? "private" : "gone";
+    }
+
+    /** This person can no longer open it: what was showing is put away, and the window says why. */
+    function putAway(why: "gone" | "private") {
+        request++;
+        forgetAddress();
+        opened = undefined;
+        shownNumber = undefined;
+        text = undefined;
+        menuOpen = false;
+        shareOpen = false;
+        failure = why;
+        phase = "failed";
+    }
+
     function retry() {
+        forgetAddress();
         opened = undefined;
         shownNumber = undefined;
         textFailed = false;
         phase = "opening";
         attempt++;
+    }
+
+    function forgetAddress() {
+        renewIn(undefined);
+        addressEndsAt = undefined;
+        addressOver = false;
+    }
+
+    /** The version on show was left without its renewal while another opening was on its way: set one up again. */
+    function lookAfterRenewal() {
+        // Nothing was dropped (the opening came on show, or the version was never opened again): the timer in place is the right one
+        if (!renewalDropped) return;
+        renewalDropped = false;
+        // A page whose address stopped (addressOver) waits behind the loading line for the renewal that this opening cut off: it is set up again at once
+        if (opened && (renewWhenFree || addressOver || (opened.version.url !== null && opened.version.urlHasMedia))) {
+            renewIn(addressOver ? 0 : renewWait(opened.version));
+        }
+        renewWhenFree = false;
+    }
+
+    /**
+     * How long until the version on show is to be renewed: from when its address stops (known, whatever happened to its timer meanwhile),
+     * the same lead watchAddress uses; at once when that time has come. Only a renewal with no address end to go by waits the quick retry.
+     */
+    function renewWait(version: ArtifactVersionInfo): number {
+        const life = version.urlLifeMs;
+        if (addressEndsAt === undefined || life === undefined || !version.urlHasMedia) return RENEW_RETRY_MS;
+        return Math.max(0, addressEndsAt - Math.min(RENEW_LEAD_MS, life / 10) - Date.now());
+    }
+
+    /** Opens the version on show again after `wait`, in place of any wait already set; with none, never. */
+    function renewIn(wait: number | undefined) {
+        if (renewTimer) clearTimeout(renewTimer);
+        renewTimer = wait === undefined ? undefined : setTimeout(() => void renewAddress(), wait);
+    }
+
+    // A "Just you" artifact opens at an address made for that one opening, which stops after a while. A page with songs,
+    // pictures or videos beside it goes on fetching them from there, so it is opened again at a new address just before
+    // that. Any other page has all it needs already and is left alone: it is opened again only when its frame is drawn
+    // again, by the game (toggleCode) or, after the address stopped, by the browser (redrawIfStopped).
+    function watchAddress(version: ArtifactVersionInfo) {
+        forgetAddress();
+        const life = version.urlLifeMs;
+        if (version.url === null || life === undefined) return;
+        addressEndsAt = Date.now() + life;
+        if (!version.urlHasMedia) return;
+        const wait = Math.max(RENEW_MIN_WAIT_MS, life - Math.min(RENEW_LEAD_MS, life / 10));
+        if (wait <= MAX_TIMER_MS) renewIn(wait);
+    }
+
+    function addressStopped(): boolean {
+        return addressEndsAt !== undefined && Date.now() >= addressEndsAt;
+    }
+
+    /** The version on show is opened again where it is, quietly: its address stopped, or its files moved. */
+    async function renewAddress() {
+        renewIn(undefined);
+        if (destroyed || shownNumber === undefined) return;
+        // Another version is being opened: that one brings its own address; a renewal asked for meanwhile waits for its end
+        if (phase === "opening") {
+            renewWhenFree = true;
+            return;
+        }
+        const turn = ++renewal;
+        const number = shownNumber;
+        // Dropped when another version came on show meanwhile, it was put away, or it was asked for again
+        const stale = () => destroyed || turn !== renewal || shownNumber !== number;
+        try {
+            const answer = await fetchArtifact(id, actualCowebsite.chat, number);
+            if (stale()) return;
+            opened = answer;
+            watchAddress(answer.version);
+        } catch (error) {
+            if (stale()) return;
+            const why = failureOf(error);
+            if (why === "offline") {
+                console.warn("Could not open an artifact again at a new address", error);
+                renewIn(RENEW_RETRY_MS);
+            } else {
+                putAway(why);
+            }
+        }
+    }
+
+    /** Nothing is drawn from the address in hand any more: the version on show waits for a new one. */
+    function drawFromNewAddress() {
+        addressOver = true;
+        void renewAddress();
+    }
+
+    // The browser draws the frame (or the drawing) again by itself. From an address that has stopped it shows nothing,
+    // so nothing is drawn until it is opened again at a new one.
+    function redrawIfStopped() {
+        if (addressStopped()) drawFromNewAddress();
+    }
+
+    // The frame has loaded: what a checkout ended with while the buyer was in Code view (it has no frame then) is told to it now.
+    // From an address that has stopped it shows nothing, so it waits for the frame of the new one.
+    function onFrameLoad() {
+        // From an address that has stopped it shows nothing: it is not a page that can hear anything
+        frameLoaded = !addressStopped();
+        if (frameLoaded) payments.frameReady();
+        redrawIfStopped();
     }
 
     // The list drops down from the button. On a phone the window sits behind the chat, so the list ends above the chat,
@@ -271,8 +526,10 @@
     }
 
     // Saved at once, one choice at a time: the list shows the choice while it is on its way, and goes back if it fails.
-    function setSharing(change: ArtifactOpenScope) {
+    // `otherwise` is the choice to save instead when "Just you" cannot be had from the artifacts' server as it is.
+    function setSharing(change: ArtifactOpenScope, otherwise?: ArtifactOpenScope) {
         if (!opened || pendingShare || change === opened.artifact.openScope) return;
+        const before = opened.artifact.openScope;
         pendingShare = change;
         shareFailed = false;
         copied = "no";
@@ -280,23 +537,37 @@
             (artifact) => {
                 if (destroyed) return;
                 pendingShare = undefined;
-                if (opened) {
-                    opened = {
-                        ...opened,
-                        artifact: {
-                            ...opened.artifact,
-                            openScope: artifact.openScope,
-                        },
-                    };
-                }
+                if (!opened) return;
+                opened = {
+                    ...opened,
+                    artifact: {
+                        ...opened.artifact,
+                        openScope: artifact.openScope,
+                    },
+                };
+                // To or from "Just you" its files move, and the address they had stops: the version on show is opened
+                // again where they are now. A document is drawn from its text, and has no address.
+                if ((before === "me" || artifact.openScope === "me") && kind !== "markdown") void renewAddress();
             },
             (error) => {
-                console.warn("Could not change who can open an artifact", error);
                 if (destroyed) return;
                 pendingShare = undefined;
+                if (otherwise && error instanceof ArtifactRequestError && NO_PRIVATE_FILES.includes(error.code)) {
+                    setSharing(otherwise);
+                    return;
+                }
+                console.warn("Could not change who can open an artifact", error);
                 shareFailed = true;
             }
         );
+    }
+
+    // Away from the chat it was made in, the first choice reads "Just you" for both ways of keeping it: with its chat,
+    // where nobody else is, and to its owner alone. Picked after "Anyone with the link" it keeps the file itself to its
+    // owner, so what the link gave out stops for good, and its line says so. Where that cannot be had, it goes back to
+    // its chat, as before.
+    function pickJustYou() {
+        if (openScope === "link") setSharing("me", "chat");
     }
 
     function copyLink() {
@@ -375,6 +646,9 @@
     function toggleCode() {
         codeOn = !codeOn;
         retryText();
+        // Back from the Code view the game draws the frame again itself. A private address is made for one drawing, and
+        // not every browser keeps what ties a locked frame to it, so the frame is drawn from a new one.
+        if (!codeOn && addressEndsAt !== undefined) drawFromNewAddress();
     }
 
     $: codeLines = text ? codeLinesOf(text.content) : [];
@@ -462,7 +736,7 @@
 
     {#if switchFailed}
         <div class="old-note" role="alert" data-testid="artifactSwitchFailed">
-            <span>{failure === "gone" ? $LL.chat.artifacts.cantOpen() : $LL.chat.artifacts.cantReach()}</span>
+            <span>{failure === "offline" ? $LL.chat.artifacts.cantReach() : $LL.chat.artifacts.cantOpen()}</span>
         </div>
     {/if}
 
@@ -473,11 +747,15 @@
                 <span>{$LL.chat.artifacts.opening()}</span>
             </div>
         {:else if phase === "failed"}
-            <div class="state" role="alert">
+            <div class="state" role="alert" data-testid="artifactFailed" data-failure={failure}>
                 <IconAlertTriangle font-size="28" />
-                <b>{failure === "gone" ? $LL.chat.artifacts.cantOpen() : $LL.chat.artifacts.cantReach()}</b>
+                <b>{failure === "offline" ? $LL.chat.artifacts.cantReach() : $LL.chat.artifacts.cantOpen()}</b>
                 <span
-                    >{failure === "gone" ? $LL.chat.artifacts.cantOpenHelp() : $LL.chat.artifacts.cantReachHelp()}</span
+                    >{failure === "private"
+                        ? $LL.chat.artifacts.keptPrivate()
+                        : failure === "gone"
+                        ? $LL.chat.artifacts.cantOpenHelp()
+                        : $LL.chat.artifacts.cantReachHelp()}</span
                 >
                 {#if failure === "offline"}
                     <button type="button" class="quiet" on:click={retry}
@@ -523,9 +801,18 @@
                         <div class="state" role="status"><IconLoader font-size="28" class="spin" /></div>
                     {/if}
                 </div>
+            {:else if opened.version.url === null || addressOver}
+                <!-- No address to draw it from yet: a new one is on its way. Never from anywhere else. -->
+                <div class="state" role="status"><IconLoader font-size="28" class="spin" /></div>
             {:else if kind === "svg"}
                 <!-- A picture cannot run anything, whatever the drawing holds. -->
-                <img class="drawing" src={opened.version.url} alt={title} referrerpolicy="no-referrer" />
+                <img
+                    class="drawing"
+                    src={opened.version.url}
+                    alt={title}
+                    referrerpolicy="no-referrer"
+                    on:error={redrawIfStopped}
+                />
             {:else}
                 <!-- The locked box: its scripts run, but the page has no origin of its own, no network except common
                      libraries, and no way into the game. The address is outside the game's own. -->
@@ -536,7 +823,57 @@
                     referrerpolicy="no-referrer"
                     allow=""
                     data-testid="artifactFrame"
+                    bind:this={frameElement}
+                    on:load={onFrameLoad}
                 />
+                {#if payView}
+                    <div class="pay-line" class:closable={payView.closable} role="status" data-testid="artifactPayLine">
+                        {#if payView.closable}
+                            <button
+                                type="button"
+                                class="pay-x"
+                                aria-label={$LL.chat.artifacts.payClose()}
+                                data-testid="artifactPayClose"
+                                on:click={() => payments.dismiss()}>×</button
+                            >
+                        {/if}
+                        <p class="pay-a">{payView.title}</p>
+                        {#if payView.sub}<p class="pay-s">{payView.sub}</p>{/if}
+                        {#if payView.actions.length > 0}
+                            <div class="pay-acts">
+                                {#each payView.actions as action (action.kind)}
+                                    {#if action.kind === "resume"}
+                                        <a
+                                            class="pay-btn"
+                                            class:cta={action.style === "primary"}
+                                            href={action.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            data-testid="artifactPayContinue">{action.label}</a
+                                        >
+                                    {:else}
+                                        <button
+                                            type="button"
+                                            class="pay-btn"
+                                            class:cta={action.style === "primary"}
+                                            disabled={action.kind === "copy" && action.disabled === true}
+                                            data-testid="artifactPay-{action.kind}"
+                                            on:click={() => payAction(action)}>{action.label}</button
+                                        >
+                                    {/if}
+                                {/each}
+                            </div>
+                        {/if}
+                        {#if receiptByHand}
+                            <p class="pay-s" role="alert">{$LL.chat.artifacts.copyFailed()}</p>
+                            <code
+                                class="link-text"
+                                aria-label={$LL.chat.artifacts.payReceiptLinkLabel()}
+                                data-testid="artifactReceiptText">{receiptByHand}</code
+                            >
+                        {/if}
+                    </div>
+                {/if}
             {/if}
         {/if}
     </div>
@@ -551,30 +888,59 @@
             {#if shareOpen}
                 <b class="menu-title" id="artifact-open-scope-{id}">{$LL.chat.artifacts.whoCanOpen()}</b>
                 <div class="choices" role="radiogroup" aria-labelledby="artifact-open-scope-{id}">
-                    <button
-                        type="button"
-                        role="radio"
-                        class="choice"
-                        class:picked={openScope === "chat"}
-                        aria-checked={openScope === "chat"}
-                        disabled={!!pendingShare}
-                        data-testid="artifactOpenChat"
-                        on:click={() => setSharing("chat")}
-                    >
-                        {#if inItsChat}
+                    {#if inItsChat}
+                        <button
+                            type="button"
+                            role="radio"
+                            class="choice"
+                            class:picked={openScope === "me"}
+                            aria-checked={openScope === "me"}
+                            disabled={!!pendingShare}
+                            data-testid="artifactOpenMe"
+                            on:click={() => setSharing("me")}
+                        >
+                            <span class="menu-text"
+                                ><b>{$LL.chat.artifacts.justYou()}</b><small>{$LL.chat.artifacts.justYouOnly()}</small
+                                ></span
+                            >
+                            <span class="radio" />
+                        </button>
+                        <button
+                            type="button"
+                            role="radio"
+                            class="choice"
+                            class:picked={openScope === "chat"}
+                            aria-checked={openScope === "chat"}
+                            disabled={!!pendingShare}
+                            data-testid="artifactOpenChat"
+                            on:click={() => setSharing("chat")}
+                        >
                             <span class="menu-text"
                                 ><b>{$LL.chat.artifacts.openChat()}</b>{#if $peopleHere?.length}<small
                                         data-testid="artifactOpenChatPeople">{$peopleHere.join(", ")}</small
                                     >{/if}</span
                             >
-                        {:else}
+                            <span class="radio" />
+                        </button>
+                    {:else}
+                        <button
+                            type="button"
+                            role="radio"
+                            class="choice"
+                            class:picked={openScope !== "link"}
+                            aria-checked={openScope !== "link"}
+                            disabled={!!pendingShare}
+                            data-testid="artifactOpenChat"
+                            on:click={pickJustYou}
+                        >
                             <span class="menu-text" data-testid="artifactOpenJustYou"
-                                ><b>{$LL.chat.artifacts.justYou()}</b>{#if justYouHelp}<small>{justYouHelp}</small
-                                    >{/if}</span
+                                ><b>{$LL.chat.artifacts.justYou()}</b>{#if openScope !== "chat"}<small
+                                        data-testid="artifactOpenJustYouOnly">{$LL.chat.artifacts.justYouOnly()}</small
+                                    >{:else if justYouHelp}<small>{justYouHelp}</small>{/if}</span
                             >
-                        {/if}
-                        <span class="radio" />
-                    </button>
+                            <span class="radio" />
+                        </button>
+                    {/if}
                     <button
                         type="button"
                         role="radio"
@@ -631,6 +997,8 @@
                     {/if}
                 {:else if openScope === "chat" && inItsChat}
                     <p class="menu-note">{$LL.chat.artifacts.openChatNote()}</p>
+                {:else if openScope === "me" && inItsChat}
+                    <p class="menu-note" data-testid="artifactJustYouNote">{$LL.chat.artifacts.justYouNote()}</p>
                 {/if}
             {:else}
                 <b class="menu-title">{$LL.chat.artifacts.versions()}</b>
@@ -691,6 +1059,81 @@
         min-height: 0;
         background: #0a0814;
         overflow: auto;
+    }
+    .pay-line {
+        position: absolute;
+        bottom: max(12px, env(safe-area-inset-bottom));
+        left: 50%;
+        z-index: 2;
+        display: grid;
+        gap: 8px;
+        max-width: calc(100% - 24px);
+        padding: 12px 16px;
+        border-radius: 16px;
+        background: #15121f;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        font-size: 14px;
+        color: #f3f1fa;
+        text-align: center;
+        transform: translateX(-50%);
+    }
+    .pay-line.closable {
+        padding-right: 44px;
+    }
+    .pay-line p {
+        margin: 0;
+    }
+    .pay-a {
+        font-weight: 600;
+    }
+    .pay-s {
+        font-size: 13px;
+        line-height: 1.4;
+        color: #b3acc7;
+    }
+    .pay-acts {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 4px;
+    }
+    .pay-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        font: inherit;
+        font-weight: 700;
+        color: #fff;
+        text-decoration: none;
+        cursor: pointer;
+    }
+    .pay-btn.cta {
+        border-color: transparent;
+        background: linear-gradient(90deg, #8629fc, #4156f6);
+    }
+    .pay-btn:disabled {
+        cursor: default;
+        opacity: 0.7;
+    }
+    .pay-x {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border: 0;
+        background: transparent;
+        font-size: 20px;
+        color: rgba(255, 255, 255, 0.6);
+        cursor: pointer;
     }
     iframe {
         display: block;

@@ -27,11 +27,9 @@ describe('replyProblem (#1498)', () => {
         expect(replyProblem({ ...quiet, finishReason: 'STOP' })).toBe('no words and no tool call: it stopped (stop), 0 tokens used, 0 on thinking');
     });
 
-    it('puts the provider error first, with its status', () => {
-        expect(replyProblem({ ...quiet, error: true, errorStatus: 400, errorText: 'OpenAI API error: 400 max_tokens too large' })).toBe(
-            'the provider failed (400): OpenAI API error: 400 max_tokens too large'
-        );
-        expect(replyProblem({ ...quiet, error: true, answered: true })).toBe('the provider failed: the answer stopped before it finished');
+    it('puts the provider error first, with its status only', () => {
+        expect(replyProblem({ ...quiet, error: true, errorStatus: 400 })).toBe('the provider failed (400)');
+        expect(replyProblem({ ...quiet, error: true, answered: true })).toBe('the provider failed');
     });
 });
 
@@ -62,6 +60,35 @@ describe('providerErrorText', () => {
         expect(providerErrorText(new Error("This model's maximum context length is 8192 tokens"))).toBe(
             "This model's maximum context length is 8192 tokens"
         );
+    });
+
+    it('does not hold the event loop on a very long run of letters (a refusal read up to the bound), and still drops a login and a key in the same text', () => {
+        const started = Date.now();
+        const text = providerErrorText(`${'x'.repeat(65_536)} https://me:hunter2@llm.example.com/v1 sk-proj-abcDEF1234567890xyz`);
+        // This took about four seconds when the run was tried from every letter
+        expect(Date.now() - started).toBeLessThan(1000);
+        expect(text).toContain('[redacted]');
+        expect(text).not.toContain('hunter2');
+        // the long run of x is itself taken for a key, so the key must be shown gone on its own
+        expect(text).not.toContain('sk-proj-abcDEF1234567890xyz');
+        expect(providerErrorText(`${'x'.repeat(50_000)} see https://me:hunter2@llm.example.com/v1`)).not.toContain('hunter2');
+        expect(providerErrorText('abc https://me:hunter2@host/x and ftp://u:p@h/y')).toBe('abc https://[redacted]@host/x and ftp://[redacted]@h/y');
+    });
+
+    it('drops a login after punctuation, and in a long run of scheme characters, without trying every character of the run', () => {
+        expect(providerErrorText('failed: ...https://me:hunter2@host/x')).toBe('failed: ...https://[redacted]@host/x');
+        expect(providerErrorText('(https://me:hunter2@host/x)')).toBe('(https://[redacted]@host/x)');
+        expect(providerErrorText('see ,ftp://u:hunter2@h/y')).toBe('see ,ftp://[redacted]@h/y');
+        // a run of scheme characters that no token pattern takes whole (a `.` breaks it), short enough that the login stays inside the 200 characters kept
+        const scheme = 'a+.-'.repeat(10);
+        expect(providerErrorText(` ...${scheme}://me:hunter2@host/x`)).toBe(`...${scheme}://[redacted]@host/x`);
+        const started = Date.now();
+        const run = 'a+.-'.repeat(20_000);
+        // the same run, very long: it must not hold the loop (what is kept of it is cut at 200 characters, so only the time is judged here)
+        expect(providerErrorText(` ...${run}://me:hunter2@host/x`)).not.toContain('hunter2');
+        // many starts in one text stay linear
+        expect(providerErrorText('x://a@'.repeat(5_000))).not.toContain('a@');
+        expect(Date.now() - started).toBeLessThan(2000);
     });
 
     it('reads a plain string and an empty error', () => {

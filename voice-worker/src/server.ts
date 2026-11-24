@@ -11,10 +11,12 @@ import { Latency } from './latency.ts';
 import { DEEPGRAM_ADAPTER, DEFAULT_DEEPGRAM_FINAL_TIMEOUT_MS, DeepgramRecognition } from './deepgram.ts';
 import { FAKE_ADAPTER, FakeSpeech } from './fakeSpeech.ts';
 import type { IceConfig } from './lane.ts';
-import type { BotToWorker } from './protocol.ts';
+import { FEATURES, type BotToWorker } from './protocol.ts';
 import type { RecognizerFactory } from './recognizer.ts';
 import type { RoomTransport } from './roomTransport.ts';
 import { type OutgoingMessage, Session } from './session.ts';
+import { SpeechObserver, type SpeechObserverSettings } from './speechObserver.ts';
+import type { YieldPolicy } from './yieldControl.ts';
 import type { InputSink } from './transport.ts';
 import { ASSEMBLYAI_ADAPTER, AssemblyAiRecognition } from './assemblyai.ts';
 import { ASYNC_ADAPTER, AsyncSpeech } from './async.ts';
@@ -96,6 +98,14 @@ export interface WorkerOptions {
     maxPreviewSeconds?: number;
     /** How many of those lines are made at once; more are told to come back. Default 8. */
     maxPreviews?: number;
+    /** Internal, off when absent: a second listener that only counts what a speech detector says (speechObserver.ts). It changes nothing anyone hears. */
+    speechObserver?: SpeechObserverSettings;
+    /**
+     * Internal (yieldControl.ts): the bots whose voice pauses on a loud sound and stops only once it is speech, and how.
+     * Only with the speech observer on. No `botIds`: every bot (what the image does by default). With `botIds`, only those
+     * (tests compare a bot with and without it); any other bot keeps today's rule. Not a user setting.
+     */
+    yieldBots?: { botIds?: ReadonlySet<string>; policy: YieldPolicy };
     engineId?: string;
 }
 
@@ -143,9 +153,12 @@ export class VoiceWorker {
     readonly engineId: string;
     private pingTimer?: NodeJS.Timeout;
     private readonly previewer: Previewer;
+    /** Only when the worker was started with it. */
+    private readonly observer?: SpeechObserver;
 
     constructor(readonly options: WorkerOptions) {
         this.engineId = options.engineId ?? `voice-worker-${process.pid}`;
+        if (options.speechObserver) this.observer = new SpeechObserver({ ...options.speechObserver, counters: this.counters });
         // Each real provider is one file registered by name; a registry passed in (tests) keeps what it already has
         this.connectors = options.connectors ?? new ConnectorRegistry();
         if (!this.connectors.speech(FAKE_ADAPTER)) this.connectors.registerSpeech(FAKE_ADAPTER, this.speech);
@@ -311,6 +324,7 @@ export class VoiceWorker {
         this.wss.close();
         this.server.closeAllConnections();
         await Promise.allSettled([...this.connections].map((c) => c.shutdown()));
+        await this.observer?.dispose();
         await new Promise((resolve) => this.server.close(resolve));
     }
 
@@ -323,6 +337,11 @@ export class VoiceWorker {
     /** What every bot's LiveKit participant is subscribed to right now (for tests: it must only ever be permitted microphones). */
     roomSubscriptions(): ReturnType<RoomTransport['subscriptions']> {
         return [...this.connections].flatMap((c) => c.roomSubscriptions());
+    }
+
+    /** Who the media server has told the worker is connected to its rooms, besides the bot. */
+    roomParticipants(): string[] {
+        return [...this.connections].flatMap((c) => c.roomParticipants());
     }
 
     sessionCount(): number {
@@ -350,6 +369,7 @@ export class VoiceWorker {
             uptimeSeconds: Math.round(process.uptime()),
             counters: this.counters.snapshot(),
             latency: this.latency.snapshot(),
+            ...(this.observer ? { speechObserver: this.observer.stats() } : {}),
         };
     }
 
@@ -373,8 +393,10 @@ export class VoiceWorker {
         return Math.round(value * 10) / 10;
     }
 
-    sessionHost(send: (message: OutgoingMessage) => void) {
+    sessionHost(send: (message: OutgoingMessage) => void, sessionId?: string) {
         return {
+            ...(this.observer && sessionId !== undefined ? { observerFor: this.observer.session.bind(this.observer, sessionId) } : {}),
+            ...(this.observer && this.options.yieldBots ? { yieldPolicyFor: (botId: string) => (!this.options.yieldBots!.botIds || this.options.yieldBots!.botIds.has(botId) ? this.options.yieldBots!.policy : undefined) } : {}),
             engineId: this.engineId,
             counters: this.counters,
             latency: this.latency,
@@ -541,6 +563,10 @@ class BridgeConnection {
         return [...this.sessions.values()].flatMap((s) => s.room?.subscriptions() ?? []);
     }
 
+    roomParticipants(): string[] {
+        return [...this.sessions.values()].flatMap((s) => s.room?.participants() ?? []);
+    }
+
     ping(): void {
         if (!this.alive) {
             this.worker.counters.inc('bridge_ping_timeouts');
@@ -610,7 +636,7 @@ class BridgeConnection {
                     return;
                 }
                 // The providers are read once, when the session starts; a repeated session.open does not change them
-                session = new Session(msg.sessionId, msg.bubbleId, msg.botId, this.worker.sessionHost((m) => this.send(msg.sessionId, m)), undefined, {
+                session = new Session(msg.sessionId, msg.bubbleId, msg.botId, this.worker.sessionHost((m) => this.send(msg.sessionId, m), msg.sessionId), undefined, {
                     recognition: msg.recognition,
                     speech: msg.speech,
                     expression: msg.expression,
@@ -619,7 +645,7 @@ class BridgeConnection {
                 this.sessions.set(msg.sessionId, session);
                 this.worker.counters.inc('sessions_opened');
             }
-            this.send(msg.sessionId, { type: 'session.start', bubbleId: session.bubbleId, mode: session.defaultMode, engine: { id: this.worker.engineId, kind: 'ts' } });
+            this.send(msg.sessionId, { type: 'session.start', bubbleId: session.bubbleId, mode: session.defaultMode, engine: { id: this.worker.engineId, kind: 'ts' }, features: [...FEATURES] });
             return;
         }
         const session = this.sessions.get(msg.sessionId);
@@ -650,7 +676,7 @@ class BridgeConnection {
                 session.setMode(msg.mode, msg.participantId, msg.requestId);
                 break;
             case 'bot.say':
-                session.say(msg.segmentId, msg.text, msg.maxMs, msg.lang);
+                session.say(msg.segmentId, msg.text, msg.maxMs, msg.lang, msg.onlyFor);
                 break;
             case 'bot.retract':
                 session.retract(msg.segmentId);

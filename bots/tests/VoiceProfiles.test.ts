@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { PrivateEventPusherToFront } from '@workadventure/messages';
 import { BotSpeech } from '../voice/BotSpeech';
-import { VoiceCalls, type GameSide, type LinkHandlers } from '../voice/VoiceCalls';
+import { RECONNECT_DELAYS_MS, VoiceCalls, type GameSide, type LinkHandlers } from '../voice/VoiceCalls';
 import { VOICE_BOT_TAG } from '../voice/VoiceBotTag';
 import { hearingTerms } from '../voice/VoiceTerms';
 import type { FromWorker, ToWorker } from '../voice/protocol';
@@ -252,7 +252,6 @@ describe('a bot that does not speak answers in text', () => {
         ['its key is down', (s) => (s.active.alice = notSpeaking('key-down'))],
         ['Orbit says it speaks but sends no profile', (s) => (s.active.alice = speaking({ profile: null }))],
         ['Orbit does not know the bot', (s) => (s.active.alice = null)],
-        ['Orbit cannot be reached', (s) => (s.active.alice = new Error('connect ECONNREFUSED'))],
         ['Orbit will not serve a provider to this bot', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = null))],
         ['Orbit cannot be asked for a provider', (s) => ((s.active.alice = speaking()), (s.providers.ears = new Error('boom')), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA)))],
         ['a provider has no key', (s) => ((s.active.alice = speaking()), (s.providers.ears = provider('ears', 'soniox', KEYS.ears)), (s.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA, { apiKeyEncrypted: null })))],
@@ -281,6 +280,59 @@ describe('a bot that does not speak answers in text', () => {
         o.state.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA);
         await alice.connect();
         expect(alice.opens()).toHaveLength(1);
+    });
+
+    it('tries again by itself when Orbit could not be reached, instead of leaving the person paused for the visit', async () => {
+        const o = orbit();
+        o.state.active.alice = new Error('connect ECONNREFUSED');
+        const alice = bot('alice', o.fake);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            alice.start();
+            alice.signal();
+            await flush();
+            // Nothing opened, their browser lets go, and they see it is on its way back (not paused)
+            expect(alice.sent).toEqual([]);
+            expect(alice.game.disconnects).toEqual(['room_7']);
+            expect(alice.game.statuses.at(-1)).toBe('room_7:connecting');
+            expect(alice.game.starts).toEqual([]);
+            // Orbit answers by the time the bot tries again: the session opens and their browser is asked for a new offer
+            o.state.active.alice = speaking();
+            o.state.providers.ears = provider('ears', 'soniox', KEYS.ears);
+            o.state.providers['voice-a'] = provider('voice-a', 'elevenlabs', KEYS.voiceA);
+            vi.advanceTimersByTime(RECONNECT_DELAYS_MS[0]);
+            await flush();
+            expect(alice.opens()).toHaveLength(1);
+            expect(alice.game.starts).toEqual(['room_7']);
+            expect(alice.calls.hasCall(SPACE, 'room_7')).toBe(true);
+            alice.joined();
+            expect(alice.game.statuses.at(-1)).toBe('room_7:on');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('stays paused once the tries of the visit are used, while Orbit still cannot be reached', async () => {
+        const o = orbit();
+        o.state.active.alice = new Error('connect ECONNREFUSED');
+        const alice = bot('alice', o.fake);
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            alice.start();
+            await flush();
+            for (const wait of RECONNECT_DELAYS_MS) {
+                vi.advanceTimersByTime(wait);
+                await flush();
+            }
+            expect(alice.sent).toEqual([]);
+            expect(alice.game.starts).toHaveLength(RECONNECT_DELAYS_MS.length);
+            expect(alice.game.statuses.at(-1)).toBe('room_7:paused');
+            expect(alice.calls.hasCall(SPACE, 'room_7')).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('does not touch another bot: one bot in text does not stop the next from speaking', async () => {

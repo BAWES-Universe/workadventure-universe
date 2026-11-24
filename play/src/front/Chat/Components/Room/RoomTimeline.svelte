@@ -8,6 +8,7 @@
     import * as Sentry from "@sentry/svelte";
     import { derived, get, readable, writable } from "svelte/store";
     import type { Readable } from "svelte/store";
+    import { openModal } from "svelte-modals";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import type { ChatMessage, ChatRoom, ChatRoomMembershipManagement } from "../../Connection/ChatConnection";
     import getCloseImg from "../../images/get-close.png";
@@ -29,13 +30,19 @@
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import { formatPeopleNames } from "../TopRow/TopRowSummary";
     import { availabilityFromNote, botChatClosed, botHeaderState, botIdFromChatId } from "../../Bots/BotChatStatus";
-    import { botHearsCache, botStatusCache } from "../../Bots/BotStatusStore";
+    import { botCallAccessCache, botHearsCache, botStatusCache } from "../../Bots/BotStatusStore";
+    import CallButton from "../../Bricks/Call/CallButton.svelte";
+    import CallBarHost from "../../Bricks/Call/CallBarHost.svelte";
+    import { botCallStore, callBarInChatStore } from "../../Bricks/Call/CallStore";
+    import { startCallWith } from "../../Bricks/Call/startCallWith";
     import { nextReplyLimitExpiry, shownReplyLimitIds } from "../../Bots/BotReplyLimit";
     import BotStatusNoteCard from "../Bots/BotStatusNoteCard.svelte";
     import BotReplyLimitCard from "../Bots/BotReplyLimitCard.svelte";
     import VoiceDraftCard from "../Bots/VoiceDraftCard.svelte";
     import VoiceListeningRow from "../Bots/VoiceListeningRow.svelte";
     import BotAskCard from "../Bots/BotAskCard.svelte";
+    import BotToolSignInCard from "../Bots/BotToolSignInCard.svelte";
+    import { closeToolSignIn, isToolSignInClosed } from "../../Bots/BotToolSignIn";
     import {
         askBarFits,
         chatAsks,
@@ -72,8 +79,75 @@
     import { mapEditorToolbarInUseStore } from "../../../Stores/MapEditorStore";
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
+    import PrivateReplyNote from "../../Bots/PrivateReplyNote.svelte";
+    import { STARTER_IDEAS } from "../../Bricks/Brick";
+    import {
+        APP_CONNECT,
+        APP_OTHER,
+        BRICK_APP_CARD,
+        BRICK_NEW_JOB_CARD,
+        BRICK_OFFER_CARD,
+        BRICK_STARTERS_CARD,
+        NEW_JOB_START,
+        STARTER_APPS,
+        STARTER_GOAL,
+        STARTER_MAKE,
+        OFFER_MAKE,
+        brickAppCard,
+        brickNewJobCard,
+        brickHello,
+        brickIdeaWords,
+        brickIdeasCard,
+        brickOfferCard,
+        brickStartersCard,
+    } from "../../Bricks/BrickHello";
+    import { connectFromCard } from "../../Bricks/Apps/ChatConnect";
+    import { connectApp } from "../../Bricks/Apps/ConnectApp";
+    import { openAppsPage } from "../../Bricks/Apps/OpenApps";
+    import { signInInPopup } from "../../Bricks/Apps/Reconnect";
+    import { loadMyApps } from "../../Bricks/Apps/AppsStore";
+    import { warningMessageStore } from "../../../Stores/ErrorStore";
+    import BrickMadeLinks from "../../Bricks/BrickMadeLinks.svelte";
+    import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
+    import GuestBrickSignIn from "../../Bricks/GuestBrickSignIn.svelte";
+    import GuestBrickTitle from "../../Bricks/GuestBrickTitle.svelte";
+    import {
+        GUEST_BRICK_ID,
+        GUEST_KEEP_CARD,
+        GUEST_KEEP_YES,
+        guestBrickCard,
+        guestKeepCard,
+        guestStarterWords,
+        guestStartersCard,
+    } from "../../Bricks/GuestBrick";
+    import { guestChatCarrying } from "../../Bricks/GuestBrickCarry";
+    import { drawnGuestChats } from "../../Bricks/GuestBrickMessages";
+    import { bringGuestChatInto, guestBrickShownAt } from "../../Bricks/GuestBrickStore";
+    import { brickChatLinks } from "../../Bricks/BrickChatLink";
+    import KeySheetHost from "../../Bricks/Apps/KeySheetHost.svelte";
+    import { botApiService } from "../../../external-modules/bots/services/BotApiService";
+    import { brickHelloMessage } from "../../Bricks/BrickHelloMessage";
+    import {
+        appCardKey,
+        newJobCardKey,
+        closeBrickCard,
+        closedBrickCards,
+        ideasCardKey,
+        keepCardKey,
+        offerCardKey,
+        startersCardKey,
+    } from "../../Bricks/ClosedBrickCards";
+    import {
+        loadMyBricksAfterPending,
+        myBricksByChatId,
+        myBricksStore,
+        withMyBricks,
+    } from "../../Bricks/MyBricksStore";
+    import { openDirectChatRoom } from "../../Utils";
+    import BrickComputerBar from "../../Bricks/Computer/BrickComputerBar.svelte";
     import Message from "./Message.svelte";
     import StoppedBySpeechNote from "./StoppedBySpeechNote.svelte";
+    import KeptQuietNote from "./KeptQuietNote.svelte";
     import {
         firstShowingIndex,
         keyboardClosed,
@@ -108,14 +182,20 @@
     if (!hasContext(WOKA_BY_CHAT_ID_CONTEXT)) {
         setContext(
             WOKA_BY_CHAT_ID_CONTEXT,
-            createWokaByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, currentChatPeople()?.store)
+            createWokaByChatIdStore(
+                gameManager.getCurrentGameScene().userProviderMerger,
+                withMyBricks(currentChatPeople()?.store)
+            )
         );
     }
     // A direct chat names the other person as they go by in Universe (header and profile).
     if (!hasContext(NAME_BY_CHAT_ID_CONTEXT)) {
         setContext(
             NAME_BY_CHAT_ID_CONTEXT,
-            createNameByChatIdStore(gameManager.getCurrentGameScene().userProviderMerger, currentChatPeople()?.store)
+            createNameByChatIdStore(
+                gameManager.getCurrentGameScene().userProviderMerger,
+                withMyBricks(currentChatPeople()?.store)
+            )
         );
     }
 
@@ -221,11 +301,17 @@
         );
     }
     onDestroy(() => voiceWordsSubscription?.unsubscribe());
+    onDestroy(() => callBarInChatStore.set(false));
     function editVoiceDraft(turnId: string) {
         const words = proximityRoom?.editVoiceDraft(turnId);
         if (words !== undefined) messageInputBarRef?.putText(words);
     }
     $: matrixRoom = room instanceof MatrixChatRoom ? room : undefined;
+    // The Brick for guests (#1997): a chat this device keeps, drawn by the same timeline as every chat
+    $: guestRoom = room instanceof GuestBrickChatRoom ? room : undefined;
+    // What the Brick for guests takes now (plan v3): the same paperclip, GIFs and mic as every bot chat, where its server has them
+    $: guestTakes = guestRoom ? guestRoom.takes : readable({ files: false, notes: false });
+    $: guestBrick = guestRoom ? guestBrickCard($LL, 0) : undefined;
 
     // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
     // map), and what is keyed on this is made again with it. A number, so the same chat set again changes nothing.
@@ -293,11 +379,17 @@
     $: isRoomMessages = shownSession?.id === ROOM_MESSAGES_SESSION_ID;
     // What a bot heard in a voice note is shown inside that note's bubble: its notice is no message of the chat, so it
     // takes no place in a run (the bot's answer after it keeps its name and picture).
+    // The chat a guest brought along when they signed in is drawn as the lines it holds, then the Brick's welcome (#1997)
+    $: drawnStore = drawnGuestChats(messages, LL, () => gameManager.getPlayerName());
+    $: drawnMessages = $drawnStore;
     $: timelineEntries = (
         shownSession
             ? (shownSession.entries as TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>[])
-            : buildTimelineEntries($messages as (ChatMessage & { session?: ProximitySessionMarker })[], $spaceJoinedAt)
-    ).filter((entry) => !entry.message.transcriptNotice);
+            : buildTimelineEntries(
+                  drawnMessages as (ChatMessage & { session?: ProximitySessionMarker })[],
+                  $spaceJoinedAt
+              )
+    ).filter((entry) => !entry.message.transcriptNotice && !entry.message.toolSignIn);
     function isNoticeEntry(entry: TimelineEntry<ChatMessage & { session?: ProximitySessionMarker }>): boolean {
         return (
             ((entry.role === "start" || entry.role === "resume") && entry.message.session !== undefined) ||
@@ -412,6 +504,20 @@
     $: botAvailability = partnerBotId ? botStatusCache.store(partnerBotId) : readable(undefined);
     // The mic shows in a bot's chat only when that bot can hear the note
     $: botHears = partnerBotId ? botHearsCache.store(partnerBotId) : readable(false);
+    // Call: Orbit's rule says yes and the bot has a voice (#2004). The button is not drawn at all otherwise.
+    $: canCall = partnerBotId ? botCallAccessCache.store(partnerBotId) : readable(false);
+    $: callHere = !!$botCallStore && partnerBotId !== undefined && $botCallStore.botId === partnerBotId;
+    // The profile, details, shared items and artifacts pages sit over the conversation and hide the call bar with it, so
+    // then the floating bar carries the call (unless the person is peeking back at the conversation)
+    $: panelOverConversation =
+        ((profileOpen && matrixRoom && $directPartner) ||
+            roomDetailsOpen ||
+            nearbyDetailsOpen ||
+            sharedOpen ||
+            artifactsOpen) &&
+        $chatBackPeekStore !== "conversation";
+    $: callBarInChatStore.set(callHere && !panelOverConversation);
+    $: roomPicture = room.pictureStore;
     $: botState = partnerBotId ? $botAvailability : undefined;
     $: botClosed = botChatClosed(botState);
     $: lastBotMessage = partnerBotId ? [...$messages].reverse().find((message) => !message.isMyMessage) : undefined;
@@ -442,6 +548,24 @@
     // Cards the bot asks one answer with (#1657), in a direct message with a bot. The oldest waiting card is pinned above the
     // message box until it is answered, closed or runs out; the chat keeps the ones that ended, where they were asked.
     // And in nearby chat (#1658), where a bot shows the card to the person who asked and nobody else.
+    // The newest Reconnect card a bot showed this person (#1819), pinned above the message box until they close it. A
+    // direct message keeps its cards in the chat: the card checks with Orbit that the sign-in is still lost before it shows.
+    let signInClosedCount = 0;
+    // Each bot has its newest word only (an empty one is the bot taking its card back); of those, the newest one that was not closed.
+    $: dockedSignIn = (() => {
+        void signInClosedCount;
+        const newestOfBot = new Map<string, ChatMessage>();
+        for (const message of $messages ?? []) {
+            if (!message.toolSignIn) continue;
+            // Deleted first, so the map keeps the bots in the order of their newest word
+            newestOfBot.delete(message.toolSignIn.botId);
+            newestOfBot.set(message.toolSignIn.botId, message);
+        }
+        const open = [...newestOfBot.values()].filter(
+            (message) => (message.toolSignIn?.lost.length ?? 0) > 0 && !isToolSignInClosed(message.id)
+        );
+        return open.length > 0 ? open[open.length - 1] : undefined;
+    })();
     $: askStore = (partnerBotId || proximityRoom) && messages ? chatAsks(messages) : readable([]);
     let askNow = Date.now();
     let askTimer: ReturnType<typeof setTimeout> | undefined;
@@ -481,11 +605,272 @@
             return false;
         }
     }
+    // The person's own Brick (#1995). While its chat is empty the game shows its hello as its first words, with the
+    // ways to start on the question card above the message box. Its fixed "what I can do" answer has its ideas there
+    // while it is the newest message. All of it is the game's own words: nothing is sent until the person taps or writes.
+    $: ownBrick = partner ? $myBricksByChatId.get(partner.id) : guestBrick;
+    $: brickAnswers = botState !== "resting" && botState !== "unready" && !botClosed;
+    // A chat that is being brought along from the guest's time says its own words: the hello waits for them
+    $: brickChatEmpty =
+        ownBrick !== undefined &&
+        (matrixRoom !== undefined || guestRoom !== undefined) &&
+        !showLoading &&
+        $messages.length === 0 &&
+        !$guestChatCarrying;
+    // The first time the chat with the person's own Brick is open, the chat they had as a guest is brought into it (#1997)
+    $: if (partner && ownBrick && matrixRoom && !showLoading) bringGuestChatInto(ownBrick.id);
+    let shownHello: { key: string; message: ChatMessage } | undefined;
+    $: showBrickHello(
+        brickChatEmpty && ownBrick && (partner || guestRoom)
+            ? {
+                  key: `${room.id}|${ownBrick.id}|${ownBrick.name}|${ownBrick.hello ?? ""}|${$locale}`,
+                  make: () =>
+                      brickHelloMessage(
+                          room.id,
+                          ownBrick,
+                          partner?.id ?? GUEST_BRICK_ID,
+                          // A guest's hello is the game's own words for someone it does not know yet
+                          guestRoom
+                              ? $LL.chat.brick.guest.hello()
+                              : brickHello(ownBrick.name, $LL, gameManager.getPlayerName(), ownBrick.hello),
+                          new Date()
+                      ),
+              }
+            : undefined
+    );
+    // The hello keeps the time the chat was opened at: it is made once for a chat, a Brick and a language
+    function showBrickHello(hello: { key: string; make: () => ChatMessage } | undefined) {
+        if (!hello) shownHello = undefined;
+        else if (shownHello?.key !== hello.key) shownHello = { key: hello.key, message: hello.make() };
+    }
+    const noneDeleted = readable(false);
+    $: newestMessage = $messages.length > 0 ? $messages[$messages.length - 1] : undefined;
+    // A deleted message drives no card: its ideas or suggestion went with it
+    $: newestDeletedStore = newestMessage?.isDeleted ?? noneDeleted;
+    $: newestLive = newestMessage && !$newestDeletedStore ? newestMessage : undefined;
+    $: brickCardKey = !ownBrick
+        ? undefined
+        : shownHello
+        ? // A guest's chat is empty again after it expires: its starters come back with each visit to the page, not for good
+          startersCardKey(guestRoom ? `${room.id}:${guestBrickShownAt}` : room.id)
+        : guestRoom
+        ? newestLive?.guestKeep
+            ? keepCardKey(newestLive.id)
+            : undefined
+        : newestLive?.brickIdeas
+        ? ideasCardKey(newestLive.id)
+        : newestLive?.brickOffer
+        ? offerCardKey(newestLive.id)
+        : newestLive?.appOffer
+        ? appCardKey(newestLive.id)
+        : newestLive?.newJobOffer
+        ? newJobCardKey(newestLive.id)
+        : undefined;
+    // A Brick's suggestion (#1996) is a card only while it is the newest message: once the person wrote on, tapped
+    // or closed it, its question stays in the chat as the Brick's words.
+    $: shownOffer = newestLive?.brickOffer && brickCardKey === offerCardKey(newestLive.id) ? newestLive : undefined;
+    // A Brick's offer to connect an App (#2001) is a card the same way: only while it is the newest message
+    $: shownApp = newestLive?.appOffer && brickCardKey === appCardKey(newestLive.id) ? newestLive : undefined;
+    // "Start a new job", after an answer that says Orbit would not carry a job on (finding 6): the same way again
+    $: shownNewJob = newestLive?.newJobOffer && brickCardKey === newJobCardKey(newestLive.id) ? newestLive : undefined;
+    $: brickCard =
+        brickCardKey === undefined || !brickAnswers || shownAsk || $closedBrickCards.has(brickCardKey)
+            ? undefined
+            : shownHello
+            ? guestRoom
+                ? guestStartersCard($LL)
+                : brickStartersCard($LL)
+            : guestRoom
+            ? guestKeepCard($LL)
+            : shownOffer?.brickOffer
+            ? brickOfferCard(shownOffer.brickOffer, $LL)
+            : shownApp?.appOffer
+            ? brickAppCard(shownApp.appOffer, $LL)
+            : shownNewJob?.newJobOffer
+            ? brickNewJobCard(shownNewJob.newJobOffer, $LL)
+            : brickIdeasCard($LL);
+    // The App being connected from the card: the card stays, and a second tap does nothing, until it ends
+    let connectingApp = false;
+    // A Brick the Brick just made (#1996) is in Chats at once: the list is read again when an answer names one this
+    // device does not know yet.
+    $: newestMade = newestMessage?.brickMade ?? [];
+    $: if (newestMade.some((made) => !($myBricksStore ?? []).some((brick) => brick.id === made.id))) {
+        readBricksOnceFor(newestMessage?.id);
+    }
+    let bricksReadFor: string | undefined;
+    function readBricksOnceFor(messageId: string | undefined) {
+        if (!messageId || bricksReadFor === messageId) return;
+        bricksReadFor = messageId;
+        // A read already out may have started before the Brick was made: this one starts after it, and the message counts as
+        // read only when that read listed the Bricks (when it could not, the next change asks again)
+        loadMyBricksAfterPending()
+            .then((listed) => {
+                if (!listed && bricksReadFor === messageId) bricksReadFor = undefined;
+            })
+            .catch((error) => {
+                console.error(error);
+                if (bricksReadFor === messageId) bricksReadFor = undefined;
+            });
+    }
+    async function tapBrickCard(card: BotAsk, tap: BotAskTap): Promise<boolean> {
+        if (tap.action === "close") {
+            if (brickCardKey) closeBrickCard(brickCardKey);
+            return true;
+        }
+        if (guestRoom && tap.action === "pick") return tapGuestCard(card, tap.choices);
+        if (tap.action !== "pick" || !matrixRoom) return false;
+        try {
+            if (card.id === BRICK_APP_CARD) return tapAppCard(tap.choices[0]);
+            if (card.id === BRICK_NEW_JOB_CARD) {
+                const job = shownNewJob?.newJobOffer;
+                // The card that was tapped: a message that arrives meanwhile changes brickCardKey, not which card closes
+                const tappedKey = brickCardKey;
+                if (!job || !tappedKey || tap.choices[0] !== NEW_JOB_START) return false;
+                // The person's own words, carrying the job's title: the Brick starts THAT job afresh, with a key of its own
+                await matrixRoom.sendNewJob($LL.chat.brick.newJobCard.start(), job);
+                closeBrickCard(tappedKey);
+                return true;
+            }
+            if (card.id === BRICK_OFFER_CARD) {
+                const offer = shownOffer?.brickOffer;
+                // The card that was tapped: a message that arrives meanwhile changes brickCardKey, not which card closes
+                const tappedKey = brickCardKey;
+                if (!offer || !ownBrick || !tappedKey) return false;
+                if (tap.choices[0] === OFFER_MAKE) {
+                    // The person's own words, carrying the Brick the card described: it is made without the AI
+                    await matrixRoom.sendBrickMake($LL.chat.brick.offerMake({ name: offer.name }), offer);
+                } else {
+                    // Kept with their account, so the topic is not suggested again anywhere
+                    await botApiService.declineBrickOffer(ownBrick.id, offer.topic);
+                }
+                closeBrickCard(tappedKey);
+                return true;
+            }
+            if (card.id === BRICK_STARTERS_CARD) {
+                if (tap.choices[0] === STARTER_APPS) {
+                    // Nothing is sent: the Apps page opens, to connect and to choose which Bricks use what
+                    openAppsPage();
+                    return true;
+                }
+                if (tap.choices[0] === STARTER_GOAL) {
+                    // Plain words from the person: the Brick asks what the goal is, and nothing is set until they say it
+                    matrixRoom.sendMessage($LL.chat.brick.giveGoalAsk());
+                    return true;
+                }
+                if (tap.choices[0] === STARTER_MAKE) {
+                    // Plain words from the person: the Brick asks what the new one is for, and makes it
+                    matrixRoom.sendMessage($LL.chat.brick.makeAnotherAsk());
+                    return true;
+                }
+                // The person's own words, marked as this starter: the Brick answers it with its fixed ideas
+                await matrixRoom.sendStarter($LL.chat.brick.whatCanYouDo(), STARTER_IDEAS);
+                return true;
+            }
+            const words = brickIdeaWords(tap.choices[0] ?? "", $LL);
+            if (!words) return false;
+            matrixRoom.sendMessage(words);
+            return true;
+        } catch (error) {
+            console.error("Could not send a Brick's starter", error);
+            return false;
+        }
+    }
+    // A tap on a Brick's offer to connect an App (#2001). Called straight from the tap: the App's sign-in window opens in
+    // the same tap, before anything is awaited, so the browser does not block it.
+    function tapAppCard(choice: string | undefined): boolean | Promise<boolean> {
+        const offer = shownApp?.appOffer;
+        const tappedKey = brickCardKey;
+        if (!offer || !ownBrick || !tappedKey || !matrixRoom) return false;
+        const brickId = ownBrick.id;
+        const room = matrixRoom;
+        if (choice === APP_OTHER) {
+            // Another kind of the same thing: the Apps page opens with the search already filled in
+            openAppsPage({ search: offer.other?.search });
+            closeBrickCard(tappedKey);
+            return true;
+        }
+        if (choice !== APP_CONNECT) {
+            // "Not now": kept with their account when the Brick offered it, so it is not offered again anywhere. One they
+            // asked for by name was never offered, so there is nothing to keep.
+            closeBrickCard(tappedKey);
+            if (!offer.asked) {
+                botApiService
+                    .declineBrickOffer(brickId, offer.topic)
+                    .catch((error) => console.warn("Could not keep Not now", error));
+            }
+            return true;
+        }
+        if (connectingApp) return true;
+        connectingApp = true;
+        const text = $LL.chat.brick.appCard;
+        return connectFromCard(offer, brickId, {
+            connectListedApp: (key) => botApiService.connectListedApp(key),
+            signIn: (makeApp, alreadyConnected) => signInInPopup(makeApp, { alreadyConnected }),
+            connectReadyMade: ({ key, name }) =>
+                connectApp({ kind: "readyMade", key, name, blurb: "", connectionId: null }),
+            isConnected: async (appId) => {
+                const answer = (await botApiService.getMyApp(appId)) as { app?: { connected?: unknown } } | undefined;
+                return answer?.app?.connected === true;
+            },
+            letBrickUse: (appId, id) => botApiService.letBrickUseApp(appId, id),
+            carryOn: (app) => room.sendAppConnected(app),
+            refresh: () => loadMyApps(true),
+        })
+            .then((result) => {
+                if (result === "connected") closeBrickCard(tappedKey);
+                // Connected and let use it, but the Brick could not be told to carry on: said, and only that is left to ask
+                else if (result === "not_resumed") {
+                    warningMessageStore.addWarningMessage(text.couldNotResume({ name: offer.name }));
+                    closeBrickCard(tappedKey);
+                } else if (result === "stopped")
+                    warningMessageStore.addWarningMessage(text.signInStopped({ name: offer.name }));
+                else if (result === "unchecked")
+                    warningMessageStore.addWarningMessage(text.signInUnchecked({ name: offer.name }));
+                else if (result === "blocked") warningMessageStore.addWarningMessage(text.signInBlocked());
+                else warningMessageStore.addWarningMessage(text.couldNotLet({ name: offer.name }));
+                // Connected but not let: the card goes, the Apps page is where to finish
+                if (result === "not_let") closeBrickCard(tappedKey);
+                return true;
+            })
+            .catch((error: unknown) => {
+                console.error("Could not connect an App from a card", error);
+                warningMessageStore.addWarningMessage(text.signInBlocked());
+                return true;
+            })
+            .finally(() => {
+                connectingApp = false;
+            });
+    }
+    // A tap on a card of the Brick for guests (#1997): a starter says what it says in the guest's words; "Make Brick mine"
+    // opens the sign-in card and "Not now" closes the card.
+    function tapGuestCard(card: BotAsk, choices: string[]): boolean {
+        const choice = choices[0] ?? "";
+        if (card.id === GUEST_KEEP_CARD) {
+            if (choice === GUEST_KEEP_YES) openModal(GuestBrickSignIn);
+            else if (brickCardKey) closeBrickCard(brickCardKey);
+            return true;
+        }
+        const words = guestStarterWords(choice, $LL);
+        if (!words || !guestRoom) return false;
+        guestRoom.sendMessage(words);
+        return true;
+    }
+    // "Continue privately" on a reply only this person saw (#1993): the bot's direct messages open, and the bot is
+    // told which chat that is, so the same answer is there to carry on from
+    async function continuePrivately(reply: ChatMessage) {
+        const nearby = proximityRoom;
+        const botChatId = reply.sender?.chatId;
+        if (!botChatId) return;
+        const direct = await openDirectChatRoom(botChatId);
+        if (direct) nearby?.continuedPrivately(reply, direct.id);
+    }
     $: botPlaceholder = shownAsk
         ? // A question only picks a direction, so what the person types is their answer (#1661); an approval card's is something else
           shownAsk.ask.question
             ? $LL.chat.botAsk.typeYourOwnAnswer()
             : $LL.chat.botAsk.typeSomethingElse()
+        : brickCard
+        ? $LL.chat.botAsk.typeYourOwnAnswer()
         : botState === "resting"
         ? $LL.chat.botStatus.restingPlaceholder()
         : botState === "unready"
@@ -1084,6 +1469,8 @@
                         </button>
                     {:else if proximityRoom}
                         <ProximityThreadTitle room={proximityRoom} />
+                    {:else if guestRoom && guestBrick}
+                        <GuestBrickTitle brick={guestBrick} />
                     {:else if matrixRoom && $directPartner}
                         <DirectChatTitle
                             room={matrixRoom}
@@ -1131,6 +1518,11 @@
                         </svelte:element>
                     {/if}
                 </div>
+                {#if partnerBotId !== undefined && $canCall && !$botCallStore}
+                    <div class="flex h-12 w-12 shrink-0 items-center justify-center">
+                        <CallButton onCall={() => void startCallWith(partnerBotId, $roomName)} />
+                    </div>
+                {/if}
                 {#if matrixRoom}
                     <div class="flex h-12 w-12 shrink-0 items-center justify-center">
                         <RoomMenu room={matrixRoom} inHeader />
@@ -1159,6 +1551,13 @@
                             directPartner ? openProfileRoomIdStore.set(room.id) : openRoomDetailsIdStore.set(room.id)}
                     />
                 {/key}
+            {/if}
+            {#if callHere}
+                <!-- The call bar, at the top of this bot's chat (#2004); with another chat open it floats on screen -->
+                <CallBarHost picture={$roomPicture} />
+            {/if}
+            {#if ownBrick}
+                <BrickComputerBar brick={ownBrick} />
             {/if}
             {#if liveElsewhere && proximityRoom}
                 <div
@@ -1192,9 +1591,11 @@
                     <IconLoader class="animate-[spin_2s_linear_infinite]" font-size={25} />
                 </div>
             {/if}
+            <KeySheetHost />
             <ul
+                use:brickChatLinks
                 bind:this={messageListContentRef}
-                class="list-none p-0 flex-1 flex flex-col max-h-full pt-10 {$messages.length === 0
+                class="list-none p-0 flex-1 flex flex-col max-h-full pt-10 {$messages.length === 0 && !shownHello
                     ? 'items-center justify-center pb-4'
                     : 'max-w-6xl'}"
                 class:invisible={firstFillPending}
@@ -1226,6 +1627,22 @@
                                 {$LL.chat.getCloserDesc()}
                             </div>
                         </li>
+                    {:else if shownHello}
+                        <!-- A person's own Brick says hello in a chat with nothing in it yet (#1995): fixed words, as
+                             its first message. They give way to the conversation once anything is written. -->
+                        {#key shownHello.key}
+                            <li class="run-start last:pb-3" data-testid="brickHello">
+                                {#if shownHello.message.date}
+                                    <div class="flex justify-center mb-3" data-testid="chatDayLabel">
+                                        <span
+                                            class="px-3 py-1.5 m-0 text-xs text-center border border-solid border-white/10 rounded-2xl text-white/80"
+                                            >{dayLabel(shownHello.message.date, $locale)}</span
+                                        >
+                                    </div>
+                                {/if}
+                                <Message message={shownHello.message} plain />
+                            </li>
+                        {/key}
                     {:else if !showLoading}
                         <li class="text-center px-3 max-w-md relative">
                             <IconMailBox font-size="40" />
@@ -1294,6 +1711,9 @@
                                     onTap={tapAsk}
                                 />
                             {/if}
+                        {:else if (shownOffer?.id === entry.message.id || shownApp?.id === entry.message.id) && brickCard}
+                            <!-- A Brick's suggestion (#1996) is the card above the message box while it waits there,
+                                 so the chat does not say it twice. -->
                         {:else if entry.message.botStatus}
                             <BotStatusNoteCard note={entry.message.botStatus} />
                         {:else}
@@ -1301,17 +1721,32 @@
                                 on:updateMessageBody={onUpdateMessageBody}
                                 message={entry.message}
                                 runStart={place?.runStart ?? true}
+                                plain={entry.message.local === true}
                             />
+                            {#if entry.message.brickMade?.length}
+                                <BrickMadeLinks made={entry.message.brickMade} content={entry.message.content} />
+                            {/if}
                             {#if entry.message.stoppedBySpeech}
                                 <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />
                             {/if}
+                            {#if entry.message.keptQuiet}
+                                <KeptQuietNote keptQuiet={entry.message.keptQuiet} />
+                            {/if}
                             {#if "privateReply" in entry.message && entry.message.privateReply}
-                                <!-- A reply a bot wrote for this person alone, never said aloud (#1658) -->
+                                <!-- A reply a bot wrote for this person alone, never said aloud (#1658), and the
+                                     way on to their direct messages with it (#1993) -->
+                                <PrivateReplyNote
+                                    botChatId={entry.message.sender?.chatId}
+                                    onContinue={() => continuePrivately(entry.message)}
+                                />
+                            {/if}
+                            {#if entry.message.answeredNearby}
+                                <!-- The same answer, once, in the bot's direct messages (#1993) -->
                                 <div
                                     class="flex items-center gap-1.5 px-4 pb-2 text-xs text-white/60"
-                                    data-testid="botPrivateReplyNote"
+                                    data-testid="botAnsweredNearbyNote"
                                 >
-                                    <IconLock font-size="14" />{$LL.chat.botAsk.onlyYouSeeReply()}
+                                    <IconLock font-size="14" />{$LL.chat.botAsk.answeredNearby()}
                                 </div>
                             {/if}
                             {#if "stoppedOnLeave" in entry.message && entry.message.stoppedOnLeave}
@@ -1370,6 +1805,34 @@
                         onOpen={() => chatSheetSnapStore.set("full")}
                     />
                 {/if}
+                {#if dockedSignIn?.toolSignIn}
+                    {@const signInMessageId = dockedSignIn.id}
+                    {#key signInMessageId}
+                        <BotToolSignInCard
+                            signIn={dockedSignIn.toolSignIn}
+                            refresh={$messages?.length}
+                            onClose={() => {
+                                closeToolSignIn(signInMessageId);
+                                signInClosedCount += 1;
+                            }}
+                        />
+                    {/key}
+                {/if}
+                {#if brickCard && ownBrick}
+                    <!-- The Brick's own suggestions (#1995), on the question card: ways to start, then ideas. A tap
+                         sends the person's words; X closes the card and it stays closed. -->
+                    {#key brickCardKey}
+                        <BotAskCard
+                            docked
+                            ask={brickCard}
+                            botName={ownBrick.name}
+                            headLine={$LL.chat.brick.suggests({ name: ownBrick.name })}
+                            compact={askCompact}
+                            onTap={tapBrickCard}
+                            onOpen={() => chatSheetSnapStore.set("full")}
+                        />
+                    {/key}
+                {/if}
                 {#if proximityRoom}
                     <!-- Round 8: while a voice bot takes your microphone in the group, a direct Stop listening -->
                     <VoiceListeningRow />
@@ -1389,7 +1852,8 @@
                         {room}
                         partner={$directPartner}
                         inputHint={botPlaceholder}
-                        allowVoiceNotes={partnerBotId === undefined || $botHears}
+                        allowVoiceNotes={guestRoom ? $guestTakes.notes : partnerBotId === undefined || $botHears}
+                        textOnly={guestRoom !== undefined && !$guestTakes.files}
                         bind:this={messageInputBarRef}
                     />
                 {/key}

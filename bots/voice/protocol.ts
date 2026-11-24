@@ -43,6 +43,13 @@ export interface RecognitionConfig {
 /** The provider a bubble speaks with. */
 export interface SpeechConfig { adapter: string; model: string; voiceId: string; key?: string; endpoint?: string; region?: string; language?: string }
 
+/**
+ * Named by a worker in `session.start` when `bot.say` may carry `onlyFor`: the one person a reply is for, whose audio then
+ * reaches nobody else (game #1993). A worker from before ignores the field and speaks to everyone in the bubble, so the
+ * bot server sends it only to a worker that named this.
+ */
+export const SAY_ONLY_FOR = 'say.onlyFor';
+
 export type ToWorker =
     | { type: 'session.open'; sessionId: string; bubbleId: string; botId: string; recognition?: RecognitionConfig; speech?: SpeechConfig; expression?: VoiceExpression; turnSeconds?: number }
     | { type: 'lane.open'; sessionId: string; participantId: string; epoch: number; mode?: VoiceMode }
@@ -50,7 +57,8 @@ export type ToWorker =
     | { type: 'lane.close'; sessionId: string; participantId: string; epoch: number; reason?: LeaveReason }
     /** `requestId`: the worker answers with `mode.ack` once the person's audio path follows the mode (only with `participantId`). */
     | { type: 'mode.set'; sessionId: string; mode: VoiceMode; participantId?: string; requestId?: string }
-    | { type: 'bot.say'; sessionId: string; segmentId: string; text: string; committed: true; lang?: string; maxMs?: number }
+    /** `onlyFor`: the one person this reply is for (their participant id); see `SAY_ONLY_FOR`. */
+    | { type: 'bot.say'; sessionId: string; segmentId: string; text: string; committed: true; lang?: string; maxMs?: number; onlyFor?: string }
     | { type: 'bot.retract'; sessionId: string; segmentId: string }
     | { type: 'voice.stop'; sessionId: string; reason: 'allowance_ended' | 'other' }
     | { type: 'session.end'; sessionId: string }
@@ -73,10 +81,12 @@ export interface VoiceDraft {
 }
 
 export type FromWorker =
-    | { type: 'session.start'; sessionId: string; bubbleId: string; mode: VoiceMode }
+    /** `features`: what the worker can do beyond the first version of the bridge (`SAY_ONLY_FOR`). Left out by an older worker. */
+    | { type: 'session.start'; sessionId: string; bubbleId: string; mode: VoiceMode; features?: string[] }
     | { type: 'participant.join'; sessionId: string; participantId: string; epoch: number }
     | { type: 'participant.leave'; sessionId: string; participantId: string; epoch: number; reason: LeaveReason }
     | { type: 'lane.signal'; sessionId: string; participantId: string; epoch: number; signal: VoiceSignal }
+    /** `reason` `private`: the reply was for one person alone and the path it would go out on reaches other people too, so it was not said (or stopped). */
     | { type: 'playback.progress'; sessionId: string; segmentId: string; playedMs: number; totalMs?: number; finished: boolean; interrupted: boolean; reason?: string }
     | { type: 'engine.status'; sessionId: string; engineId: string; voice: 'active' | 'stopped'; mode: VoiceMode; lanes: unknown[]; room?: { epoch: number; connected: boolean }; counters?: Record<string, number> }
     /** A `mode.set` with a `requestId` is applied: the path that carries the person's audio now (their connection, the room, or none yet) and its epoch. */

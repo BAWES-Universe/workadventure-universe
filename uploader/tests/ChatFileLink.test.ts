@@ -57,7 +57,7 @@ jest.mock("../src/Service/StorageProviderService", () => ({
   isCdnConfigured: () => true,
 }));
 
-import { FileController } from "../src/Controller/FileController";
+import { FileController, lastingLocationOf } from "../src/Controller/FileController";
 
 const ID = "0b5c1a6e-3f2d-4c8b-9a71-2e4f6d8c0a1b.png";
 
@@ -119,5 +119,20 @@ describe("a lasting link to a chat file", () => {
     const response = await open(`/chat-file/user-refs/${ID}`);
     expect(response.status).toBe(500);
     expect(response.headers.location).toBeUndefined();
+  });
+});
+
+describe("the lasting link an upload answers with, for a bot server that knows this uploader by a name inside its network", () => {
+  it("is written with the address this uploader is reached at, for a bucket whose links are signed", () => {
+    expect(lastingLocationOf("user-refs", ID, `https://s3.test/user-refs/${ID}?X-Amz-Signature=abc`)).toEqual({
+      lastingLocation: `http://uploader.test/chat-file/user-refs/${ID}`,
+    });
+  });
+
+  it("is left out when the link already lasts: a bucket with a public link, no bucket at all, or the uploader's own path", () => {
+    expect(lastingLocationOf("bot-gens", ID, `https://bots.cdn.test/${ID}`)).toEqual({});
+    expect(lastingLocationOf(undefined, ID, `http://uploader.test/upload-file/${ID}`)).toEqual({});
+    expect(lastingLocationOf("user-refs", ID, `http://uploader.test/upload-file/${ID}`)).toEqual({});
+    expect(lastingLocationOf("other-bucket", ID, `https://s3.test/other-bucket/${ID}?X-Amz-Signature=abc`)).toEqual({});
   });
 });

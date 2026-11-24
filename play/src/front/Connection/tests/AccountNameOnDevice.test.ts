@@ -21,7 +21,7 @@ vi.mock("../../Phaser/Game/GameManager", () => ({
     },
 }));
 vi.mock("../../Administration/AnalyticsClient", () => ({
-    analyticsClient: { identifyUser: vi.fn(), loggedWithToken: vi.fn(), loggedWithSso: vi.fn() },
+    analyticsClient: { identifyUser: vi.fn(), forgetPerson: vi.fn(), loggedWithToken: vi.fn(), loggedWithSso: vi.fn() },
 }));
 vi.mock("../../Network/ServiceWorker", () => ({ _ServiceWorker: class {} }));
 vi.mock("../../Chat/Utils", () => ({ openChatRoom: vi.fn() }));

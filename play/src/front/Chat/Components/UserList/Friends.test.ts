@@ -5,6 +5,7 @@ import type { WorldSighting } from "./Friends";
 import {
     chatIdsToAsk,
     groupFriends,
+    onlineFriendsCount,
     otherWorldFaces,
     placeFriends,
     profileTakesFirstSpot,
@@ -234,5 +235,47 @@ describe("chatIdsToAsk", () => {
         const inWorld = (uuid: string) => uuid === "here";
         expect(chatIdsToAsk(people, inWorld, asked)).toEqual(["@away:chat"]);
         expect(chatIdsToAsk(people, inWorld, asked)).toEqual([]);
+    });
+});
+
+describe("onlineFriendsCount", () => {
+    const friends = [
+        friend("Sara", [session(HERE)]),
+        friend("Tariq", [session(SAME_WORLD, AvailabilityStatus.BUSY)]),
+        friend("Mishari", [session(OTHER_WORLD)]),
+        friend("Hamad"),
+    ];
+
+    it("counts the friends who are online, wherever they are, and not the ones who are offline", () => {
+        expect(onlineFriendsCount(placeFriends(friends, HERE, nowhere, true))).toBe(3);
+    });
+
+    it("counts a friend who hides where they are, and one the world's own list sees while presence is down", () => {
+        const hidden = friend("Noor", [session(OTHER_WORLD)], {
+            presence: {
+                online: true,
+                locationHidden: true,
+                availabilityStatus: AvailabilityStatus.ONLINE,
+                sessions: [],
+            },
+        });
+        expect(onlineFriendsCount(placeFriends([hidden, friend("Hamad")], HERE, nowhere, true))).toBe(1);
+
+        const inWorld = (uuid: string): WorldSighting | undefined =>
+            uuid === "uuid-Hamad"
+                ? { playUri: SAME_WORLD, roomName: "Cafe", status: AvailabilityStatus.ONLINE }
+                : undefined;
+        expect(onlineFriendsCount(placeFriends(friends, HERE, inWorld, false))).toBe(1);
+    });
+
+    it("is zero when nobody is online, and follows friends going on and offline", () => {
+        expect(onlineFriendsCount(placeFriends([friend("Hamad"), friend("Layla")], HERE, nowhere, true))).toBe(0);
+        expect(onlineFriendsCount(placeFriends([], HERE, nowhere, true))).toBe(0);
+
+        const before = onlineFriendsCount(placeFriends([friend("Layla"), friend("Hamad")], HERE, nowhere, true));
+        const after = onlineFriendsCount(
+            placeFriends([friend("Layla", [session(OTHER_WORLD)]), friend("Hamad")], HERE, nowhere, true)
+        );
+        expect([before, after]).toEqual([0, 1]);
     });
 });

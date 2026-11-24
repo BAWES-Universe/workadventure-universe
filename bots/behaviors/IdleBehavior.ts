@@ -4,11 +4,13 @@
 
 import type { ChatUpload } from '../services/ChatFiles';
 import { BaseBehavior, type BehaviorConfig } from './BaseBehavior';
+import { greetingReplyId } from '../client/GreetingReply';
 import { PositionMessage_Direction, type SpaceUser } from '@workadventure/messages';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { BotClient } from '../client/BotClient';
 import { parseEmotionsFromResponse, appendStreamedChunk, detectEmotionPrefixAtEnd, moodOf, WAVE_MOOD } from '../ai/EmotionParser';
 import { createBatchState, batchAppend, batchFlush } from '../ai/StreamBatcher';
+import type { Heard } from '../memory/Heard';
 
 export interface IdleBehaviorConfig extends BehaviorConfig {
     type: 'idle';
@@ -375,11 +377,14 @@ export class IdleBehavior extends BaseBehavior {
         // With a note for each file it came with (#1508), for the bot's memory only: the saved chat keeps what they wrote
         let historyMessage = message;
         let keepFiles: () => void = () => undefined;
+        // With files, who heard the message when it came: someone who walks up while they are read never got it (#1993)
+        let arrived: { heard: Heard | undefined } | undefined;
         if (url) {
             const files = await this.readBubbleFiles(spaceName, senderId, message, url, mimeType || 'application/octet-stream', mediaType, galleryUrls, uploads);
             message = files.augmented;
             historyMessage = files.line;
             keepFiles = files.keep;
+            arrived = files.arrived;
         }
 
         // Get user info from bot's player map
@@ -407,9 +412,10 @@ export class IdleBehavior extends BaseBehavior {
         // Start conversation in memory if needed
         if (this.conversationMemory) {
             this.conversationMemory.startConversation(botId, senderId);
-            this.conversationMemory.addMessage(botId, senderId, historyMessage, 'person', spaceName);
+            if (arrived) this.conversationMemory.addMessage(botId, senderId, historyMessage, 'person', spaceName, true, arrived);
+            else this.conversationMemory.addMessage(botId, senderId, historyMessage, 'person', spaceName);
             keepFiles();
-            this.conversationMemory.extractPersonalInfo(botId, senderId, originalUserMessage);
+            this.conversationMemory.extractPersonalInfo(botId, senderId, originalUserMessage, arrived ? arrived.heard : spaceName);
         }
         
         // Start conversation in storage (if available and UUID is known)
@@ -925,7 +931,7 @@ export class IdleBehavior extends BaseBehavior {
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
 
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
 
         try {
             // Special prompt for leading completion
@@ -941,7 +947,7 @@ export class IdleBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1487,11 +1493,11 @@ export class IdleBehavior extends BaseBehavior {
 
         // Get conversation context (includes memory, emotions, relationship history)
         const context = this.conversationMemory?.getConversationContext(botId, playerId) || '';
-        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory);
+        const playerName = this.resolvePlayerName(botId, playerId, this.conversationMemory, spaceName);
 
         // Generate natural response using AI - not a greeting, just respond naturally
         let fullMessage = '';
-        let greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+        let greetingResponseId = greetingReplyId(botId, playerId);
 
         try {
             // Natural prompt: person approached, respond naturally based on context
@@ -1521,7 +1527,7 @@ export class IdleBehavior extends BaseBehavior {
             let emotionBlockStarted = false;
             // Deferred '[' that may be the start of [EMOTION_UPDATE] across chunk boundaries
             let pendingPrefix = '';
-            for await (const chunk of this.withToolSteps(this.aiService.generateBotResponseStream(
+            for await (const chunk of this.withToolSteps(this.aiService.generateGreetingStream(
                 botId,
                 playerId,
                 playerMessage,
@@ -1539,7 +1545,7 @@ export class IdleBehavior extends BaseBehavior {
                         const finalContent = pendingPrefix ? fullMessage.slice(0, -pendingPrefix.length) : fullMessage;
                         this.bot?.sendStreamMessage(spaceName, greetingResponseId, '', true, finalContent);
                     }
-                    greetingResponseId = `bot-${botId}-player-${playerId}-${crypto.randomUUID()}`;
+                    greetingResponseId = greetingReplyId(botId, playerId);
                     fullMessage = '';
                     emotionBlockStarted = false;
                     pendingPrefix = '';

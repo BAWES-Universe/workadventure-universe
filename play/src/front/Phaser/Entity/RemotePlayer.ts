@@ -22,6 +22,7 @@ import { friendsEnabledStore, relationshipsStore } from "../../Chat/Stores/Frien
 import { invitesEnabledStore, ringStore } from "../../Chat/Stores/RingStore";
 import { isBotUser } from "../../Chat/UserProvider/ChatUserMapper";
 import { botIdFromChatId } from "../../Chat/Bots/BotChatStatus";
+import { visitingCaptionStore } from "../../Chat/Bricks/BrickVisitCaption";
 import { botDmAccessCache } from "../../Chat/Bots/BotStatusStore";
 import { friendMenuAction } from "../../Chat/Components/UserList/FriendMenuAction";
 import { CardAnswers, CARD_ANSWER_KEPT_MS } from "../../Components/ActionsMenu/cardAnswers";
@@ -87,6 +88,20 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         }
 
         this.bindEventHandlers();
+        this.watchVisiting(Scene);
+    }
+
+    private visitingUnsubscriber: (() => void) | undefined;
+
+    /**
+     * A Brick that walks beside someone (game #2005) says so under its name: the bot server tags it `visiting:<name>`.
+     * The tags come with the world's user list, which may arrive just after the player, so this follows the list.
+     */
+    private watchVisiting(scene: GameScene): void {
+        if (!this.userUuid.startsWith("bot-")) return;
+        this.visitingUnsubscriber = visitingCaptionStore(scene.allUsersInWorldStore, LL, this.userUuid).subscribe(
+            (caption) => this.setCaption(caption)
+        );
     }
 
     public updatePosition(position: PositionMessage): void {
@@ -138,6 +153,7 @@ export class RemotePlayer extends Character implements ActivatableInterface {
     }
 
     public destroy(): void {
+        this.visitingUnsubscriber?.();
         wokaMenuStore.removeRemotePlayer(this.userUuid, this.userId);
         super.destroy();
     }

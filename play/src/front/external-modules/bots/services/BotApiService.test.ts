@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BotApiService, isBotAiOptions, isOrbitSessionResponse, myAiKeyNames } from "./BotApiService";
 
 const mocks = vi.hoisted(() => ({
@@ -372,5 +372,203 @@ describe("BotApiService voice switch", () => {
         roomEnter.mockRejectedValue(new Error("roomId is required"));
 
         await expect(service.setBotVoiceEnabled("bot-1", true)).resolves.toEqual({ enabled: true });
+    });
+});
+
+describe("BotApiService when Orbit refuses a call after the session was renewed", () => {
+    const ADMIN = "https://admin.example.com";
+    const OLD_SESSION = `orb_sess_v2_${"c".repeat(64)}`;
+    const NEW_SESSION = `orb_sess_v2_${"d".repeat(64)}`;
+    // An OIDC access token that does not say when it runs out, wrapped like the game's token
+    const b64u = (input: unknown) =>
+        btoa(JSON.stringify(input)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const ACCESS = authToken(`${b64u({ alg: "none" })}.${b64u({ sub: "user" })}.sig`);
+
+    function orbit(retryAnswer: Response) {
+        return vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization;
+            if (url === `${ADMIN}/api/auth/session`) {
+                return Promise.resolve(
+                    new Response(
+                        JSON.stringify({ version: 2, sessionId: NEW_SESSION, expiresAt: Date.now() + 3600_000 })
+                    )
+                );
+            }
+            if (url === `${ADMIN}/api/me/apps`) {
+                return Promise.resolve(
+                    authorization === `Bearer ${OLD_SESSION}`
+                        ? new Response(JSON.stringify({ error: "Invalid session" }), { status: 401 })
+                        : retryAnswer
+                );
+            }
+            return Promise.resolve(new Response("unexpected", { status: 500 }));
+        });
+    }
+
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+        mocks.getAuthToken.mockReset();
+        mocks.setAuthToken.mockReset();
+        mocks.pusherGet.mockReset();
+        mocks.getAuthToken.mockReturnValue(ACCESS);
+    });
+
+    const addApp = () => {
+        const service = new BotApiService();
+        service.initialize(ACCESS, ADMIN, "room-1");
+        // a session that was good a moment ago and that Orbit now refuses
+        sessionStorage.setItem("orbit_admin_session_v2", OLD_SESSION);
+        sessionStorage.setItem("orbit_admin_session_v2_expires", String(Date.now() + 3600_000));
+        return service.addMyApp({
+            name: "My app",
+            serverUrl: "https://tools.example.com/mcp",
+            authType: "none",
+            requestKey: "a".repeat(32),
+        });
+    };
+
+    it("gives Orbit's own refusal of the retried call (a 409), not 'your session has expired'", async () => {
+        orbit(new Response(JSON.stringify({ error: "That key was used for another app" }), { status: 409 }));
+        await expect(addApp()).rejects.toMatchObject({
+            message: "That key was used for another app",
+            status: 409,
+        });
+    });
+
+    it("still says the session has expired when the renewed session is refused too", async () => {
+        orbit(new Response(JSON.stringify({ error: "Invalid session" }), { status: 401 }));
+        await expect(addApp()).rejects.toMatchObject({ isAuthError: true, status: 401 });
+    });
+
+    it("does not send a refused request again to another Orbit the game moved to while it was on its way", async () => {
+        const OTHER = "https://other-orbit.example.com";
+        const service = new BotApiService();
+        service.initialize(ACCESS, ADMIN, "room-1");
+        sessionStorage.setItem("orbit_admin_session_v2", OLD_SESSION);
+        sessionStorage.setItem("orbit_admin_session_v2_expires", String(Date.now() + 3600_000));
+        const seen: string[] = [];
+        vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            seen.push(url);
+            if (url === `${ADMIN}/api/me/apps`) {
+                // Orbit refuses the session; meanwhile the player moves to a room on another Orbit
+                service.initialize(ACCESS, OTHER, "room-2");
+                return Promise.resolve(new Response(JSON.stringify({ error: "Invalid session" }), { status: 401 }));
+            }
+            return Promise.resolve(
+                new Response(JSON.stringify({ version: 2, sessionId: NEW_SESSION, expiresAt: Date.now() + 3600_000 }))
+            );
+        });
+        await expect(
+            service.addMyApp({
+                name: "My app",
+                serverUrl: "https://tools.example.com/mcp",
+                authType: "none",
+                requestKey: "a".repeat(32),
+            })
+        ).rejects.toMatchObject({ isAuthError: true, status: 401 });
+        expect(seen).toEqual([`${ADMIN}/api/me/apps`]);
+    });
+
+    it("does not send the request again either when the game went to another Orbit and back while the new session was being asked for", async () => {
+        const OTHER = "https://other-orbit.example.com";
+        const service = new BotApiService();
+        service.initialize(ACCESS, ADMIN, "room-1");
+        sessionStorage.setItem("orbit_admin_session_v2", OLD_SESSION);
+        sessionStorage.setItem("orbit_admin_session_v2_expires", String(Date.now() + 3600_000));
+        const seen: string[] = [];
+        vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            seen.push(url);
+            if (url === `${ADMIN}/api/auth/session`) {
+                // The player goes to a room on another Orbit and back while the renewed session is on its way: the answer is for the same
+                // Orbit and account again, but it is not the same stay, so the request is not sent again
+                service.initialize(ACCESS, OTHER, "room-2");
+                service.initialize(ACCESS, ADMIN, "room-1");
+                return Promise.resolve(
+                    new Response(
+                        JSON.stringify({ version: 2, sessionId: NEW_SESSION, expiresAt: Date.now() + 3600_000 })
+                    )
+                );
+            }
+            return Promise.resolve(new Response(JSON.stringify({ error: "Invalid session" }), { status: 401 }));
+        });
+        await expect(
+            service.addMyApp({
+                name: "My app",
+                serverUrl: "https://tools.example.com/mcp",
+                authType: "none",
+                requestKey: "a".repeat(32),
+            })
+        ).rejects.toMatchObject({ isAuthError: true, status: 401 });
+        expect(seen).toEqual([`${ADMIN}/api/me/apps`, `${ADMIN}/api/auth/session`]);
+    });
+
+    it("answers the retried call once the renewed session is taken", async () => {
+        const fetchSpy = orbit(new Response(JSON.stringify({ id: "app-1", name: "My app" }), { status: 200 }));
+        await expect(addApp()).resolves.toEqual({ id: "app-1", name: "My app" });
+        // The first request goes with the old session, then the session is exchanged, then the same request goes with the new one
+        const sent = fetchSpy.mock.calls.map(([input, init]) => ({
+            url: typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+            authorization: (init?.headers as Record<string, string> | undefined)?.Authorization,
+        }));
+        expect(sent.map((one) => one.url)).toEqual([
+            `${ADMIN}/api/me/apps`,
+            `${ADMIN}/api/auth/session`,
+            `${ADMIN}/api/me/apps`,
+        ]);
+        expect(sent[0].authorization).toBe(`Bearer ${OLD_SESSION}`);
+        expect(sent[2].authorization).toBe(`Bearer ${NEW_SESSION}`);
+    });
+});
+
+describe("BotApiService when the sign-in exchange for an Orbit session never answers", () => {
+    const ADMIN = "https://admin.example.com";
+    const SESSION = `orb_sess_v2_${"e".repeat(64)}`;
+    const b64u = (input: unknown) =>
+        btoa(JSON.stringify(input)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const ACCESS = authToken(`${b64u({ alg: "none" })}.${b64u({ sub: "user" })}.sig`);
+
+    beforeEach(() => {
+        sessionStorage.clear();
+        vi.restoreAllMocks();
+        vi.useFakeTimers();
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it("gives up on the exchange after its own deadline, for every caller, and asks again on the next call", async () => {
+        let asked = 0;
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => {
+            asked++;
+            if (asked === 1) {
+                // Never answers; it ends only when the game gives up on it
+                return new Promise<Response>((_resolve, reject) => {
+                    if (init?.signal) init.signal.onabort = () => reject(new DOMException("aborted", "AbortError"));
+                });
+            }
+            return Promise.resolve(
+                new Response(JSON.stringify({ version: 2, sessionId: SESSION, expiresAt: Date.now() + 3600_000 }))
+            );
+        });
+        const service = new BotApiService();
+        service.initialize(ACCESS, ADMIN, "room-1");
+        const getSession = () =>
+            (service as unknown as { getAdminApiSessionToken(): Promise<string | null> }).getAdminApiSessionToken();
+
+        const first = getSession();
+        // A second caller shares the same sign-in
+        const second = getSession();
+        await vi.advanceTimersByTimeAsync(16_000);
+        await expect(first).resolves.toBeNull();
+        await expect(second).resolves.toBeNull();
+        expect(asked).toBe(1);
+
+        // The stuck sign-in is not what the next call waits on
+        await expect(getSession()).resolves.toBe(SESSION);
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
     });
 });

@@ -25,6 +25,11 @@ interface Segment {
     maxMs: number;
     /** False once any frame had nobody to hear it. */
     deliveredAll: boolean;
+    /**
+     * The one person this reply is for (game #1993). Its audio goes out only on a path that reaches them and nobody else,
+     * frame by frame: someone who connects while it plays is sent none of it.
+     */
+    onlyFor?: string;
 }
 
 export interface SpeakerHost {
@@ -58,6 +63,11 @@ export class Speaker {
     private abort?: AbortController;
     private stream?: ReplyStream;
     private stopped = false;
+    /** Held: no new frame of the reply is sent until it is let go; already sent audio plays out. */
+    private holding = false;
+    private release?: () => void;
+    /** Played at this fraction of its volume while lowered (a comparison only, never the default). */
+    private gain = 1;
     private readonly encoder: Encoder = newOpusEncoder(32000);
     private readonly done: Promise<void>;
 
@@ -69,13 +79,56 @@ export class Speaker {
         return this.current !== undefined;
     }
 
-    enqueue(id: string, text: string, maxMs?: number, lang?: string): void {
+    /** The reply playing now, if any (held or not). A reply already being stopped is not playing. */
+    get playingId(): string | undefined {
+        return this.cancel ? undefined : this.current?.id;
+    }
+
+    get held(): boolean {
+        return this.holding;
+    }
+
+    /**
+     * Someone may be speaking over the bot: the reply stops at the next frame not yet sent, and everything after it is
+     * kept, exactly, until `resume` (it goes on from that frame) or a stop (it is dropped as today). Already sent audio
+     * plays out. Returns the reply held, or undefined when nothing is playing. Holding twice is holding once.
+     */
+    hold(): string | undefined {
+        if (!this.current || this.stopped) return undefined;
+        if (!this.holding) {
+            this.holding = true;
+            this.host.counters.inc('playback_holds');
+        }
+        return this.current.id;
+    }
+
+    /** Goes on from the frame where `hold` stopped it, if that reply is still the one playing. */
+    resume(segmentId: string): boolean {
+        if (!this.holding || this.current?.id !== segmentId) return false;
+        this.holding = false;
+        this.host.counters.inc('playback_resumes');
+        this.letGo();
+        return true;
+    }
+
+    /** Lowers the volume of the reply playing now, or puts it back (1). */
+    setGain(gain: number): void {
+        this.gain = Math.min(1, Math.max(0, gain));
+    }
+
+    private letGo(): void {
+        const release = this.release;
+        this.release = undefined;
+        release?.();
+    }
+
+    enqueue(id: string, text: string, maxMs?: number, lang?: string, onlyFor?: string): void {
         if (!this.host.active() || this.queue.length >= MAX_QUEUED_SEGMENTS) {
             this.host.counters.inc('say_rejected');
             this.host.progress({ segmentId: id, playedMs: 0, totalMs: 0, finished: true, interrupted: false, reason: 'rejected' });
             return;
         }
-        this.queue.push({ id, text, lang, totalMs: 0, playedMs: 0, maxMs: Math.min(maxMs ?? this.host.maxReplyMs, this.host.maxReplyMs), deliveredAll: true });
+        this.queue.push({ id, text, lang, totalMs: 0, playedMs: 0, maxMs: Math.min(maxMs ?? this.host.maxReplyMs, this.host.maxReplyMs), deliveredAll: true, ...(onlyFor !== undefined ? { onlyFor } : {}) });
         this.wake?.();
     }
 
@@ -129,6 +182,9 @@ export class Speaker {
         this.cancel = reason;
         this.abort?.abort();
         this.stream?.nudge();
+        // A held reply that is stopped is never let go again
+        this.holding = false;
+        this.letGo();
     }
 
     private async run(): Promise<void> {
@@ -141,11 +197,28 @@ export class Speaker {
             this.cancel = undefined;
             await this.play(segment);
             this.current = undefined;
+            this.holding = false;
+            this.gain = 1;
         }
+    }
+
+    /**
+     * A reply for one person alone cannot go out: a path it would be sent on reaches other people too. It is then not
+     * said at all, rather than said to everyone.
+     */
+    private shared(onlyFor: string): boolean {
+        return this.host.targets().some((target) => target.reach(onlyFor) === 'shared');
     }
 
     private async play(segment: Segment): Promise<void> {
         const { counters, provider } = this.host;
+        const { onlyFor } = segment;
+        // Not asked of the provider either: nothing of it is made
+        if (onlyFor !== undefined && this.shared(onlyFor)) {
+            counters.inc('private_unsaid');
+            this.host.progress({ segmentId: segment.id, playedMs: 0, totalMs: 0, finished: true, interrupted: true, reason: 'private' });
+            return;
+        }
         const abort = (this.abort = new AbortController());
         const requestedAt = performance.now();
         // The provider is read ahead of playback, but never further than this reply may play
@@ -171,6 +244,18 @@ export class Speaker {
                 reason = 'limit';
                 break;
             }
+            // A reply with nothing left to send is never kept by a hold: it ends as it would have
+            if (this.holding && !stream.usedUp) {
+                // Held: time stands still for the reply, as while waiting for the provider, so nothing comes out in a burst after.
+                // Let go by a resume or a stop; also woken if the reply runs out of audio meanwhile, to end it as above.
+                const heldFrom = performance.now();
+                const letGo = new Promise<void>((resolve) => (this.release = resolve));
+                await (stream.ended ? letGo : Promise.race([letGo, stream.changed()]));
+                const heldMs = performance.now() - heldFrom;
+                counters.inc('playback_held_ms', Math.round(heldMs));
+                if (started) startedAt += heldMs;
+                continue;
+            }
             const pcm24k = stream.take();
             if (!pcm24k) {
                 if (stream.ended) break;
@@ -185,11 +270,18 @@ export class Speaker {
                 startedAt = lastProgress = firstAudioAt = performance.now();
                 counters.inc('segments_started');
             }
-            const listeners = this.host.targets().filter((t) => t.plays());
+            // Someone else can hear the path now (they joined its room): the reply stops here, and the rest is only in the chat
+            if (onlyFor !== undefined && this.shared(onlyFor)) {
+                reason = 'private';
+                break;
+            }
+            const listeners = this.host.targets().filter((t) => t.plays(onlyFor) && (onlyFor === undefined || t.reach(onlyFor) === 'alone'));
             if (listeners.length) {
                 let opus: Buffer | undefined;
-                const out: OutputFrame = { pcm24k, opus: () => (opus ??= Buffer.from(this.encoder.encode(up.process(pcm24k)))) };
-                for (const listener of listeners) listener.sendFrame(out);
+                const gain = this.gain;
+                const pcm = gain >= 1 ? pcm24k : Int16Array.from(pcm24k, (v) => Math.round(v * gain));
+                const out: OutputFrame = { pcm24k: pcm, opus: () => (opus ??= Buffer.from(this.encoder.encode(up.process(pcm)))) };
+                for (const listener of listeners) listener.sendFrame(out, onlyFor);
                 segment.playedMs += FRAME_MS;
                 if (!timed) {
                     timed = true;
@@ -208,6 +300,11 @@ export class Speaker {
             if (wait > 0) await sleep(wait);
         }
         segment.totalMs = stream.receivedMs;
+        // What was handed over and not yet sent out is dropped too
+        if (reason === 'private') {
+            counters.inc('private_stopped');
+            for (const target of this.host.targets()) target.clear?.();
+        }
         // The provider's own failure, once it has no more audio to give: a reply that never made any is a failure too
         const failed = stream.failure !== undefined || (reason === 'completed' && stream.received === 0);
         if (failed && reason === 'completed') reason = 'provider';

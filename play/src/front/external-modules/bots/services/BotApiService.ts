@@ -1,5 +1,5 @@
 import { savedNearbyPage, type SavedNearbyItem } from "../../../Chat/Components/Room/Details/NearbySaved";
-import type { BotAiOptions, BotData } from "../types";
+import type { BotAiOptions, BotData, BrickChange } from "../types";
 import {
     readPermissions,
     readRule,
@@ -11,6 +11,7 @@ import {
 import { resolveCredentialUrl } from "../../admin-api/iframeAuth";
 import { freshOrbitAccessToken, type GameTokenHolder } from "../../admin-api/orbitAccessToken";
 import type { PushOverview, PushSettings } from "../../../Notification/Push/PushSettings";
+import type { GuestChatLine } from "../../../Chat/Bricks/Brick";
 import { ChatPusherSchema, type ChatPusher, type PushActivityReport } from "../../../Notification/Push/PushChat";
 import { readBotUsage, type BotUsage, type UsageRange } from "../usageModel";
 import {
@@ -34,6 +35,7 @@ import {
     type VoiceListPart,
 } from "../voiceModel";
 import { classifySummonFailure, type SummonResult } from "./summonFailure";
+import { classifyCallFailure, type CallResult } from "./callFailure";
 
 interface AuthError extends Error {
     isAuthError: boolean;
@@ -52,6 +54,26 @@ const PERMISSIONS_TIMEOUT_MS = 20000;
 const HELLO_TIMEOUT_MS = 60000;
 /** How long a lookup of bot states waits before it counts as failed (and is asked again on the next look) */
 const DM_STATUS_TIMEOUT_MS = 10000;
+// A guest's answer from the Brick for guests: writing it can take a while; past this it is not coming, and the next turn goes on.
+// The bot server never lets the model take longer than 90 s for one (GUEST_REPLY_CEILING_MS), and this leaves room for its calls to Orbit.
+const GUEST_REPLY_TIMEOUT_MS = 130000;
+/** How long a device waits to be told who makes a chat (#1995) before it opens the chat the way it always did */
+const DIRECT_CHAT_TIMEOUT_MS = 5000;
+/** How long the exchange of the sign-in for an Orbit session may take, answer and body: past this it is no session, and the next call asks again */
+const SESSION_EXCHANGE_MS = 15_000;
+/** How long a change to one of the person's Bricks may take before it counts as failed, so no switch or button hangs. */
+const BRICK_WRITE_TIMEOUT_MS = 20_000;
+/**
+ * The header a control of a computer job carries its own id in (GPT's sixth answer, finding 4): Orbit does that control once per id and answers a repeat with what it did the first
+ * time, so a tap whose request is sent again (the sign-in was renewed in the middle of it) pauses once, cancels once and makes one note.
+ */
+export const COMPUTER_COMMAND_HEADER = "X-Computer-Command";
+/** The shape Orbit takes for a control's id: anything else is left off rather than sent as a bad id. */
+const COMMAND_ID_SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
+
+/** The header of one control's id, when there is one to send. */
+const commandHeader = (commandId: string | undefined): { headers?: Record<string, string> } =>
+    commandId && COMMAND_ID_SHAPE.test(commandId) ? { headers: { [COMPUTER_COMMAND_HEADER]: commandId } } : {};
 
 export function isOrbitSessionResponse(value: unknown): value is { version: 2; sessionId: string; expiresAt: number } {
     if (!value || typeof value !== "object") return false;
@@ -130,6 +152,12 @@ export interface MembershipButton {
     label: string;
 }
 
+/** A random name for this page load: letters, digits and dashes, long enough never to meet another. */
+function randomPageLoadId(): string {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export class BotApiService {
     private accessToken: string | null = null;
     /** The game's token this service signs in with; renewed in place when its OIDC access token runs out. */
@@ -138,9 +166,14 @@ export class BotApiService {
     /** Set up by a room yet: until then a missing Orbit address says nothing about the server */
     private initialized = false;
     private roomId: string | null = null;
+    // When the game saw the player come into this room: sent with each Brick sync so Orbit can tell a late sync from a room they left
+    private enteredRoomAt: number | null = null;
+    // Which page load of the game says so: Orbit compares these times only when the same one said both, since another device has a clock of its own
+    private readonly pageLoadId: string = randomPageLoadId();
     private botServerUrl: string | null = null;
     private sessionTokenPromise: Promise<string | null> | null = null; // Cache login attempt to avoid multiple simultaneous calls
     private readonly initializeListeners = new Set<() => void>();
+    private readonly identityListeners = new Set<() => void>();
 
     /**
      * Initialize the API service with extension options
@@ -155,10 +188,13 @@ export class BotApiService {
         const roomIdChanged = this.roomId !== null && this.roomId !== roomId;
         this.initialized = true;
         const previousAdminUrl = this.adminUrl;
+        let identityChanged = false;
         const nextAccessToken = this.getAccessTokenFromJwt(userAccessToken);
         if (this.accessToken !== nextAccessToken) {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
+            this.resetTimeZoneKept();
+            identityChanged = true;
         }
         this.accessToken = nextAccessToken;
         if (!userAccessToken) this.gameToken = null;
@@ -174,6 +210,14 @@ export class BotApiService {
         if (this.adminUrl !== previousAdminUrl) {
             this.clearSessionCache();
             this.sessionTokenPromise = null;
+            this.resetTimeZoneKept();
+            identityChanged = true;
+        }
+        if (identityChanged) {
+            // Another account or Orbit: the looking after of a Brick's visit was for the one before, and its checks would speak with
+            // the credentials of the one now. One for the same account, Orbit and room goes on
+            this.stopVisitRecheck();
+            this.identityListeners.forEach((listener) => listener());
         }
 
         try {
@@ -185,6 +229,11 @@ export class BotApiService {
             console.error("[BotApiService] Refusing insecure bot-server credential target:", error);
             this.botServerUrl = null;
         }
+        if (this.roomId !== roomId) {
+            this.enteredRoomAt = Date.now();
+            // The Brick of the room before is not this room's to look after: a room entered again starts its own sync
+            this.stopVisitRecheck();
+        }
         this.roomId = roomId;
         this.initializeListeners.forEach((listener) => listener());
         return roomIdChanged;
@@ -194,6 +243,12 @@ export class BotApiService {
     onInitialize(listener: () => void): () => void {
         this.initializeListeners.add(listener);
         return () => this.initializeListeners.delete(listener);
+    }
+
+    /** Called when initialize() moved to another account or another Orbit: what was kept for the one before must go. Returns how to stop. */
+    onIdentityChange(listener: () => void): () => void {
+        this.identityListeners.add(listener);
+        return () => this.identityListeners.delete(listener);
     }
 
     /**
@@ -274,11 +329,14 @@ export class BotApiService {
             }
             const loginAttempt = this.fetchSessionTokenFromAdminApi();
             this.sessionTokenPromise = loginAttempt;
-            const token = await loginAttempt;
-            if (this.sessionTokenPromise === loginAttempt) {
-                this.sessionTokenPromise = null;
+            try {
+                return await loginAttempt;
+            } finally {
+                // Only the attempt that is still the cached one is let go: a newer one is not touched
+                if (this.sessionTokenPromise === loginAttempt) {
+                    this.sessionTokenPromise = null;
+                }
             }
-            return token;
         }
 
         return null;
@@ -328,6 +386,10 @@ export class BotApiService {
         const adminUrl = this.adminUrl;
         if (!adminUrl) return null;
 
+        // The exchange is shared by every caller that waits for the sign-in, so it has a deadline of its own that covers the answer and
+        // its body: one that never answers ends as "no session" for all of them, and the next call asks again
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), SESSION_EXCHANGE_MS);
         try {
             const response = await fetch(`${adminUrl}/api/auth/session`, {
                 method: "POST",
@@ -335,6 +397,7 @@ export class BotApiService {
                     Authorization: `Bearer ${accessToken}`,
                 },
                 credentials: "omit",
+                signal: stop.signal,
             });
 
             if (!response.ok) {
@@ -375,6 +438,8 @@ export class BotApiService {
                 console.error("[BotApiService] Error fetching session token from Admin API:", error);
             }
             return null;
+        } finally {
+            clearTimeout(timer);
         }
     }
 
@@ -410,6 +475,63 @@ export class BotApiService {
         }
     }
 
+    /** What Orbit said when it refused a call: the words, and the parts a caller may act on */
+    private async readRefusal(response: Response): Promise<{
+        status: number;
+        message: string;
+        isSessionExpired: boolean;
+        code?: string;
+        reason?: string;
+        place?: string;
+    }> {
+        const errorText = await response.text();
+        let message = `API error: ${response.status}`;
+        let isSessionExpired = false;
+        let code: string | undefined;
+        let reason: string | undefined;
+        let place: string | undefined;
+
+        try {
+            const errorJson = JSON.parse(errorText);
+            message = errorJson.message || errorJson.error || message;
+            code = typeof errorJson.code === "string" ? errorJson.code : undefined;
+            // Why a Brick's visit was refused, and in which place (#2005): `lives_in` names the room it lives in
+            reason = typeof errorJson.reason === "string" ? errorJson.reason : undefined;
+            place = typeof errorJson.place === "string" ? errorJson.place : undefined;
+            // Check if it's a session expiration error
+            if (
+                message.toLowerCase().includes("session expired") ||
+                message.toLowerCase().includes("session invalid")
+            ) {
+                isSessionExpired = true;
+            }
+        } catch {
+            message = errorText || message;
+        }
+        return { status: response.status, message, isSessionExpired, code, reason, place };
+    }
+
+    private refusalError(refusal: {
+        status: number;
+        message: string;
+        code?: string;
+        reason?: string;
+        place?: string;
+    }): Error {
+        const error = new Error(refusal.message) as Error & {
+            status?: number;
+            code?: string;
+            reason?: string;
+            place?: string;
+        };
+        error.status = refusal.status;
+        // What Orbit calls this refusal, for a caller that acts on more than the words (a speech server that lists no voices)
+        if (refusal.code !== undefined) error.code = refusal.code;
+        if (refusal.reason !== undefined) error.reason = refusal.reason;
+        if (refusal.place !== undefined) error.place = refusal.place;
+        return error;
+    }
+
     /**
      * Make authenticated API request
      * Uses only an opaque Admin API session in the Authorization header.
@@ -419,13 +541,24 @@ export class BotApiService {
             throw new Error("BotApiService not initialized. Missing adminUrl.");
         }
 
+        // Which Orbit and account this request started with: when the game moves to another one while it is on its way, a 401 is not
+        // answered by asking the new one for a session and sending the same request there (#2006)
+        const startedWith = this.timeZoneGeneration;
+        // The Orbit it is for is taken now, before anything is waited for: a session lookup that ends after the game moved to another
+        // Orbit never sends this request there, nor with a session of the other account
+        const origin = this.adminUrl;
+
         // Try to get Admin API session token first (async - may fetch new one if missing/expired). A keepalive
         // request goes out while the page closes, when renewing first would be cut off: it takes the session as it
         // is while that still works.
         const sessionToken =
             (options.keepalive ? this.unexpiredSessionToken() : null) ?? (await this.getAdminApiSessionToken());
 
-        const url = `${this.adminUrl}${endpoint}`;
+        if (startedWith !== this.timeZoneGeneration || origin !== this.adminUrl) {
+            throw new Error("The game moved to another Orbit or account before this request went out.");
+        }
+
+        const url = `${origin}${endpoint}`;
 
         // Build headers
         const headers: Record<string, string> = {
@@ -444,28 +577,12 @@ export class BotApiService {
         });
 
         if (!response.ok) {
-            const errorText = await response.text();
-            let errorMessage = `API error: ${response.status}`;
-            let isSessionExpired = false;
-            let errorCode: string | undefined;
-
-            try {
-                const errorJson = JSON.parse(errorText);
-                errorMessage = errorJson.message || errorJson.error || errorMessage;
-                errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
-                // Check if it's a session expiration error
-                if (
-                    errorMessage.toLowerCase().includes("session expired") ||
-                    errorMessage.toLowerCase().includes("session invalid")
-                ) {
-                    isSessionExpired = true;
-                }
-            } catch {
-                errorMessage = errorText || errorMessage;
-            }
+            const refusal = await this.readRefusal(response);
 
             // If 401 and we were using session token, clear it and try to refresh
-            if (response.status === 401 && sessionToken) {
+            // Only for the Orbit and account the request started with: the cache now belongs to the one the game is on, and the
+            // request (its body may carry credentials) goes nowhere else
+            if (response.status === 401 && sessionToken && startedWith === this.timeZoneGeneration) {
                 if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                     console.warn("[BotApiService] Session token may be expired, clearing cache and refreshing");
                 }
@@ -475,8 +592,10 @@ export class BotApiService {
                 // If we have accessToken, try to fetch a new session token and retry
                 if (this.accessToken) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
-                    if (newToken) {
-                        const retryUrl = `${this.adminUrl}${endpoint}`;
+                    // Asking for the session took time too: the game may have moved on meanwhile, and the request goes back only to the Orbit it
+                    // started with (the url it was first sent to), never to the one the game is on now
+                    if (newToken && startedWith === this.timeZoneGeneration) {
+                        const retryUrl = url;
                         const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
 
                         const retryResponse = await fetch(retryUrl, {
@@ -487,30 +606,94 @@ export class BotApiService {
                         if (retryResponse.ok) {
                             return retryResponse;
                         }
+                        // The renewed session was taken and Orbit gave its own answer (a 409 for a repeated request key, say):
+                        // that is the answer, not "your session has expired"
+                        if (retryResponse.status !== 401) {
+                            throw this.refusalError(await this.readRefusal(retryResponse));
+                        }
                     }
                 }
             }
 
             // Create a more specific error for session expiration
-            if (isSessionExpired || response.status === 401) {
+            if (refusal.isSessionExpired || response.status === 401) {
                 const authError = new Error(
                     sessionToken
                         ? "Your session has expired. Please re-authenticate to continue managing bots."
                         : "Authentication failed. Please ensure you are logged in."
                 ) as AuthError;
                 authError.isAuthError = true;
-                authError.isSessionExpired = isSessionExpired;
+                authError.isSessionExpired = refusal.isSessionExpired;
+                authError.status = response.status;
                 throw authError;
             }
 
-            const error = new Error(errorMessage) as Error & { status?: number; code?: string };
-            error.status = response.status;
-            // What Orbit calls this refusal, for a caller that acts on more than the words (a speech server that lists no voices)
-            if (errorCode !== undefined) error.code = errorCode;
-            throw error;
+            throw this.refusalError(refusal);
         }
 
         return response;
+    }
+
+    private timeZoneKept = false;
+    private timeZoneTries = 0;
+    private timeZoneSending = false;
+
+    /**
+     * Counts the times `initialize()` moved to another Orbit or account: an answer that belongs to an older count says
+     * nothing about the current one. A token renewed in the middle of a send does not change it. A request that was on its way when
+     * the count changed is not sent again to the new Orbit with the new session.
+     */
+    private timeZoneGeneration = 0;
+
+    private resetTimeZoneKept(): void {
+        this.timeZoneGeneration++;
+        this.timeZoneKept = false;
+        this.timeZoneTries = 0;
+        this.timeZoneSending = false;
+    }
+
+    /**
+     * Tells Orbit the time zone this player's own device is in (preference `timeZone`), so a Brick reads "tomorrow at
+     * 9" on their clock without ever asking where they are (game #2002). Once per page load for a signed-in player,
+     * tried again on the next asks while it fails (a session still being set up), three times at most, and never
+     * loudly: when it cannot be sent the Brick simply asks once.
+     */
+    async keepTimeZone(): Promise<void> {
+        if (
+            this.timeZoneKept ||
+            this.timeZoneSending ||
+            this.timeZoneTries >= 3 ||
+            !this.adminUrl ||
+            !this.accessToken
+        ) {
+            return;
+        }
+        let zone: string | undefined;
+        try {
+            zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        } catch {
+            return;
+        }
+        if (typeof zone !== "string" || zone.length === 0 || zone.length > 64) return;
+        const generation = this.timeZoneGeneration;
+        this.timeZoneSending = true;
+        this.timeZoneTries++;
+        try {
+            // With a deadline over the session lookup and the request both: one that never answers must not keep the slot for good
+            await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, (signal) =>
+                this.fetch("/api/me/preferences", {
+                    method: "PUT",
+                    body: JSON.stringify({ key: "timeZone", value: zone }),
+                    signal,
+                })
+            );
+            // An answer from an Orbit or an account the player has since left says nothing about the new one
+            if (this.timeZoneGeneration === generation) this.timeZoneKept = true;
+        } catch {
+            // Not kept this time
+        } finally {
+            if (this.timeZoneGeneration === generation) this.timeZoneSending = false;
+        }
     }
 
     /**
@@ -1129,6 +1312,1068 @@ export class BotApiService {
     }
 
     /**
+     * The signed-in person's own Brick (game #1995): Orbit makes it the first time anyone asks for this account and
+     * answers with the same one ever after, from every device. `deleted` when its owner deleted it on purpose: it is
+     * not made again. Throws for a guest and when Orbit can't be reached.
+     */
+    async ensureMyBrick(): Promise<unknown> {
+        const response = await this.fetch("/api/bricks/default", { method: "POST" });
+        return response.json();
+    }
+
+    /**
+     * A change to one of the person's Bricks, with a deadline: past it the request is dropped and this throws, so the
+     * caller's usual failure shows instead of a switch or button that waits for good.
+     */
+    private async brickWrite(endpoint: string, options: RequestInit): Promise<unknown> {
+        return await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, async (signal) => {
+            // The answer's body is read inside the same deadline: headers that come in time with a body that never
+            // ends would otherwise hold the switch as long as the connection lives
+            const response = await this.fetch(endpoint, { ...options, signal });
+            return (await response.json()) as unknown;
+        });
+    }
+
+    /**
+     * One request, the sign-in that comes first in it and the reading of its answer, all under one deadline: past it the request is
+     * dropped and this throws with `timeoutMessage`. Raced as well as aborted, because the sign-in does not listen for the abort. What
+     * `run` does after the deadline has been given up on is not reported again.
+     */
+    private async withDeadline<T>(
+        timeoutMessage: string,
+        ms: number,
+        run: (signal: AbortSignal) => Promise<T>
+    ): Promise<T> {
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const late = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                reject(new Error(timeoutMessage));
+            }, ms);
+        });
+        try {
+            const answer = run(stop.signal);
+            answer.catch(() => undefined);
+            return await Promise.race([answer, late]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /** The signed-in person's Bricks, for their Bricks page: the one everyone gets first, then the ones they made. */
+    async listMyBricks(): Promise<unknown> {
+        const response = await this.fetch("/api/bricks");
+        return response.json();
+    }
+
+    /** Turns one of the person's own Bricks on or off. Answers with the Brick as it is now. */
+    async setBrickEnabled(brickId: string, enabled: boolean): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled }),
+        });
+    }
+
+    /**
+     * Saves a change to one of the person's own Bricks from its page (game #1996): its name, line, Personality or
+     * switch. Answers with `{ brick }`, its card as it is now. Throws when Orbit refuses or can't be reached.
+     */
+    async changeMyBrick(brickId: string, change: BrickChange): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, {
+            method: "PATCH",
+            body: JSON.stringify(change),
+        });
+    }
+
+    /**
+     * Makes another Brick for the signed-in person (game #1996): New Brick on their Bricks page. Answers with
+     * `{ brick }`. Throws when Orbit refuses or can't be reached.
+     */
+    async makeMyBrick(brick: { name: string; characterTextureId?: string }): Promise<unknown> {
+        return await this.brickWrite("/api/bricks", { method: "POST", body: JSON.stringify(brick) });
+    }
+
+    /**
+     * A Brick's computer as its owner sees it (game #2000): whether it is on, what it is doing, how much of the month is
+     * left. Only reads; it never makes or wakes anything. `{ computer }`.
+     */
+    async getBrickComputer(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer`, {});
+    }
+
+    /** One of the owner's calls on a Brick's computer (give, turn off, stop, take over, hand back, fill in details). */
+    async brickComputerAction(
+        brickId: string,
+        action: "give" | "turn-off" | "stop" | "take-over" | "hand-back" | "fill-details",
+        /** With "fill-details": what the screen showed Brick is ready to put in, and where. Orbit refuses the tap if Brick named something else since. */
+        shown?: { what: string; where: string },
+        /** With "stop": this tap's own id, so the same tap sent again (a renewed sign-in resends it) ends the jobs once. */
+        commandId?: string,
+        /**
+         * With "stop": the jobs the screen showed when the person tapped (GPT's seventh note D2). Orbit ends only those still live, never a job that began since,
+         * and answers which it stopped and which it left (`{ computer, stopped, left }`).
+         */
+        confirmedJobIds?: string[]
+    ): Promise<unknown> {
+        const base = `/api/bricks/${encodeURIComponent(brickId)}/computer`;
+        // Every call has a deadline, so a stalled one fails and the controls and the poll carry on
+        return action === "give"
+            ? await this.brickWrite(base, { method: "POST" })
+            : action === "turn-off"
+            ? await this.brickWrite(base, { method: "DELETE" })
+            : action === "fill-details" && shown
+            ? await this.brickWrite(`${base}/${action}`, {
+                  method: "POST",
+                  body: JSON.stringify({ what: shown.what, where: shown.where }),
+              })
+            : action === "stop" && confirmedJobIds && confirmedJobIds.length > 0
+            ? await this.brickWrite(`${base}/${action}`, {
+                  method: "POST",
+                  body: JSON.stringify({ confirmedJobIds }),
+                  ...commandHeader(commandId),
+              })
+            : await this.brickWrite(`${base}/${action}`, { method: "POST", ...commandHeader(commandId) });
+    }
+
+    /**
+     * One of the owner's calls on one job of a Brick's computer: pause it, resume it, move it first in line, or cancel it alone (the other
+     * jobs carry on). With "first", `pauseRunning` also pauses the job that has the computer and starts this one now; the paused one goes
+     * on by itself afterwards. Orbit answers with the computer (`{ computer }`), or refuses with a 409 whose `reason` says why.
+     */
+    async brickComputerJobAction(
+        brickId: string,
+        jobId: string,
+        action: "pause" | "resume" | "first" | "cancel",
+        options: { pauseRunning?: boolean; commandId?: string } = {}
+    ): Promise<unknown> {
+        const url = `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/${action}`;
+        return action === "first" && options.pauseRunning
+            ? await this.brickWrite(url, {
+                  method: "POST",
+                  body: JSON.stringify({ pauseRunning: true }),
+                  ...commandHeader(options.commandId),
+              })
+            : await this.brickWrite(url, { method: "POST", ...commandHeader(options.commandId) });
+    }
+
+    /** Something new for one job, in the person's own words ("use 12 March instead"): it reaches the job within seconds. `{ computer }`. */
+    async noteToBrickComputerJob(brickId: string, jobId: string, text: string, commandId?: string): Promise<unknown> {
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/note`,
+            { method: "POST", body: JSON.stringify({ text }), ...commandHeader(commandId) }
+        );
+    }
+
+    /** What one job has done so far, oldest first (`{ steps }`). Only reads; it never wakes the computer. */
+    async getBrickComputerJobActivity(brickId: string, jobId: string): Promise<unknown> {
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/activity`,
+            {}
+        );
+    }
+
+    /** Dismisses the notice of how a job ended ("stopped waiting for you", "this month's time ran out"): only the ending it was shown for. */
+    async dismissBrickComputerNotice(brickId: string, jobId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/dismiss`, {
+            method: "POST",
+            body: JSON.stringify({ jobId }),
+        });
+    }
+
+    /**
+     * A ticket for the screen of the person's own computer, to open on the bot server within a minute. Watch by default; input is only
+     * for the person who has taken over. Never wakes a machine: a resting computer, or input before a take over, answers 409, which is
+     * `undefined` (nothing to show now). A request that did not go through is "failed", so the screen can ask again soon.
+     */
+    async screenTicketForBrick(
+        brickId: string,
+        mode: "watch" | "input"
+    ): Promise<{ ticket: string } | undefined | "failed"> {
+        try {
+            const data = (await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer/screen`, {
+                method: "POST",
+                body: JSON.stringify({ mode }),
+            })) as { ticket?: unknown; resting?: unknown; notTakenOver?: unknown };
+            if (typeof data.ticket === "string") return { ticket: data.ticket };
+            return data.resting === true || data.notTakenOver === true ? undefined : "failed";
+        } catch (error) {
+            return (error as { status?: number }).status === 409 ? undefined : "failed";
+        }
+    }
+
+    /** Where the screen socket is on the bot server for a ticket (wss on a secure page), or null when the bot server's address was refused. */
+    screenSocketUrl(ticket: string): string | null {
+        const base = this.getBotServerUrl();
+        if (!base) return null;
+        return `${base.replace(/^http/, "ws").replace(/\/+$/, "")}/computer/screen?ticket=${encodeURIComponent(
+            ticket
+        )}`;
+    }
+
+    /**
+     * The signed-in person's Usage page (game #1999): one bar and plain words for Universe AI, computer time and storage
+     * for someone whose Brick uses a computer, and one line while they have extra usage. Throws when Orbit can't be reached.
+     */
+    async getMyUsage(): Promise<unknown> {
+        const response = await this.fetch("/api/me/usage");
+        return response.json();
+    }
+
+    /**
+     * "Ask for more" on the Usage page, when Instant Apps credit or computer time is used up (the category says which;
+     * Orbit reads none as the computer's). Only a request to the Universe team: no debt. Throws when Orbit refuses or
+     * can't be reached.
+     */
+    async askForMoreUsage(category?: "apps" | "computer"): Promise<unknown> {
+        const response = await this.fetch("/api/me/usage/ask-for-more", {
+            method: "POST",
+            ...(category
+                ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category }) }
+                : {}),
+        });
+        return response.json();
+    }
+
+    /**
+     * One call about Apps (game #2001), with a deadline like a Brick's. Orbit answers some writes with nothing (204): that
+     * is `undefined`, not an error. Throws when Orbit refuses or can't be reached.
+     */
+    private async appsCall(endpoint: string, options: RequestInit = {}): Promise<unknown> {
+        return await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, async (signal) => {
+            const response = await this.fetch(endpoint, { ...options, signal });
+            const body = await response.text();
+            return body ? (JSON.parse(body) as unknown) : undefined;
+        });
+    }
+
+    /** The apps the person connected, with the Bricks of theirs that use each, and the Bricks they have. */
+    async getMyApps(): Promise<unknown> {
+        return await this.appsCall("/api/me/apps");
+    }
+
+    /** What the safe form for a key shows (game #2044): the service, where the key will be sent, and what is checked. Only for the person it was opened for. */
+    async getKeyForm(formId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/key-forms/${encodeURIComponent(formId)}`);
+    }
+
+    /** Opens the safe form for a service Universe ships, or for replacing the key of an app of theirs. Answers the form's id. */
+    async openKeyForm(target: { service: string } | { connectionId: string }): Promise<string> {
+        const answer = (await this.appsCall("/api/me/apps/key-forms", {
+            method: "POST",
+            body: JSON.stringify(target),
+        })) as { id?: unknown } | undefined;
+        if (typeof answer?.id !== "string" || !answer.id) throw new Error("The form was not opened");
+        return answer.id;
+    }
+
+    /**
+     * The key, typed into the safe form. It goes straight to Orbit and nowhere else, and is never read back: the answer holds the
+     * app's id and name. A refusal is thrown with Orbit's `status` and `code` (rejected, mode_change, invalid_key, unreachable,
+     * expired, used, too_many).
+     */
+    async submitKey(formId: string, key: string, confirmChange = false): Promise<{ id: string; name: string }> {
+        const answer = (await this.appsCall(`/api/me/apps/key-forms/${encodeURIComponent(formId)}/key`, {
+            method: "POST",
+            body: JSON.stringify({ key, ...(confirmChange ? { confirmChange: true } : {}) }),
+        })) as { id?: unknown; name?: unknown } | undefined;
+        if (typeof answer?.id !== "string" || !answer.id) throw new Error("The key was not saved");
+        return { id: answer.id, name: typeof answer.name === "string" ? answer.name : "" };
+    }
+
+    /** "Add your own app": connects an app by its link. No Brick uses it until the person lets one. Answers `{ id, name }`
+     * (201 for a new app, 200 with the first app for a repeated `requestKey`; 409 when the key comes back with a different app). */
+    async addMyApp(app: {
+        name: string;
+        serverUrl: string;
+        authType: "none" | "bearer" | "api-key" | "oauth";
+        authConfig?: string;
+        headers?: Record<string, string>;
+        /** The same key again answers with the app the first try made (200), so a repeat after a timeout makes no second app */
+        requestKey?: string;
+    }): Promise<unknown> {
+        return await this.appsCall("/api/me/apps", { method: "POST", body: JSON.stringify(app) });
+    }
+
+    /** What an app of the person's can do, listed from the app itself once it is connected: `{ things: string[] }`. */
+    async getMyAppThings(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/things`);
+    }
+
+    /**
+     * "Use my own GitHub key instead" (game #2041): the key goes to Orbit, which checks it with GitHub and keeps it locked; it is
+     * never shown again. Answers `{ id, login }`. Throws with `code` "refused" when GitHub did not take the key.
+     */
+    async saveGitHubKey(key: string): Promise<unknown> {
+        return await this.appsCall("/api/me/apps/github/key", { method: "POST", body: JSON.stringify({ key }) });
+    }
+
+    /**
+     * Finishes a GitHub sign-in that came back to the sign-in window, as the signed-in person (only the person who started it can).
+     * `installUrl` when Universe's GitHub App is not added anywhere of theirs yet: the page to pick where it works.
+     */
+    async finishGitHubSignIn(state: string, code: string): Promise<{ installUrl: string | null }> {
+        const answer = (await this.appsCall("/api/me/apps/github/finish", {
+            method: "POST",
+            body: JSON.stringify({ state, code }),
+        })) as { installUrl?: unknown } | undefined;
+        return {
+            installUrl:
+                typeof answer?.installUrl === "string" && answer.installUrl.startsWith("https://github.com/")
+                    ? answer.installUrl
+                    : null,
+        };
+    }
+
+    /** "Switch back to GitHub sign-in": the pasted key is deleted from Universe; the person signs in on GitHub again. */
+    async dropGitHubKey(): Promise<unknown> {
+        return await this.appsCall("/api/me/apps/github/key", { method: "DELETE" });
+    }
+
+    /** One of the person's apps: its Bricks, where it is lent, and the universes it could still be lent to. */
+    async getMyApp(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`);
+    }
+
+    /**
+     * "Connect" on an app of the list a super admin keeps (by its key): makes the person's connection to it, or answers
+     * the one they already have. Nothing signs in yet and no Brick uses it yet. Answers its id.
+     */
+    async connectListedApp(key: string): Promise<string> {
+        const answer = (await this.appsCall("/api/me/apps", {
+            method: "POST",
+            body: JSON.stringify({ catalogKey: key }),
+        })) as { id?: unknown } | undefined;
+        if (typeof answer?.id !== "string" || !answer.id) throw new Error("The app was not connected");
+        return answer.id;
+    }
+
+    /** "Let it use Tavily": one of the person's own Bricks may use one of their own apps. */
+    async letBrickUseApp(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/bricks`, {
+            method: "POST",
+            body: JSON.stringify({ botId }),
+        });
+    }
+
+    /** "Remove": the Brick stops using the app at once, also in a chat that is already open. */
+    async removeBrickFromApp(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/bricks/${encodeURIComponent(botId)}`, {
+            method: "DELETE",
+        });
+    }
+
+    /**
+     * "Other people" on an app's page for one Brick of the person's (game #2006): whether others can ask it for jobs from this app,
+     * which jobs, and the two limits. Never the app's link, key or account.
+     */
+    async getAppShare(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId));
+    }
+
+    /** "Let others use it": starts with the jobs picked (none picked is the one job there is). Answers what is shared. */
+    async startAppShare(
+        appId: string,
+        botId: string,
+        start: { jobs?: unknown[]; usesPerDayEveryone?: number; usesPerDayPerson?: number } = {}
+    ): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "POST", body: JSON.stringify(start) });
+    }
+
+    /** "Change": the whole list of jobs people can ask for (one left out stops at once) and the two limits. */
+    async changeAppShare(
+        appId: string,
+        botId: string,
+        change: { jobs?: unknown[]; usesPerDayEveryone?: number; usesPerDayPerson?: number }
+    ): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "PATCH", body: JSON.stringify(change) });
+    }
+
+    /** "Stop letting others use it": every later ask is refused at once, in a chat that is already open too. */
+    async stopAppShare(appId: string, botId: string): Promise<unknown> {
+        return await this.appsCall(this.shareUrl(appId, botId), { method: "DELETE" });
+    }
+
+    private shareUrl(appId: string, botId: string): string {
+        return `/api/me/apps/${encodeURIComponent(appId)}/bricks/${encodeURIComponent(botId)}/share`;
+    }
+
+    /** Disconnects one of the person's apps: every Brick and bot stops using it at once. */
+    async disconnectMyApp(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}`, { method: "DELETE" });
+    }
+
+    /** "Lend": lends one of the person's apps to a universe where they manage bots. Asked again, it changes the limits. */
+    async lendApp(
+        appId: string,
+        lend: { universeId: string; things: string[] | null; usesPerDay: number | null }
+    ): Promise<unknown> {
+        return await this.appsCall(`/api/me/apps/${encodeURIComponent(appId)}/lends`, {
+            method: "POST",
+            body: JSON.stringify(lend),
+        });
+    }
+
+    /** "Change": the limits of a lend. */
+    async changeAppLend(
+        appId: string,
+        universeId: string,
+        change: { things: string[] | null; usesPerDay: number | null }
+    ): Promise<unknown> {
+        return await this.appsCall(
+            `/api/me/apps/${encodeURIComponent(appId)}/lends/${encodeURIComponent(universeId)}`,
+            { method: "PATCH", body: JSON.stringify(change) }
+        );
+    }
+
+    /** "Take back": every bot there stops at once, also in open chats. */
+    async takeAppBack(appId: string, universeId: string): Promise<unknown> {
+        return await this.appsCall(
+            `/api/me/apps/${encodeURIComponent(appId)}/lends/${encodeURIComponent(universeId)}`,
+            { method: "DELETE" }
+        );
+    }
+
+    /** "Your universes": the universes where the person manages bots, each with how many apps belong to it. */
+    async getMyAppUniverses(): Promise<unknown> {
+        return await this.appsCall("/api/me/universes");
+    }
+
+    /** The apps that belong to one universe, which the person manages. */
+    async getUniverseApps(universeId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/universes/${encodeURIComponent(universeId)}/apps`);
+    }
+
+    /** One app that belongs to a universe: who connected it, its managers, its bots, and who could be added as a manager. */
+    async getTeamApp(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/team-apps/${encodeURIComponent(appId)}`);
+    }
+
+    /** "Add a manager": a person who can manage bots in that universe. */
+    async addTeamAppManager(appId: string, userId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/team-apps/${encodeURIComponent(appId)}/managers`, {
+            method: "POST",
+            body: JSON.stringify({ userId }),
+        });
+    }
+
+    /** Takes a manager off a universe's app. */
+    async removeTeamAppManager(appId: string, personId: string): Promise<unknown> {
+        return await this.appsCall(
+            `/api/me/team-apps/${encodeURIComponent(appId)}/managers/${encodeURIComponent(personId)}`,
+            { method: "DELETE" }
+        );
+    }
+
+    /** Disconnects a universe's app: every bot stops using it at once. */
+    async disconnectTeamApp(appId: string): Promise<unknown> {
+        return await this.appsCall(`/api/me/team-apps/${encodeURIComponent(appId)}`, { method: "DELETE" });
+    }
+
+    /** The address of the app's own sign-in page, for Reconnect. The return fills the app once, for everyone who uses it. */
+    async startAppSignIn(appId: string, redirectUrl: string, callbackUrl: string): Promise<string> {
+        const answer = (await this.appsCall(
+            `/api/me/apps/${encodeURIComponent(appId)}/sign-in?redirectUrl=${encodeURIComponent(
+                redirectUrl
+            )}&callbackUrl=${encodeURIComponent(callbackUrl)}`
+        )) as { authorizeUrl?: unknown } | undefined;
+        if (typeof answer?.authorizeUrl !== "string" || !answer.authorizeUrl) {
+            throw new Error("The app's sign-in did not start");
+        }
+        return answer.authorizeUrl;
+    }
+
+    /** "Connect another": the apps a super admin put on the list, which sign in on their own official page. */
+    async getAppCatalog(): Promise<unknown> {
+        return await this.appsCall("/api/me/apps/catalog");
+    }
+
+    /** The ready-made apps. Orbit answers 404 while there are none to offer, exactly like a route that is not there: that is an empty list. */
+    async getReadyMadeApps(): Promise<unknown> {
+        try {
+            return await this.appsCall("/api/me/apps/ready-made");
+        } catch (error) {
+            if ((error as { status?: number }).status === 404) return { apps: [] };
+            throw error;
+        }
+    }
+
+    /** The Instant Apps, ready to use with nothing to connect. Orbit answers 404 while there are none: that is an empty list. */
+    async getInstantApps(): Promise<unknown> {
+        try {
+            return await this.appsCall("/api/me/apps/instant");
+        } catch (error) {
+            if ((error as { status?: number }).status === 404) return { apps: [] };
+            throw error;
+        }
+    }
+
+    /** "Connect" on a ready-made app: the person's connection and the address of the app's own sign-in page, unless already signed in. */
+    async connectReadyMadeApp(key: string, returnUrl: string): Promise<unknown> {
+        return await this.appsCall("/api/me/apps/ready-made", {
+            method: "POST",
+            body: JSON.stringify({ key, returnUrl }),
+        });
+    }
+
+    /** "More apps it can use here" on a room bot's page: apps lent to its universe by the asker, and the universe's own. */
+    async getAppsABotCouldUse(botId: string): Promise<unknown> {
+        return await this.appsCall(`/api/bots/${encodeURIComponent(botId)}/apps/available`);
+    }
+
+    /** "Let Guide use it". */
+    async letBotUseApp(botId: string, connectionId: string): Promise<unknown> {
+        return await this.appsCall(`/api/bots/${encodeURIComponent(botId)}/apps/available`, {
+            method: "POST",
+            body: JSON.stringify({ connectionId }),
+        });
+    }
+
+    /** Deletes one of the person's own Bricks: it stops at once and waits under Deleted, with Undo. */
+    async deleteMyBrick(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}`, { method: "DELETE" });
+    }
+
+    /**
+     * What a bot remembers about the signed-in person (game #2003), one thing at a time. Only their own list: Orbit
+     * never answers this for anyone else, whoever owns or manages the bot.
+     */
+    async getMyMemory(botId: string): Promise<unknown> {
+        // With the deadline brickWrite gives: a read that never answers shows Retry instead of loading for good
+        return await this.brickWrite(`/api/bots/${encodeURIComponent(botId)}/my-memory`, {});
+    }
+
+    /** The person makes a bot forget one thing from their list, or everything it remembers about them. */
+    async forgetMyMemory(botId: string, what: { itemId: string } | { everything: true }): Promise<unknown> {
+        return await this.brickWrite(`/api/bots/${encodeURIComponent(botId)}/my-memory/forget`, {
+            method: "POST",
+            body: JSON.stringify(what),
+        });
+    }
+
+    /** A Brick's goals and tasks for its owner (game #2002): `{ items }`, each with the part of the page it sits in. */
+    async getBrickItems(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items`, {});
+    }
+
+    /** Everything the person gave any of their Bricks (game #2002): `{ items }`, each with its `brickId` and `brickName`. */
+    async getAllBrickItems(): Promise<unknown> {
+        return await this.brickWrite("/api/bricks/items", {});
+    }
+
+    /** Everything one Brick did by itself for its owner, newest first (game #2002): `{ runs, next }`; `before` is the last page's `next`. */
+    async getBrickDid(brickId: string, before?: string): Promise<unknown> {
+        const query = before ? `?before=${encodeURIComponent(before)}` : "";
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/did${query}`, {});
+    }
+
+    /**
+     * The owner's own tap on a goal or task (game #2002): Pause, Resume, Mark done, Reopen, Snooze, Keep going or Run now. Answers `{ item }`
+     * (and `{ run }` for Run now). `key` is Run now's own idempotency key: the same tap sent twice is one run.
+     */
+    async tapBrickItem(brickId: string, itemId: string, action: string, key?: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/items/${encodeURIComponent(itemId)}`, {
+            method: "PATCH",
+            body: JSON.stringify(key === undefined ? { action } : { action, key }),
+        });
+    }
+
+    /**
+     * A Brick's files for its owner (game #2003): the first look at what it made, what they sent it, and what is on its
+     * computer, with every file counted.
+     */
+    async getBrickFiles(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files`, {});
+    }
+
+    /**
+     * One page of a Brick's files, newest first: the files it made or the files they sent, from the `cursor` a page
+     * before gave (none: the newest), keeping only those with the words of `search` in their name. The list goes on by
+     * cursor however many files there are, and a file deleted meanwhile moves nothing else.
+     */
+    async getBrickFilesPage(
+        brickId: string,
+        page: { section: "made" | "sent"; cursor?: string | null; search?: string }
+    ): Promise<unknown> {
+        const query = new URLSearchParams({ section: page.section });
+        if (page.cursor) query.set("cursor", page.cursor);
+        if (page.search) query.set("q", page.search);
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files?${query.toString()}`, {});
+    }
+
+    /** Deletes a file the owner sent their Brick: the one change the files list allows. */
+    async deleteBrickFile(brickId: string, fileId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/files/${encodeURIComponent(fileId)}`, {
+            method: "DELETE",
+        });
+    }
+
+    /**
+     * One file a Brick's computer made for its owner, as bytes. Opened with the owner's own sign-in (the file is theirs alone), so it is read here and
+     * saved from the page rather than followed as a link. Throws when Orbit refuses or has no such file.
+     */
+    async getBrickResult(brickId: string, fileId: string): Promise<Blob> {
+        const response = await this.fetch(
+            `/api/bricks/${encodeURIComponent(brickId)}/files/results/${encodeURIComponent(fileId)}`
+        );
+        return await response.blob();
+    }
+
+    /** Deletes a file a Brick's computer made for its owner: the kept copy goes. */
+    async deleteBrickResult(brickId: string, fileId: string): Promise<unknown> {
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/files/results/${encodeURIComponent(fileId)}`,
+            { method: "DELETE" }
+        );
+    }
+
+    /** What a person's Bricks' computers made, whose Brick is gone: theirs, with "A deleted Brick" on them. */
+    async getDeletedBrickResults(cursor?: string | null): Promise<unknown> {
+        return await this.brickWrite(
+            cursor ? `/api/bricks/results?cursor=${encodeURIComponent(cursor)}` : "/api/bricks/results",
+            {}
+        );
+    }
+
+    /** One of the person's own results, whichever Brick made it (it may be gone), as bytes. Throws when Orbit refuses or has no such file. */
+    async getOwnBrickResult(fileId: string): Promise<Blob> {
+        const response = await this.fetch(`/api/bricks/results/${encodeURIComponent(fileId)}`);
+        return await response.blob();
+    }
+
+    /** Deletes one of the person's own results: the kept copy goes. */
+    async deleteOwnBrickResult(fileId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/results/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+    }
+
+    /** Brings a deleted Brick back while it still waits. Answers with the Brick as it is now. */
+    async undoMyBrick(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/undo`, { method: "POST" });
+    }
+
+    /* ---- Brick templates (game #2008). Every call has a Brick's deadline, so no button waits for good. ---- */
+
+    /** "Start from a template": the person's starred ones, a few picks, and Bricks they met that share one. */
+    async getTemplateLists(): Promise<unknown> {
+        return await this.brickWrite("/api/brick-templates", {});
+    }
+
+    /** The look before creating a Brick from a template (`{ template }`). Rejects with status 404 when it is not there. */
+    async getTemplatePreview(templateId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}`, {});
+    }
+
+    /** "Create Brick": the person's own new Brick from a template. Answers with its card and where it came from. */
+    async useTemplate(templateId: string, name?: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}/use`, {
+            method: "POST",
+            body: JSON.stringify(name ? { name } : {}),
+        });
+    }
+
+    /** Star keeps a template for later; starring twice is the same star. */
+    async starTemplate(templateId: string, starred: boolean): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/${encodeURIComponent(templateId)}/star`, {
+            method: starred ? "PUT" : "DELETE",
+        });
+    }
+
+    /** The template on the card of a Brick someone meets (`{ template }`, null when it shares none). */
+    async getTemplateOfBrick(botId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/brick-templates/for-brick/${encodeURIComponent(botId)}`, {});
+    }
+
+    /** A Brick's own "Template" group, for its owner. */
+    async getMakerTemplate(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, {});
+    }
+
+    /** The look before sharing: exactly what would go with the template. Writes nothing. */
+    async lookAtTemplate(brickId: string, choices: Record<string, unknown>): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template/look`, {
+            method: "POST",
+            body: JSON.stringify(choices),
+        });
+    }
+
+    /** "Share as a template" / "Share your latest changes": shares exactly the look the `token` names. */
+    async shareTemplate(brickId: string, request: Record<string, unknown>): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, {
+            method: "PUT",
+            body: JSON.stringify(request),
+        });
+    }
+
+    /** "Stop sharing": nobody new can use it; no Brick is touched. */
+    async stopSharingTemplate(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/template`, { method: "DELETE" });
+    }
+
+    /** A Brick made from a template: where it came from, what it still needs, and a "Template updated" to review. */
+    async getMadeFrom(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/made-from`, {});
+    }
+
+    /** "Template updated": the owner takes some parts, all or none of what the maker changed. */
+    async takeTemplateUpdate(brickId: string, version: number, take: string[]): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/made-from/update`, {
+            method: "POST",
+            body: JSON.stringify({ version, take }),
+        });
+    }
+
+    /**
+     * Tells the bot server that a Brick was deleted or brought back, so it reads the Brick again now instead of within
+     * the minute. Never throws: without it the change still arrives, a little later.
+     */
+    async tellBrickChanged(brickId: string): Promise<void> {
+        if (!this.botServerUrl) return;
+        try {
+            await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/brick-changed`, { method: "POST" });
+        } catch (error) {
+            console.warn("Could not tell the bot server about a Brick", error);
+        }
+    }
+
+    /**
+     * What a Brick's page says about visiting, for the room the person is in (game #2005): `{ state, place }`. Orbit
+     * answers only its owner. Throws when it refuses or can't be reached.
+     */
+    async getBrickVisit(brickId: string, roomUrl: string): Promise<unknown> {
+        // With the deadline brickWrite gives, like the Brick controls beside it: a read or a button that never hears back fails
+        // instead of leaving the visit controls hidden or disabled until the page is reloaded
+        return await this.brickWrite(
+            `/api/bricks/${encodeURIComponent(brickId)}/visit?roomUrl=${encodeURIComponent(roomUrl)}`,
+            {}
+        );
+    }
+
+    /**
+     * "Bring along" (game #2005): the Brick walks beside its owner from the room they are in. Whichever Brick walked
+     * with them before goes home. Throws with `status` 409 when the place does not take visiting Bricks or the Brick is
+     * switched off.
+     */
+    async startBrickVisit(brickId: string, roomUrl: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/visit`, {
+            method: "POST",
+            body: JSON.stringify({ roomUrl }),
+        });
+    }
+
+    /** "End visit" (game #2005): the Brick goes home. Only the visit goes; nothing of the Brick changes. */
+    async endBrickVisit(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/visit`, { method: "DELETE" });
+    }
+
+    /**
+     * The Bricks that live in this room and the person's own Bricks that can be added to it (game #2005), for the map
+     * editor's list: `{ here: [...], mine: [...] }`. Orbit answers only someone who can manage bots here. Throws when it
+     * refuses or can't be reached.
+     */
+    async getRoomBricks(roomUrl: string): Promise<unknown> {
+        // With the deadline brickWrite gives, like the Brick controls beside it: a list or a button that never hears back fails
+        return await this.brickWrite(`/api/brick-homes?roomUrl=${encodeURIComponent(roomUrl)}`, {});
+    }
+
+    /**
+     * "Add here" (game #2005): the person's Brick gets a home in this room, standing at the spot they picked. Placing it
+     * again moves it. Answers `{ home, keyNote }`. Throws with `status` 403 when they cannot manage bots here.
+     */
+    async placeBrickHome(
+        brickId: string,
+        roomUrl: string,
+        spot: { behaviorType?: string; behaviorConfig?: unknown }
+    ): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/home`, {
+            method: "PUT",
+            body: JSON.stringify({ roomUrl, ...spot }),
+        });
+    }
+
+    /** Where a Brick lives, for its page (game #2005): `{ home }`, with `home` null when it has none. */
+    async getBrickHome(brickId: string): Promise<unknown> {
+        return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/home`, {});
+    }
+
+    /** "Take out" / "Take it out of this room" (game #2005): the Brick goes back to its owner's Bricks, nothing is deleted. */
+    async takeBrickOut(brickId: string): Promise<void> {
+        await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/home`, { method: "DELETE" });
+    }
+
+    /**
+     * Tells the bot server the person walked into a room, brought a Brick along or ended the visit, so the Brick they
+     * walk with is put beside them on this room's map or taken off it (game #2005). `position` is only where it first
+     * appears. Never throws: without it the Brick is put on the map the next time the person walks into a room. Answers
+     * whether the Brick is on the map now; undefined when the bot server could not be asked. `ending` is the sync after an
+     * ended visit: it only takes the Brick off, wherever the person stands.
+     */
+    async syncVisitingBrick(
+        position?: { x: number; y: number },
+        options?: { ending?: boolean; recheck?: boolean; entry?: boolean }
+    ): Promise<boolean | undefined> {
+        const roomId = this.roomId;
+        if (!this.botServerUrl || !roomId) return undefined;
+        // The sync after an ended visit takes the looking after of the visit that ends off as it STARTS: whatever it hears, or does not
+        // hear (it may run out of time), says nothing about a visit that is started after it
+        if (options?.ending) this.stopVisitRecheck();
+        const generation = this.visitRecheckGeneration;
+        // Of the syncs that may change the looking after (walking in, bringing along; not its own checks nor the end of a visit),
+        // only the latest one sent decides: an older one that is answered later says nothing about a visit started since
+        // A check of its own does not count as one of them, but it carries the count it was sent under: answered after a newer sync, it is
+        // passed by it, so a "not here" from before a Bring along never stops the looking after that sync started
+        const serial = options?.ending ? undefined : options?.recheck ? this.visitSyncSerial : ++this.visitSyncSerial;
+        try {
+            // With a deadline over the request and the body, like Orbit's visit calls: the Brick page's buttons wait for this,
+            // so a bot server that never answers must not leave them disabled
+            const answer = await this.withDeadline<{ present?: unknown; reason?: unknown } | null>(
+                "The bot server did not answer in time",
+                BRICK_WRITE_TIMEOUT_MS,
+                async (signal) => {
+                    const response = await this.fetchBotServer("/api/bricks/visit/sync", {
+                        method: "POST",
+                        signal,
+                        body: JSON.stringify({
+                            roomId,
+                            ...(position ?? {}),
+                            ...(options?.ending
+                                ? { ending: true }
+                                : this.enteredRoomAt !== null
+                                ? { enteredAt: this.enteredRoomAt, clientId: this.pageLoadId }
+                                : {}),
+                        }),
+                    });
+                    return (await response.json()) as { present?: unknown; reason?: unknown } | null;
+                }
+            );
+            const present = typeof answer?.present === "boolean" ? answer.present : undefined;
+            // "Not now" rather than "none": the person is not in the game's list of the room yet, Orbit or the place for it
+            // could not be had for a moment. A later check may find the Brick; a plain "none" means there is nothing to bring
+            const maybeLater =
+                answer?.reason === "not_seen" ||
+                answer?.reason === "orbit_unavailable" ||
+                answer?.reason === "no_position";
+            // While a Brick walks with its person here it is looked after: a Brick that dropped off the map (its connection
+            // broke, the bot server restarted) is put back by the next sync, and Orbit hears the person is still here
+            // The end of a visit changes nothing when it is answered: it stopped the looking after when it was sent
+            if (options?.ending) return present;
+            // An answer to a sync sent before the room or the visit changed: it says nothing about now (the looking after was
+            // stopped since), so it neither stops the new room's looking after nor starts one for a visit that ended
+            if (generation !== this.visitRecheckGeneration) return present;
+            if (serial !== undefined && serial !== this.visitSyncSerial) return present;
+            if (present === true) {
+                this.visitRecheckMisses = 0;
+                this.startVisitRecheck();
+            } else if (present === false && options?.entry && maybeLater) {
+                // Walking into a room, the Brick could not be put on the map yet: it is looked for again in a minute
+                this.visitRecheckMisses = 0;
+                this.startVisitRecheck();
+            } else if (present === false) {
+                // The bot server also says "not here" when it could not look (its room check failed for a moment): the
+                // looking after stops only after a few such answers in a row, not on the first
+                this.visitRecheckMisses += 1;
+                if (!options?.recheck || this.visitRecheckMisses >= BotApiService.VISIT_RECHECK_MISSES)
+                    // The looking after's own third miss ends it but does not void a walk in or Bring along still on its way: those
+                    // are judged by their own count, so a "here" from one of them still starts the looking after again
+                    this.stopVisitRecheck(!options?.recheck);
+            }
+            return present;
+        } catch (error) {
+            console.warn("Could not put the Brick beside you", error);
+            // A walk in or a Bring along that could not be answered (a deadline, the bot server for a moment) is looked at again in a minute,
+            // as an answer of "not here yet" is: unless the visit ended or another sync was sent since
+            if (
+                !options?.ending &&
+                serial !== undefined &&
+                serial === this.visitSyncSerial &&
+                generation === this.visitRecheckGeneration
+            )
+                this.startVisitRecheck();
+            return undefined;
+        }
+    }
+
+    /** Where the player stands now, for a Brick that has to be put back beside them (the game's own, set once). */
+    setOwnPlaceProvider(provider: (() => { x: number; y: number } | undefined) | undefined): void {
+        this.ownPlaceProvider = provider;
+    }
+
+    private ownPlaceProvider: (() => { x: number; y: number } | undefined) | undefined;
+    private visitRecheck: ReturnType<typeof setInterval> | undefined;
+    private static readonly VISIT_RECHECK_MS = 60_000;
+    /** "Not here" this many times in a row from the looking after, and it stops (about three minutes). */
+    private static readonly VISIT_RECHECK_MISSES = 3;
+    private visitRecheckMisses = 0;
+    /** Counts each stop of the looking after, so a sync answered after a stop cannot change it. */
+    private visitRecheckGeneration = 0;
+    /** Counts the syncs that may change the looking after, so the answer of an older one is never the one that decides. */
+    private visitSyncSerial = 0;
+
+    private startVisitRecheck(): void {
+        if (this.visitRecheck !== undefined) return;
+        this.visitRecheck = setInterval(() => {
+            const place = this.ownPlaceProvider?.();
+            // Without a place the bot server would not put it back: tried again a minute on
+            if (place) void this.syncVisitingBrick(place, { recheck: true });
+        }, BotApiService.VISIT_RECHECK_MS);
+    }
+
+    private stopVisitRecheck(voidInFlight = true): void {
+        if (voidInFlight) this.visitRecheckGeneration += 1;
+        this.visitRecheckMisses = 0;
+        if (this.visitRecheck === undefined) return;
+        clearInterval(this.visitRecheck);
+        this.visitRecheck = undefined;
+    }
+
+    /**
+     * "Not now" on a Brick's suggestion (game #1996): kept with the person's account, so the same topic is not
+     * suggested again in any chat or on any device. Throws when it could not be kept.
+     */
+    async declineBrickOffer(brickId: string, topic: string): Promise<void> {
+        await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/brick-offer`, {
+            method: "POST",
+            body: JSON.stringify({ topic }),
+        });
+    }
+
+    /**
+     * What the Brick for guests answers a guest's message (game #1997). The guest and the place are the game token's and
+     * this room's: the request names neither. Answers with what the bot server said, `{ kind: "reply" | "limit" | "busy" | "failed" }`;
+     * throws when it could not be asked at all (no bot server, no answer).
+     */
+    async guestBrickReply(request: {
+        turnId: string;
+        roomUrl: string;
+        message: string;
+        history: { from: "guest" | "brick"; text: string }[];
+        saidNeedsAccount: boolean;
+        files?: string[];
+        note?: string;
+    }): Promise<unknown> {
+        try {
+            // The session lookup, the request and the reading of the answer all stop at the deadline: a call that hangs anywhere in
+            // them would hold back every later turn
+            return await this.withDeadline(
+                "The Brick for guests did not answer in time",
+                GUEST_REPLY_TIMEOUT_MS,
+                async (signal) => {
+                    const response = await this.fetchBotServer("/api/guest-brick/reply", {
+                        method: "POST",
+                        body: JSON.stringify(request),
+                        signal,
+                    });
+                    return (await response.json()) as unknown;
+                }
+            );
+        } catch (error) {
+            // A guest who must wait, or an answer that failed, comes with its own kind: it is the answer, not a fault
+            const body = (error as { body?: unknown }).body;
+            if (body && typeof body === "object" && "kind" in body) return body;
+            throw error;
+        }
+    }
+
+    /** What the Brick for guests takes now (plan v3): files, and voice notes. Nothing when it can't say. */
+    async guestBrickTakes(): Promise<{ files: boolean; notes: boolean }> {
+        try {
+            const response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+            const data = (await response.json()) as { files?: unknown; notes?: unknown } | null;
+            return { files: data?.files === true, notes: data?.notes === true };
+        } catch {
+            return { files: false, notes: false };
+        }
+    }
+
+    /**
+     * Whether the bot server takes a guest's chat in parts after sign-in (plan v3 section 7). False for a bot server from before,
+     * which takes it as one message. Throws when the bot server can't be asked.
+     */
+    async botServerCarriesParts(): Promise<boolean> {
+        let response: Response;
+        try {
+            response = await this.fetchBotServer("/api/guest-brick/media", { method: "GET" });
+        } catch (error) {
+            // A bot server from before has no such route at all
+            if ((error as { status?: number }).status === 404) return false;
+            throw error;
+        }
+        const data = (await response.json().catch(() => null)) as { carryParts?: unknown } | null;
+        return data?.carryParts === true;
+    }
+
+    /** This device has the answer to a guest's voice note: its kept copy is deleted. */
+    async guestBrickDelivered(delivery: string): Promise<void> {
+        await this.fetchBotServer("/api/guest-brick/delivered", { method: "POST", body: JSON.stringify({ delivery }) });
+    }
+
+    /**
+     * After signing in: asks Orbit whether the chat this device had as a guest was handed to this account (once, and only
+     * to the device that held that guest id). `true` when it is this device's to bring along. Throws when Orbit could not be asked.
+     */
+    async takeGuestChat(guestId: string): Promise<boolean> {
+        const response = await this.fetch("/api/bricks/default/guest-chat", {
+            method: "POST",
+            body: JSON.stringify({ guestId }),
+        });
+        return ((await response.json()) as { carried?: unknown } | null)?.carried === true;
+    }
+
+    /**
+     * Has the bot server say one part of a guest's chat in the person's own chat with their Brick (game #1997, plan v3 section
+     * 7), once. Answers `sent`, `already` (it was said already) or `wait` (their chat is not there yet: ask again in a moment).
+     */
+    async carryGuestChat(
+        brickId: string,
+        chatId: string,
+        carryId: string,
+        lines: GuestChatLine[],
+        part?: { from: number; to: number; last: boolean }
+    ): Promise<"sent" | "already" | "wait"> {
+        const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(brickId)}/carried-chat`, {
+            method: "POST",
+            body: JSON.stringify({ chatId, carryId, lines, ...(part ? { part } : {}) }),
+        });
+        const result = ((await response.json()) as { result?: unknown } | null)?.result;
+        if (result === "sent" || result === "already" || result === "wait") return result;
+        throw new Error("The bot server answered with something the game does not understand");
+    }
+
+    /**
+     * The one chat of this person and a bot (game #1995), asked by a device that has no chat with it yet, before it
+     * makes one: the bot server answers with the chat they already have, "make it" (one device at a time is told so),
+     * or "ask again in a moment". Undefined when it can't say (direct messages off, an older bot server, any error):
+     * the caller then opens the chat the way it always did. No answer in time is "ask again in a moment": another
+     * device may be making the chat right now, so this one never makes a second.
+     */
+    async askDirectChat(botId: string, chatId: string): Promise<unknown> {
+        if (!this.botServerUrl) return undefined;
+        const stop = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Raced as well as aborted: the Orbit sign-in that comes first in a request does not listen for the abort
+        const late = new Promise<unknown>((resolve) => {
+            timer = setTimeout(() => {
+                stop.abort();
+                resolve({ wait: true });
+            }, DIRECT_CHAT_TIMEOUT_MS);
+        });
+        const asking = (async () => {
+            try {
+                const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/direct-chat`, {
+                    method: "POST",
+                    body: JSON.stringify({ chatId }),
+                    signal: stop.signal,
+                });
+                return (await response.json()) as unknown;
+            } catch {
+                return undefined;
+            }
+        })();
+        return Promise.race([asking, late]).finally(() => {
+            clearTimeout(timer);
+        });
+    }
+
+    /**
      * Save the bot's own model on its AI key (Orbit #575). Sent to Orbit itself: the bot server's save of a bot's
      * settings doesn't carry a model. The bot server asks Orbit for the model each time the bot replies.
      */
@@ -1187,18 +2432,29 @@ export class BotApiService {
             throw new Error("BotApiService not initialized. Missing botServerUrl.");
         }
 
+        // Which Orbit account and bot server this request started with, taken before anything is waited for (as in fetch())
+        const startedWith = this.timeZoneGeneration;
+        const origin = this.botServerUrl;
+
         // Try to get Admin API session token first (preferred method)
         const sessionToken = await this.getAdminApiSessionToken();
 
-        const url = `${this.botServerUrl}${endpoint}`;
+        if (startedWith !== this.timeZoneGeneration || origin !== this.botServerUrl) {
+            throw new Error("The game moved to another Orbit or account before this request went out.");
+        }
+
+        const url = `${origin}${endpoint}`;
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
             ...(options.headers as Record<string, string>),
         };
-        // Room enter/leave, Summon and "may I?" are for every player, guests included: the game token is enough for them.
+        // Room enter/leave, Summon, "may I?" and the Brick for guests are for every player, guests included: the game token is enough for them.
         const isPublicRoomLifecycle =
             endpoint === "/api/bots/room-enter" ||
             endpoint === "/api/bots/room-leave" ||
+            endpoint === "/api/guest-brick/reply" ||
+            endpoint === "/api/guest-brick/media" ||
+            endpoint === "/api/guest-brick/delivered" ||
             /^\/api\/bots\/[^/]+\/(summon|access)$/.test(endpoint);
         const gameToken = this.getGameToken();
         if (gameToken) {
@@ -1218,30 +2474,11 @@ export class BotApiService {
 
         if (!response.ok) {
             const errorText = await response.text();
-            let errorMessage = `Bot-server API error: ${response.status}`;
-            let isSessionExpired = false;
-            let errorCode: string | undefined;
-            let errorBody: unknown;
-
-            try {
-                const errorJson = JSON.parse(errorText);
-                errorBody = errorJson;
-                errorMessage = errorJson.message || errorJson.error || errorMessage;
-                errorCode = typeof errorJson.code === "string" ? errorJson.code : undefined;
-                // Check if it's a session expiration error
-                if (
-                    errorMessage.toLowerCase().includes("session expired") ||
-                    errorMessage.toLowerCase().includes("session invalid") ||
-                    errorMessage.toLowerCase().includes("invalid or expired session token")
-                ) {
-                    isSessionExpired = true;
-                }
-            } catch {
-                errorMessage = errorText || errorMessage;
-            }
+            const { isSessionExpired } = this.readBotServerRefusal(response.status, errorText);
 
             // If 401 and we were using session token, clear it and try to refresh
-            if (response.status === 401 && sessionToken) {
+            // Only for the account the request started with: the cache now belongs to the one the game is on
+            if (response.status === 401 && sessionToken && startedWith === this.timeZoneGeneration) {
                 if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
                     console.warn(
                         "[BotApiService] Bot server session token may be expired, clearing cache and refreshing"
@@ -1253,17 +2490,23 @@ export class BotApiService {
                 // If we have accessToken, try to fetch a new session token and retry
                 if (this.accessToken) {
                     const newToken = await this.fetchSessionTokenFromAdminApi();
-                    if (newToken) {
-                        const retryUrl = `${this.botServerUrl}${endpoint}`;
+                    // Asking for the session took time too: the request goes back only to the bot server it started with, and only
+                    // while the game is still on the account it started with
+                    if (newToken && startedWith === this.timeZoneGeneration) {
                         const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
 
-                        const retryResponse = await fetch(retryUrl, {
+                        const retryResponse = await fetch(url, {
                             ...options,
                             headers: retryHeaders,
                         });
 
                         if (retryResponse.ok) {
                             return retryResponse;
+                        }
+                        // The renewed session was taken and the bot server gave its own answer (the owner's refusal, say): that is
+                        // the answer, not "your session has expired"
+                        if (retryResponse.status !== 401) {
+                            throw this.botServerFailure(retryResponse.status, await retryResponse.text());
                         }
                     }
                 }
@@ -1282,15 +2525,48 @@ export class BotApiService {
                 throw authError;
             }
 
-            const failure = new Error(errorMessage) as Error & { status?: number; code?: string; body?: unknown };
-            failure.status = response.status;
-            failure.code = errorCode;
-            // What the bot server answered with, for a caller that reads more than its message (a hello that is used up says until when)
-            failure.body = errorBody;
-            throw failure;
+            throw this.botServerFailure(response.status, errorText);
         }
 
         return response;
+    }
+
+    /** What a refusal of the bot server says: its words, whether the session is what it refused, its code and its whole body. */
+    private readBotServerRefusal(
+        status: number,
+        errorText: string
+    ): { message: string; isSessionExpired: boolean; code: string | undefined; body: unknown } {
+        let message = `Bot-server API error: ${status}`;
+        let isSessionExpired = false;
+        let code: string | undefined;
+        let body: unknown;
+        try {
+            const errorJson = JSON.parse(errorText);
+            body = errorJson;
+            message = errorJson.message || errorJson.error || message;
+            code = typeof errorJson.code === "string" ? errorJson.code : undefined;
+            // Check if it's a session expiration error
+            if (
+                message.toLowerCase().includes("session expired") ||
+                message.toLowerCase().includes("session invalid") ||
+                message.toLowerCase().includes("invalid or expired session token")
+            ) {
+                isSessionExpired = true;
+            }
+        } catch {
+            message = errorText || message;
+        }
+        return { message, isSessionExpired, code, body };
+    }
+
+    private botServerFailure(status: number, errorText: string): Error {
+        const { message, code, body } = this.readBotServerRefusal(status, errorText);
+        const failure = new Error(message) as Error & { status?: number; code?: string; body?: unknown };
+        failure.status = status;
+        failure.code = code;
+        // What the bot server answered with, for a caller that reads more than its message (a hello that is used up says until when)
+        failure.body = body;
+        return failure;
     }
 
     /**
@@ -1444,6 +2720,51 @@ export class BotApiService {
     }
 
     /**
+     * Call a bot (game #2004): the bot server opens the bot's call-only connection and joins the call's private space,
+     * and answers with the space's name for this browser to join. The owner's "Call" rule is checked there (Orbit).
+     * Never throws: a refusal comes back as `failure`, so the caller can tell the person why.
+     */
+    async startCall(botId: string, playerUuid: string, callId?: string): Promise<CallResult> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call`, {
+                method: "POST",
+                body: JSON.stringify({ playerUuid, callId }),
+            });
+            const body = (await response.json()) as { started?: unknown; spaceName?: unknown } | null;
+            if (body?.started === true && typeof body.spaceName === "string" && body.spaceName !== "") {
+                return { started: true, spaceName: body.spaceName };
+            }
+            return { started: false, failure: "failed" };
+        } catch (error) {
+            if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
+                console.error("[BotApiService] Error calling bot:", error);
+            }
+            const failure = classifyCallFailure(error);
+            if ((failure === "not_allowed" || failure === "cannot_check") && error instanceof Error) {
+                return { started: false, failure, reason: error.message };
+            }
+            return { started: false, failure };
+        }
+    }
+
+    /**
+     * The person hangs up: the bot leaves the call. Never throws: the bot also leaves when this browser does.
+     * `callId` is the one the call was started with: only that call is ended, so a hang-up that arrives late cannot end
+     * a newer call of the same person with the same bot.
+     */
+    async endCall(botId: string, playerUuid: string, callId?: string): Promise<boolean> {
+        try {
+            const response = await this.fetchBotServer(`/api/bots/${encodeURIComponent(botId)}/call/end`, {
+                method: "POST",
+                body: JSON.stringify({ playerUuid, callId }),
+            });
+            return ((await response.json()) as { ended?: unknown } | null)?.ended === true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
      * Get available AI providers (for bot editor UI)
      */
     async getAvailableAIProviders(enabled: boolean = true): Promise<
@@ -1510,7 +2831,11 @@ export class BotApiService {
         });
     }
 
-    async getBotAccess(botId: string, action: "summon" | "chat" | "dm", playerUuid?: string): Promise<BotAccessAnswer> {
+    async getBotAccess(
+        botId: string,
+        action: "summon" | "chat" | "dm" | "call",
+        playerUuid?: string
+    ): Promise<BotAccessAnswer> {
         // A bot server or sign-in that stalls must not hold the Summon button back: after a few seconds it is "unknown"
         const stop = new AbortController();
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1527,7 +2852,7 @@ export class BotApiService {
 
     private async askBotAccess(
         botId: string,
-        action: "summon" | "chat" | "dm",
+        action: "summon" | "chat" | "dm" | "call",
         playerUuid: string | undefined,
         signal: AbortSignal
     ): Promise<BotAccessAnswer> {
@@ -1698,6 +3023,10 @@ export class BotApiService {
         clientSecret?: string;
         scopesSupported?: string[];
         registrationStatus?: string;
+        /** The name the app's address gives it, and who runs its sign-in page, for "Add your own app" */
+        name?: string;
+        signsInWith?: string;
+        revocationUrl?: string | null;
     }> {
         if (!this.isInitialized()) throw new Error("BotApiService not initialized");
         const response = await this.fetch(
@@ -1885,6 +3214,11 @@ export interface McpServer {
     /** An old server whose tools nobody has checked yet: it works in text as it did (Orbit #738) */
     notCheckedYet?: boolean;
     lastTestedAt?: string | null;
+    /** When the bot server saw this server refuse the bot's sign-in, or not answer (Orbit #821, game #1819); null when not */
+    signInLostAt?: string | null;
+    noAnswerAt?: string | null;
+    /** When a lost sign-in was made again (a Reconnect or a new key) */
+    reconnectedAt?: string | null;
     lastTestResult?: {
         success: boolean;
         toolCount: number;

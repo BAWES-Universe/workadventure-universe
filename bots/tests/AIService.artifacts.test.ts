@@ -65,6 +65,13 @@ describe('artifact tools in AIService', () => {
         expect(await names(undefined, admin(), 'dm')).not.toContain('make_artifact');
     });
 
+    it('puts no card in nearby chat when someone walked up while the page was being made, and says so', async () => {
+        const client = { ...botClient(), othersWith: vi.fn(() => ['uuid-sara', 'uuid-omar']) };
+        const [result] = await service()['executeToolCalls']([make], client as never, admin() as never, undefined, 'uuid-1', 'bubble-1', 'bot1', 7, undefined, undefined, false, undefined, undefined, ['uuid-sara']);
+        expect(client.sendChatMessage).not.toHaveBeenCalled();
+        expect(result.result).toMatchObject({ notShown: expect.stringMatching(/Someone else just joined/) });
+    });
+
     it('in a bubble: asks Orbit for the person and the bubble, puts the card in nearby chat, and tells the model no address or code', async () => {
         const client = botClient();
         const orbit = admin();
@@ -76,7 +83,7 @@ describe('artifact tools in AIService', () => {
             []
         );
         expect(client.getPersonForArtifacts).toHaveBeenCalledWith(7);
-        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board', 7);
         expect(result.result).toEqual({ success: true, id: 'art-1', title: 'Quests board', kind: 'app', version: 1 });
     });
 
@@ -151,7 +158,7 @@ describe('artifact tools in AIService', () => {
         const client = botClient();
         const change = { id: 't2', name: 'change_artifact', arguments: JSON.stringify({ id: 'art-1', edits: [{ old: 'a', new: 'b' }] }) };
         await service()['executeToolCalls']([change], client as never, admin() as never, undefined, 'uuid-1', 'bubble-1', 'bot1', 7);
-        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:2:app::Quests board');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:2:app::Quests board', 7);
 
         client.sendChatMessage.mockClear();
         const refusing = admin({ changeArtifact: vi.fn(async () => { throw Object.assign(new Error('no'), { code: 'change_not_allowed' }); }) });
@@ -225,7 +232,7 @@ describe('artifact tools in AIService', () => {
         expect(orbit.listArtifactsInChat).not.toHaveBeenCalled();
     });
 
-    it('does not cache or claim a card when the bubble closed while the file was made', async () => {
+    it('does not claim a card when the bubble closed while the file was made, and a retry places it without saving again', async () => {
         const client = botClient();
         client.isInSpace.mockReturnValueOnce(false);
         const memory: Record<string, unknown> = {};
@@ -235,11 +242,34 @@ describe('artifact tools in AIService', () => {
         const [closed] = await call();
         expect(closed.result).toHaveProperty('notShown');
         expect(client.sendChatMessage).not.toHaveBeenCalled();
-        expect(memory.artifactCalls).toBeUndefined();
-        // Asked again with the bubble back, the card goes out
+        // The write is kept even though its card was not shown
+        expect((memory.artifactCalls as Map<string, unknown>).size).toBe(1);
+        // Asked again with the bubble back, the card goes out, and the file is not saved a second time
         const [again] = await call();
         expect(again.result).not.toHaveProperty('notShown');
-        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board');
+        expect(client.sendChatMessage).toHaveBeenCalledWith('bubble-1', '::artifact:art-1:1:app::Quests board', 7);
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(1);
+        // Placed once: asked a third time it only answers
+        await call();
+        expect(client.sendChatMessage).toHaveBeenCalledTimes(1);
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the write of an artifact whose card was held back because someone came, so a retry never saves it again', async () => {
+        const client = botClient();
+        const memory: Record<string, unknown> = {};
+        const orbit = admin();
+        const ai = service(memory);
+        const came = vi.spyOn(ai as never, 'someoneCameSince' as never);
+        came.mockReturnValueOnce(true as never);
+        const call = () => ai['executeToolCalls']([make], client as never, orbit as never, undefined, 'uuid-1', 'bubble-1', 'bot1', 7);
+        const [held] = await call();
+        expect(held.result).toHaveProperty('notShown');
+        expect(client.sendChatMessage).not.toHaveBeenCalled();
+        const [retry] = await call();
+        expect(retry.result).not.toHaveProperty('notShown');
+        expect(client.sendChatMessage).toHaveBeenCalledTimes(1);
+        expect(orbit.makeArtifact).toHaveBeenCalledTimes(1);
     });
 
     it('leaves the results of a same-named MCP tool alone when artifacts are off', async () => {
@@ -284,5 +314,21 @@ describe('artifact tools in AIService', () => {
         ai['noteTurnMedia']([{ id: '1', name: 'generate_music', result: { url: 'https://cdn.example/old.mp3' } }], older);
         expect(memory.turnMedia).toHaveLength(1);
         expect(older).toHaveLength(1);
+    });
+
+    it("a reply for someone but the Brick's owner never runs an artifact tool, even one the model was not offered (CodeRabbit on #2023)", async () => {
+        const orbit = admin({ readArtifact: vi.fn() });
+        const calls = [make, { id: 't2', name: 'read_artifact', arguments: JSON.stringify({ id: 'x' }) }, { id: 't3', name: 'list_artifacts', arguments: '{}' }];
+        const results = await service({ userUuid: 'uuid-9', dmRoomId: '!dm:matrix.test', pendingArtifacts: [] })['executeToolCalls'](
+            calls, botClient() as never, orbit as never, undefined, 'uuid-9', 'bubble-1', 'bot1', 7, undefined, undefined, false, undefined, undefined, undefined, false, true
+        );
+        expect(results.map((r: { result: unknown }) => r.result)).toEqual([
+            { error: 'Unknown tool: make_artifact' },
+            { error: 'Unknown tool: read_artifact' },
+            { error: 'Unknown tool: list_artifacts' },
+        ]);
+        expect(orbit.makeArtifact).not.toHaveBeenCalled();
+        expect(orbit.readArtifact).not.toHaveBeenCalled();
+        expect(orbit.listArtifactsInChat).not.toHaveBeenCalled();
     });
 });

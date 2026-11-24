@@ -260,6 +260,65 @@ describe("SpaceFilter", () => {
             expect(updatedUser?.availabilityStatus).toBe(updatedUserResult.availabilityStatus);
             expect(updatedUser?.roomName).toBe(updatedUserResult.roomName);
         });
+        it("tells the users list when the tags of a listed user change in place, and not for other changes", async () => {
+            const space = await Space.create(
+                "space-name",
+                FilterType.ALL_USERS,
+                defaultRoomConnectionMock,
+                [],
+                signal,
+                {
+                    metadata: new Map<string, unknown>(),
+                }
+            );
+            space.addUser({ spaceUserId: "bot-1", name: "Brick", tags: [] } as unknown as SpaceUserExtended);
+            const seen: string[][] = [];
+            const stop = space.usersStore.subscribe((users) => seen.push([...(users.get("bot-1")?.tags ?? [])]));
+            const before = seen.length;
+
+            space.updateUserData({ spaceUserId: "bot-1", name: "Brick 2" } as never, ["name"]);
+            expect(seen.length).toBe(before);
+
+            space.updateUserData({ spaceUserId: "bot-1", tags: ["visiting:Sara"] } as never, ["tags"]);
+            expect(seen.length).toBe(before + 1);
+            expect(seen.at(-1)).toEqual(["visiting:Sara"]);
+            stop();
+        });
+        it("takes a tag away when the tags of a listed user get shorter, down to none, and tells the users list each time", async () => {
+            const space = await Space.create(
+                "space-name",
+                FilterType.ALL_USERS,
+                defaultRoomConnectionMock,
+                [],
+                signal,
+                {
+                    metadata: new Map<string, unknown>(),
+                }
+            );
+            space.addUser({
+                spaceUserId: "bot-1",
+                name: "Brick",
+                tags: ["bot", "visiting:Sara"],
+            } as unknown as SpaceUserExtended);
+            const seen: string[][] = [];
+            const stop = space.usersStore.subscribe((users) => seen.push([...(users.get("bot-1")?.tags ?? [])]));
+
+            // The visit ends: two tags become one
+            space.updateUserData({ spaceUserId: "bot-1", tags: ["bot"] } as never, ["tags"]);
+            expect(seen.at(-1)).toEqual(["bot"]);
+            expect(get(space.usersStore).get("bot-1")?.tags).toEqual(["bot"]);
+
+            // And one becomes none
+            space.updateUserData({ spaceUserId: "bot-1", tags: [] } as never, ["tags"]);
+            expect(seen.at(-1)).toEqual([]);
+            expect(get(space.usersStore).get("bot-1")?.tags).toEqual([]);
+
+            // Other changes still merge, and leave the tags alone
+            space.updateUserData({ spaceUserId: "bot-1", tags: ["bot"] } as never, ["tags"]);
+            space.updateUserData({ spaceUserId: "bot-1", name: "Brick 2" } as never, ["name"]);
+            expect(get(space.usersStore).get("bot-1")).toMatchObject({ name: "Brick 2", tags: ["bot"] });
+            stop();
+        });
         it("should not update userdata when user object have a incorrect id ", async () => {
             const space = await Space.create(
                 "space-name",

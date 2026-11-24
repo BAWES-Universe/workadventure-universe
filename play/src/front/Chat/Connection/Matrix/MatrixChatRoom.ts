@@ -44,6 +44,13 @@ import { isAChatRoomIsVisible, navChat, selectedChatMessageToReply, botsChatIds 
 import { readBotSteps } from "../../Bots/BotSteps";
 import { readNoteTranscript, type NoteTranscriptNotice } from "../../Bots/BotTranscript";
 import { BOT_ASK_ANSWER_EVENT, botAskAnswerContent, type BotAsk, type BotAskTap } from "../../Bots/BotAsk";
+import {
+    APP_CONNECTED_EVENT,
+    BRICK_MAKE_KEY,
+    COMPUTER_NEW_JOB_KEY,
+    STARTER_KEY,
+    type BrickOffer,
+} from "../../Bricks/Brick";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager } from "../../../Phaser/Game/GameManager";
 import { localUserStore } from "../../../Connection/LocalUserStore";
@@ -548,7 +555,15 @@ export class MatrixChatRoom
     private readonly noteBubbles = new Map<string, MatrixChatMessage>();
     private readonly noteTranscripts = new Map<string, Pick<NoteTranscriptNotice, "state" | "text">>();
 
+    /** A late decryption that changes the cards of a message tells the list, which the timeline draws them from. */
+    private keepListCurrent(message: MatrixChatMessage) {
+        message.onCardsChanged = () => {
+            if (this.messages.get(message.id) === message) this.messages.update(message);
+        };
+    }
+
     private trackTranscript(message: MatrixChatMessage) {
+        this.keepListCurrent(message);
         if (message.transcriptOf) {
             this.applyTranscript(message.transcriptOf);
         } else if (message.type === "audio") {
@@ -744,6 +759,61 @@ export class MatrixChatRoom
             this.matrixRoom.roomId,
             BOT_ASK_ANSWER_EVENT as never,
             botAskAnswerContent(ask, tap) as never
+        );
+    }
+
+    /**
+     * A tap on one of a Brick's ways to start (#1995): the words go as the person's own message, and the event says which
+     * starter it was, so the bot server answers that one with its fixed words instead of asking the AI.
+     */
+    async sendStarter(message: string, starter: string): Promise<void> {
+        await this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, {
+            body: message,
+            msgtype: MsgType.Text,
+            formatted_body: message,
+            [STARTER_KEY]: starter,
+        } as RoomMessageEventContent);
+    }
+
+    /**
+     * A tap on "Make it" on a Brick's suggestion (#1996): the words go as the person's own message, and the event
+     * carries the Brick the card described, so the bot server makes exactly that one without asking the AI.
+     */
+    async sendBrickMake(message: string, offer: BrickOffer): Promise<void> {
+        const { topic, name, line, instructions } = offer;
+        await this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, {
+            body: message,
+            msgtype: MsgType.Text,
+            formatted_body: message,
+            [BRICK_MAKE_KEY]: { topic, name, line, instructions },
+        } as RoomMessageEventContent);
+    }
+
+    /**
+     * A tap on "Start a new job" on the card for a job Orbit would not carry on (GPT's sixth answer, finding 6): the button's
+     * words go as the person's own message, and the event carries the job's title, so the Brick starts THAT job afresh.
+     */
+    async sendNewJob(message: string, job: { title: string }): Promise<void> {
+        await this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, {
+            body: message,
+            msgtype: MsgType.Text,
+            formatted_body: message,
+            [COMPUTER_NEW_JOB_KEY]: { title: job.title },
+        } as RoomMessageEventContent);
+    }
+
+    /**
+     * The person connected an App from a Brick's card (#2001). No message of theirs goes with it: the event only tells the
+     * Brick to carry on with what they asked, and to say what it may do with the App.
+     */
+    async sendAppConnected(app: { app: string; name: string }): Promise<void> {
+        await this.matrixRoom.client.sendEvent(
+            this.matrixRoom.roomId,
+            APP_CONNECTED_EVENT as never,
+            {
+                app: app.app,
+                name: app.name,
+            } as never
         );
     }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { readable } from "svelte/store";
     import type { ChatUser } from "../../Connection/ChatConnection";
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
@@ -7,7 +8,7 @@
     import { peopleCardReturn } from "../../Stores/PeopleCardReturnStore";
     import PersonActionButton from "./PersonActionButton.svelte";
     import { getPersonActions } from "./PersonActions";
-    import { statusLabel } from "./PersonStatus";
+    import { statusLabelOnACall } from "./PersonStatus";
     import { goToPersonRoom, locatePerson, walkToPerson } from "./PersonNavigation";
     import { IconDoorIn, IconMapPin, IconWalk } from "@wa-icons";
 
@@ -22,6 +23,7 @@
     const currentGameScene = gameManager.tryGetCurrentGameScene();
 
     $: status = session.availabilityStatus;
+    $: onACall = session.onACall ?? readable(false);
     // The room is only named when the session is in another room of this world than yours.
     $: inMyRoom = !!session.playUri && session.playUri === currentGameScene?.roomUrl;
     $: roomName = session.roomName?.trim() || session.playUri || "";
@@ -72,7 +74,7 @@
                 style="color:{getColorHexOfStatus($status)}"
             >
                 <span class="me-1 h-1.5 w-1.5 rounded-full" style="background:{getColorHexOfStatus($status)}" />
-                {statusLabel($status, $LL)}
+                {statusLabelOnACall($status, $onACall, $LL)}
             </div>
         {/if}
     </div>

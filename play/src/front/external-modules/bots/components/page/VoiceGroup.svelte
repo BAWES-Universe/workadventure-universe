@@ -90,6 +90,8 @@
     export let bot: BotData;
     export let open: boolean;
     export let onToggle: (id: string) => void;
+    /** A Brick's page: its voice keys are its owner's own, lent to no universe, so nothing here says "lent". */
+    export let brick = false;
 
     let voice: BotVoice | null = null;
     let loading = true;
@@ -348,7 +350,8 @@
                 if (now.pause?.kind === "key-down") {
                     return now.pause.reason === "credit" ? v.pausedCredit({ key: whose }) : v.pausedKey({ key: whose });
                 }
-                if (now.pause?.kind === "key-gone") return v.pausedGone({ key: whose });
+                if (now.pause?.kind === "key-gone")
+                    return brick ? v.brick.pausedGone({ key: whose }) : v.pausedGone({ key: whose });
                 if (now.pause?.kind === "universe-ai-off") return v.pausedUniverseAi();
                 return v.briefOn({ voice: speaking, style: v.style[style](), payer: payerBrief(data, now.profile) });
         }
@@ -964,7 +967,7 @@
             : viewerIsMaker
             ? v.keyFallbackMine()
             : v.keyFallbackTheirs({ owner: maker });
-        return v.keyGoneTitle({ key: named });
+        return brick ? v.brick.keyGoneTitle({ key: named }) : v.keyGoneTitle({ key: named });
     })();
 
     /** A lent key could do the speaking or the listening: the choice of where each runs is one tap away */
@@ -1026,6 +1029,7 @@
                     currentId={view.kind === "on" ? profile?.speech?.voiceId : undefined}
                     startId={view.kind === "off" ? doorPickedId : undefined}
                     offerKeys={noSpeakingKey}
+                    {brick}
                     canOpenKeys={canOpenOrbit()}
                     busy={saving}
                     onBack={closePicker}
@@ -1062,7 +1066,9 @@
                             <span class="bp-ut">{v.noServiceTitle()}</span>
                             <span class="bp-cn"
                                 >{viewerIsMaker && canOpenOrbit()
-                                    ? v.noServiceLineMaker({ bot: botName })
+                                    ? brick
+                                        ? v.brick.noServiceLine({ bot: botName })
+                                        : v.noServiceLineMaker({ bot: botName })
                                     : v.noServiceLine({ bot: botName })}</span
                             >
                         {/if}
@@ -1157,6 +1163,7 @@
                                 {botName}
                                 {viewerIsMaker}
                                 {maker}
+                                {brick}
                                 place="door"
                                 keyName={(key) => keyPhrase(key)}
                                 onPick={(option) => {
@@ -1263,7 +1270,9 @@
                                     <span class="bp-ut">{goneKeyTitle}</span>
                                     <span class="bp-cn"
                                         >{viewerIsMaker
-                                            ? v.keyGoneLine({ bot: botName })
+                                            ? brick
+                                                ? v.brick.keyGoneLine({ bot: botName })
+                                                : v.keyGoneLine({ bot: botName })
                                             : v.keyGoneLineTheirs({ bot: botName, maker })}</span
                                     >
                                 {:else}
@@ -1560,6 +1569,7 @@
                                     {botName}
                                     {viewerIsMaker}
                                     {maker}
+                                    {brick}
                                     {saving}
                                     place="on"
                                     keyName={(key) => keyPhrase(key)}

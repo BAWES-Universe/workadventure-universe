@@ -2,9 +2,9 @@
     import { onDestroy } from "svelte";
     import type { Readable } from "svelte/store";
     import { LL } from "../../../i18n/i18n-svelte";
-    import { currentStep, stepMore, stepsClock, type BotSteps } from "./BotSteps";
+    import { currentStep, stepMore, stepsClock, tookWords, type BotSteps } from "./BotSteps";
     import BotStepItem from "./BotStepItem.svelte";
-    import { IconCheck, IconChevronDown, IconChevronUp, IconHelpCircle, IconMinus, IconX } from "@wa-icons";
+    import { IconCheck, IconChevronDown, IconChevronUp, IconClock, IconHelpCircle, IconMinus, IconX } from "@wa-icons";
 
     /**
      * A bot's steps line (#1545): no bubble, so it never reads as something the bot said. While the bot works it names
@@ -26,6 +26,7 @@
     $: finished = shown?.steps.filter((step) => step.state !== "running").length ?? 0;
     $: failed = shown?.steps.filter((step) => step.state === "failed").length ?? 0;
     $: unknown = shown?.steps.filter((step) => step.state === "unknown").length ?? 0;
+    $: waiting = shown?.steps.filter((step) => step.state === "waiting").length ?? 0;
     $: elapsed = shown && shown.startedAt > 0 ? stepsClock((now - shown.startedAt) / 1000) : "";
     $: tick(working);
 
@@ -73,12 +74,25 @@
                     {/each}
                 </ol>
             {/if}
+        {:else if single && single.shows?.length}
+            <!-- A lone step that sent something still opens to say what it did (#2061), also when the reply was stopped: what it sent stays reachable -->
+            <ol class="bot-steps-list alone" data-testid="botStepsSingleOpen">
+                <BotStepItem step={single} iconSize={16} />
+            </ol>
+            {#if shown.state === "stopped"}
+                <div class="bot-steps-row static" data-testid="botStepsStopped">
+                    <IconX class="bot-steps-icon bad" font-size={16} />
+                    <span class="bot-steps-words"><span class="bad">{$LL.chat.botSteps.stopped()}</span></span>
+                </div>
+            {/if}
         {:else if single}
             <div class="bot-steps-row static" data-testid="botStepsSingle">
                 {#if single.state === "failed" || shown.state === "stopped"}
                     <IconX class="bot-steps-icon bad" font-size={16} />
                 {:else if single.state === "unknown"}
                     <IconHelpCircle class="bot-steps-icon" font-size={16} />
+                {:else if single.state === "waiting"}
+                    <IconClock class="bot-steps-icon" font-size={16} />
                 {:else if single.state === "running"}
                     <IconMinus class="bot-steps-icon" font-size={16} />
                 {:else}
@@ -86,7 +100,9 @@
                 {/if}
                 <span class="bot-steps-words">
                     <span
-                        >{single.done}{#if shown.state === "stopped"}<span>&nbsp;· </span><span class="bad"
+                        >{single.done}{#if single.secs !== undefined && single.state !== "waiting"}<span
+                                >&nbsp;· {tookWords(single.secs)}</span
+                            >{/if}{#if shown.state === "stopped"}<span>&nbsp;· </span><span class="bad"
                                 >{$LL.chat.botSteps.stopped()}</span
                             >{/if}</span
                     >
@@ -105,6 +121,8 @@
             >
                 {#if failed > 0 || shown.state === "stopped"}
                     <IconX class="bot-steps-icon bad" font-size={16} />
+                {:else if waiting > 0}
+                    <IconClock class="bot-steps-icon" font-size={16} />
                 {:else if unknown > 0}
                     <IconHelpCircle class="bot-steps-icon" font-size={16} />
                 {:else}
@@ -112,10 +130,13 @@
                 {/if}
                 <span class="bot-steps-words">
                     <span
-                        >{shown.line}{#if failed > 0}<span>&nbsp;· </span><span class="bad"
+                        >{shown.line}{#if shown.took !== undefined}<span>&nbsp;· {tookWords(shown.took)}</span
+                            >{/if}{#if failed > 0}<span>&nbsp;· </span><span class="bad"
                                 >{$LL.chat.botSteps.failed({ count: failed })}</span
                             >{/if}{#if unknown > 0}<span>&nbsp;· </span><span class="unknown"
                                 >{$LL.chat.botSteps.noAnswer({ count: unknown })}</span
+                            >{/if}{#if waiting > 0}<span>&nbsp;· </span><span class="unknown"
+                                >{$LL.chat.botSteps.waiting({ count: waiting })}</span
                             >{/if}{#if shown.state === "stopped"}<span>&nbsp;· </span><span class="bad"
                                 >{$LL.chat.botSteps.stopped()}</span
                             >{/if}</span
@@ -241,6 +262,11 @@
         display: grid;
         gap: 2px;
         min-width: 0;
+    }
+    .bot-steps-list.alone {
+        margin: 0;
+        padding: 0;
+        border-left: none;
     }
     .bot-steps-list :global(li) {
         display: flex;

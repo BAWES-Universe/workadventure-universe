@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentStep, readBotSteps, stepMore, stepsClock, type BotStep } from "../BotSteps";
+import { currentStep, parseBotSteps, readBotSteps, stepMore, stepsClock, tookWords, type BotStep } from "../BotSteps";
 
 const BOT_CHAT_ID = "@bot_0b7c1d2e-1111-4222-8333-944455556666:matrix.bawes.net";
 const FIELD = {
@@ -141,5 +141,59 @@ describe("stepMore", () => {
         // A failed call without a note still says what it was about; a call with neither shows nothing
         expect(stepMore(step("failed", { detail: "funk" }))).toBe("funk");
         expect(stepMore(step("done"))).toBeUndefined();
+    });
+});
+
+describe("waiting, times and what a step did (#2061)", () => {
+    const base = { v: 1, state: "done", line: "Used Get a draft", startedAt: 0 };
+    const step = {
+        doing: "Using Update a draft",
+        done: "Used Update a draft",
+        state: "waiting",
+        note: "Waiting for your OK. Nothing ran yet",
+    };
+
+    it("reads a step that waits for an OK, with its note", () => {
+        const steps = parseBotSteps({ ...base, steps: [step] });
+        expect(steps?.steps[0]).toMatchObject({ state: "waiting" });
+        expect(stepMore(steps!.steps[0])).toBe("Waiting for your OK. Nothing ran yet");
+    });
+
+    it("reads each step's time and the total, and ignores a time that is not a plausible number", () => {
+        const steps = parseBotSteps({
+            ...base,
+            took: 9,
+            steps: [
+                { ...step, state: "done", secs: 1.3 },
+                { ...step, state: "done", secs: -4 },
+                { ...step, state: "done", secs: "soon" },
+            ],
+        });
+        expect(steps?.took).toBe(9);
+        expect(steps?.steps.map((s) => s.secs)).toEqual([1.3, undefined, undefined]);
+        expect(parseBotSteps({ ...base, took: 999_999, steps: [step] })?.took).toBeUndefined();
+    });
+
+    it("says a time in seconds, then minutes", () => {
+        expect(tookWords(0.4)).toBe("0.4s");
+        expect(tookWords(1.3)).toBe("1.3s");
+        expect(tookWords(42.2)).toBe("42s");
+        expect(tookWords(65)).toBe("1m 5s");
+    });
+
+    it("reads the lines a step opens to, drops empty ones and cuts the list", () => {
+        const shows = [
+            { label: "To", text: "a@b.co" },
+            { text: "Draft updated" },
+            { label: "Empty", text: "  " },
+            7,
+            ...Array.from({ length: 12 }, (_, i) => ({ text: `line ${i}` })),
+        ];
+        const read = parseBotSteps({ ...base, steps: [{ ...step, state: "done", shows }] })?.steps[0].shows;
+        expect(read?.slice(0, 2)).toEqual([{ label: "To", text: "a@b.co" }, { text: "Draft updated" }]);
+        expect(read?.length).toBeLessThanOrEqual(8);
+        expect(
+            parseBotSteps({ ...base, steps: [{ ...step, state: "done", shows: [] }] })?.steps[0].shows
+        ).toBeUndefined();
     });
 });

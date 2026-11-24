@@ -20,6 +20,7 @@ import { askEdit, askNotice, argumentLines, buildAsk, cardTitle, outcomeOf, reme
 import { acceptLine, fallbackLine, nameForLine, WORDS_SYSTEM, wordsPrompt, type Moment } from './NearbyWords';
 import type { GateCall, GateDecision, ToolGate } from './ToolGate';
 import type { ToolServerEntry } from './MCPConnector';
+import type { ToolHeading } from './ToolCatalog';
 import { DEFAULT_CARD_SETTINGS, OrbitActionsUnavailable, type CardSettings, type OrbitActions, type SavedAction } from './OrbitActions';
 import type { QuestionField } from './QuestionCard';
 import { QuestionCards, type Asked, type AskInput } from './QuestionCards';
@@ -59,7 +60,8 @@ export interface CardSurface {
 /** Finding and running the tool a saved action names, the way a reply does. */
 export interface ToolRunner {
     find(botId: string, toolName: string): Promise<ToolServerEntry | null>;
-    run(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string): Promise<unknown>;
+    /** `use` says which attempt this is and what heading the saved action was under, for the check an App on a connection gets (#2001). */
+    run(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string, use: { heading: ToolHeading; callId: string }): Promise<unknown>;
 }
 
 export interface Asker {
@@ -92,6 +94,19 @@ export interface ApprovalDeps {
     tools: ToolRunner;
     /** The question cards (#1661): taps on them, and what the person types or says while one waits, are theirs. */
     questions?: QuestionCards;
+    /** Whether a room is still only the bot's and this person's, asked right before a goal's card goes into it (the card shows what the step would do). */
+    roomStillTheirs?: (botId: string, roomId: string, matrixUserId: string) => boolean;
+    /**
+     * Whether this room is the person's own direct message with the bot, where a goal's card went. A tap on a goal's card this process
+     * does not hold (it restarted since) is believed only from that room, so a tap from any other room neither runs the saved step nor
+     * has the card, with the arguments the step was saved with, drawn there.
+     */
+    directRoomIs?: (botId: string, roomId: string, matrixUserId: string) => Promise<boolean>;
+    /**
+     * Remembers, for every bot server and across restarts, a goal's saved step whose card could not be shown and whose saved step could not
+     * be closed: any server asked for that step shows the card instead of joining a card nobody has. Without it only this process knows.
+     */
+    unshownCards?: { mark(actionId: string): Promise<void>; marked(actionId: string): Promise<boolean>; clear(actionId: string): Promise<void> };
     /** The bot tells the person how an approved action ended. Never throws. */
     followUp?: (outcome: Outcome) => Promise<void>;
     now?: () => number;
@@ -110,6 +125,12 @@ export interface ProposeInput {
     cardOnly?: boolean;
     /** The card is the one before making more than the bot's limit (#1662): its own words, and nothing is remembered from it. */
     batch?: BatchKind;
+    /**
+     * A goal or task puts up this card (#2002): it has its own conversation, `task:{itemId}`, never the chat's, so what the person writes in chat
+     * does not touch it. It asks every time (nothing is remembered from it), waits as long as Orbit's "Scheduled card wait", and the same thing
+     * asked again on a later check joins the card that waits: no second card, and so no second message.
+     */
+    task?: { itemId: string };
 }
 
 export type Proposed =
@@ -159,6 +180,22 @@ const WAITING_RESULT = {
         'and do not ask again or call the tool again: wait for them to tap. If they type something else instead, the card closes and nothing is done.',
 };
 
+/** What a run is told when a card for its step was put in the person's chat: the card is the message, so the run only ends. */
+const WAITING_TASK_RESULT = {
+    status: 'waiting_for_ok',
+    message:
+        "A card asking for the person's OK was put in their chat. Nothing was done yet, and you do not tell them about it yourself: the card does. " +
+        'Do not call this tool again. End this check now with finish_check, and say in waiting_for what you wait for.',
+};
+
+/** The same, when the person was already asked this very thing on an earlier check and the card still waits. */
+const ALREADY_ASKED_TASK_RESULT = {
+    status: 'waiting_for_ok',
+    message:
+        'The person was already asked this, and the card still waits for them. Nothing was done, and nothing new is said to them. ' +
+        'Do not call this tool again. End this check now with finish_check, and say in waiting_for what you wait for.',
+};
+
 /** The same, in a bubble: the line everyone reads is the bot's whole reply, and nothing from the card goes in it. */
 const WAITING_NEARBY_RESULT = {
     status: 'waiting_for_ok',
@@ -168,12 +205,22 @@ const WAITING_NEARBY_RESULT = {
 };
 
 /** What the model is told when a card could not be shown: no OK, no action. */
+/** Headings a goal's or task's run never does by itself: it asks for this occurrence on a card, whatever the setting says. */
+export const TASK_ALWAYS_ASK: readonly ToolHeading[] = ['makesNew', 'deletesOrSends'];
+
 const NO_CARD_RESULT = { error: "The card asking for the person's OK could not be shown, so this was not done. Tell them to try again in a moment." };
 
 export class ToolApprovals {
     private readonly cards = new Map<string, Card>();
     private readonly dispatching = new Set<string>();
     private readonly proposing = new Map<string, Promise<Proposed>>();
+    /** A goal's saved step whose card could not be shown and whose saved step could not be closed: the next ask for it shows the card instead of joining a card nobody has. */
+    private readonly unshown = new Set<string>();
+    /** Of those, the ones whose note could not be written to the shared store: only this process knows, so only its note counts. */
+    private readonly unshownHereOnly = new Set<string>();
+    /** Steps whose card was shown but whose "no card" marker could not be cleared in the shared store: the marker there is out of date, and is cleared again. */
+    private readonly staleMarks = new Set<string>();
+    private staleTimer: ReturnType<typeof setTimeout> | undefined;
     /** A person's card in a bubble that closed because they said something else: a new card for the same tool is a change (#1658). */
     private readonly changing = new Map<string, number>();
     /** The replies only a person saw in a bubble, kept a while so they come back with the person after a reload (#1658). */
@@ -195,7 +242,7 @@ export class ToolApprovals {
     /** A call the gate says needs an OK: a remembered approval that covers it, or a card. Never throws. */
     async propose(input: ProposeInput): Promise<Proposed> {
         // The same call asked for twice at the same moment (a model repeating itself in one round) is one question
-        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly, input.batch ?? null]);
+        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly, input.batch ?? null, input.task?.itemId ?? null]);
         const running = this.proposing.get(key);
         if (running) return running;
         const run = this.proposeNow(input).finally(() => {
@@ -207,11 +254,13 @@ export class ToolApprovals {
 
     private async proposeNow(input: ProposeInput): Promise<Proposed> {
         const { botId, roomId, person, entry, toolName, args, decision } = input;
-        const nearby = person.playerId !== undefined;
+        const task = input.task;
+        // A goal's card goes to the person's own direct message, never to a bubble
+        const nearby = task ? false : person.playerId !== undefined;
         if (nearby && !this.deps.nearby) return { kind: 'failed', result: NO_CARD_RESULT };
         const base = {
             requesterKey: person.uuid,
-            conversationKey: conversationKeyOf(roomId, nearby),
+            conversationKey: task ? taskKeyOf(task.itemId) : conversationKeyOf(roomId, nearby),
             connectionRef: entry.serverId,
             toolName,
             heading: decision.heading,
@@ -222,21 +271,33 @@ export class ToolApprovals {
         try {
             // The same call asked for again while its card still waits (a turn asked again, or the model repeating itself)
             // is that card: no second card, so one tap can never run it twice
-            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision)) return { kind: 'waiting', result: nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
-            // Making more than the limit is asked every time: nothing allowed before covers it
-            if (!input.cardOnly && !input.batch && !decision.notReviewed && decision.heading !== 'deletesOrSends') {
+            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision, base.conversationKey)) {
+                return { kind: 'waiting', result: task ? ALREADY_ASKED_TASK_RESULT : nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
+            }
+            // Making more than the limit is asked every time: nothing allowed before covers it. A goal's step asks every time too.
+            if (!task && !input.cardOnly && !input.batch && !decision.notReviewed && decision.heading !== 'deletesOrSends') {
                 const grant = await this.deps.orbit.findGrant(botId, base);
                 if (grant) return { kind: 'run' };
             }
-            const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
-            const offer = input.batch ? null : rememberOffer(args, decision.heading, decision.notReviewed);
+            const offer = input.batch || task ? null : rememberOffer(args, decision.heading, decision.notReviewed);
             const words = input.batch ? batchWords(input.batch) : null;
-            const action = await this.deps.orbit.create(botId, {
-                ...base,
-                proposalKey: randomKey(),
-                rememberScope: offer?.scope ?? null,
-                reviewMinutes: wait,
-            });
+            let action: SavedAction;
+            let wait: number;
+            if (task) {
+                // Orbit sets the wait of a goal's card (a super admin's "Scheduled card wait"), and says when it is the card already waiting
+                const saved = await this.deps.orbit.createOrJoin(botId, { ...base, proposalKey: randomKey(), rememberScope: null });
+                if (!saved.created && !(await this.noCardShown(saved.action.id))) return { kind: 'waiting', result: ALREADY_ASKED_TASK_RESULT };
+                action = saved.action;
+                wait = Math.max(1, Math.round((Date.parse(action.reviewExpiresAt) - this.now()) / 60_000));
+            } else {
+                wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
+                action = await this.deps.orbit.create(botId, {
+                    ...base,
+                    proposalKey: randomKey(),
+                    rememberScope: offer?.scope ?? null,
+                    reviewMinutes: wait,
+                });
+            }
             const facts: CardFacts = {
                 action,
                 title: cardTitle(toolName, words ? words.title : input.toolTitle),
@@ -261,16 +322,26 @@ export class ToolApprovals {
                 });
             }
             try {
+                // Someone may have joined the room while Orbit saved the card: then it goes nowhere, and the saved step is closed below
+                if (task && person.matrixUserId && this.deps.roomStillTheirs && !this.deps.roomStillTheirs(botId, roomId, person.matrixUserId)) throw new Error('The chat is not only theirs any more');
                 card.eventId = await this.sendCard(card, buildAsk(facts, this.now()), false);
                 card.shownAt = this.now();
+                // Held before anything is awaited again: the person may tap it at once, and the tap must find this card, not make another
+                this.keep(action.id, card);
+                if (task) await this.cardShown(action.id);
             } catch (error) {
                 // No card, no OK: the saved action is closed so a tap can never find it
                 console.warn(`[ToolApprovals] Could not show the card for ${toolName}:`, errorText(error));
-                await this.deps.orbit.cancel(botId, action.id, { actorKey: person.uuid, revision: action.revision }).catch(() => undefined);
+                const closed = await this.deps.orbit.cancel(botId, action.id, { actorKey: person.uuid, revision: action.revision }).then(
+                    () => true,
+                    () => false
+                );
+                // Still waiting at Orbit with no card: the same step asked again must show it, not join it
+                if (task && !closed) await this.cardNotShown(action.id);
+                else if (task) await this.cardShown(action.id);
                 return { kind: 'failed', result: NO_CARD_RESULT };
             }
-            this.keep(action.id, card);
-            if (!nearby) return { kind: 'waiting', result: WAITING_RESULT };
+            if (!nearby) return { kind: 'waiting', result: task ? WAITING_TASK_RESULT : WAITING_RESULT };
             this.scheduleExpiry(action.id, card);
             // One line for everyone: the bot needs an OK, or it changed what it asks (the person said something else)
             const moment: Moment = this.takeChange(botId, roomId, person.uuid, toolName) ? 'changed' : 'ask';
@@ -281,11 +352,94 @@ export class ToolApprovals {
         }
     }
 
-    private findWaiting(botId: string, roomId: string, requesterKey: string, toolName: string, args: Record<string, unknown>, decision: Extract<GateDecision, { kind: 'ask' }>): Card | undefined {
+    /**
+     * Whether this saved step of a goal is known to have no card. When the shared store can be read it is the answer: another bot server may
+     * have shown the card since this one failed to, and this process's own note is then out of date. Only a note that never reached the store,
+     * or a store that cannot be read, is believed here alone.
+     */
+    private async noCardShown(actionId: string): Promise<boolean> {
+        const store = this.deps.unshownCards;
+        // The card was shown here, and the marker that said otherwise could not be cleared: it is out of date, whatever the store still holds
+        if (this.staleMarks.has(actionId)) {
+            if (store) {
+                await store.clear(actionId).then(
+                    () => this.staleMarks.delete(actionId),
+                    () => undefined
+                );
+            }
+            return false;
+        }
+        if (this.unshown.has(actionId)) {
+            if (!store || this.unshownHereOnly.has(actionId)) return true;
+            try {
+                if (await store.marked(actionId)) return true;
+            } catch {
+                return true;
+            }
+            this.unshown.delete(actionId);
+            return false;
+        }
+        return (await store?.marked(actionId).catch(() => false)) ?? false;
+    }
+
+    private async cardNotShown(actionId: string): Promise<void> {
+        this.staleMarks.delete(actionId);
+        this.unshown.add(actionId);
+        await this.deps.unshownCards?.mark(actionId).then(
+            () => this.unshownHereOnly.delete(actionId),
+            () => void this.unshownHereOnly.add(actionId)
+        );
+    }
+
+    private async cardShown(actionId: string): Promise<void> {
+        this.unshown.delete(actionId);
+        this.unshownHereOnly.delete(actionId);
+        // A clear that fails (the store is down) is kept, and tried again, or another bot server would find the old marker and take the shown card for a missing one
+        await this.deps.unshownCards?.clear(actionId).then(
+            () => this.staleMarks.delete(actionId),
+            () => {
+                this.staleMarks.add(actionId);
+                // A safety limit: a step that is never asked again leaves its entry here, so the oldest go
+                if (this.staleMarks.size > 500) this.staleMarks.delete(this.staleMarks.keys().next().value as string);
+                this.retryStaleMarks();
+            }
+        );
+    }
+
+    /** Clears the markers that could not be cleared, every half minute, until the store takes them: no bot server should find a marker for a card that is shown. */
+    private retryStaleMarks(): void {
+        if (this.staleTimer || this.staleMarks.size === 0 || !this.deps.unshownCards) return;
+        this.staleTimer = setTimeout(() => {
+            this.staleTimer = undefined;
+            const store = this.deps.unshownCards;
+            if (!store) return;
+            void Promise.all(
+                [...this.staleMarks].map((id) =>
+                    store.clear(id).then(
+                        () => void this.staleMarks.delete(id),
+                        () => undefined
+                    )
+                )
+            ).then(() => this.retryStaleMarks());
+        }, 30_000);
+        this.staleTimer.unref?.();
+    }
+
+    private findWaiting(
+        botId: string,
+        roomId: string,
+        requesterKey: string,
+        toolName: string,
+        args: Record<string, unknown>,
+        decision: Extract<GateDecision, { kind: 'ask' }>,
+        conversationKey: string
+    ): Card | undefined {
         const wanted = JSON.stringify(args);
         for (const card of this.cards.values()) {
             const action = card.facts.action;
             if (!card.waiting || card.closing || card.botId !== botId || card.roomId !== roomId || card.person.uuid !== requesterKey) continue;
+            // The same chat room holds the chat's cards and each goal's own: only the same conversation's card is the same card
+            if (action.conversationKey !== conversationKey) continue;
             if (action.toolName !== toolName || action.toolFingerprint !== decision.fingerprint || action.heading !== decision.heading || card.facts.notReviewed !== decision.notReviewed) continue;
             if (!(Date.parse(action.reviewExpiresAt) > this.now())) continue;
             if (JSON.stringify(action.arguments) === wanted) return card;
@@ -325,7 +479,14 @@ export class ToolApprovals {
     private async rebuild(botId: string, roomId: string, person: Asker, id: string): Promise<{ card: Card; action: SavedAction } | null> {
         const action = await this.deps.orbit.read(botId, id);
         const nearby = person.playerId !== undefined;
-        if (!action || action.requesterKey !== person.uuid || action.conversationKey !== conversationKeyOf(roomId, nearby)) return null;
+        // A card of a goal or task is in that goal's own conversation, and is tapped in the person's direct message all the same
+        const own = action?.conversationKey === conversationKeyOf(roomId, nearby) || (!nearby && !!action && taskItemOf(action.conversationKey) !== null);
+        if (!action || action.requesterKey !== person.uuid || !own) return null;
+        // A goal's card went to the person's own direct message only: a tap from any other room is not on this card
+        if (!nearby && taskItemOf(action.conversationKey) !== null && this.deps.directRoomIs) {
+            const theirs = person.matrixUserId ? await this.deps.directRoomIs(botId, roomId, person.matrixUserId).catch(() => false) : false;
+            if (!theirs) return null;
+        }
         const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
         const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
         // Whether the tool was never checked is not saved with the action: ask the gate again for a card that still waits,
@@ -435,7 +596,7 @@ export class ToolApprovals {
                 case 'reviewAgain':
                     return void (await this.reviewAgain(id, card));
                 case 'askAgain': {
-                    await orbit.revokeGrants(botId, { requesterKey: actorKey, conversationKey: conversationKeyOf(roomId, card.nearby), reason: 'ask_again' });
+                    await orbit.revokeGrants(botId, { requesterKey: actorKey, conversationKey: card.facts.action.conversationKey, reason: 'ask_again' });
                     const action = card.facts.action;
                     // Same card, without "allow more": the next call asks again
                     await this.redraw(id, card, { ...action, revision: action.revision + 1 }, { option: 'approveAndRemember' });
@@ -465,9 +626,11 @@ export class ToolApprovals {
         const stale = !entry || entry.fingerprint !== action.toolFingerprint;
         const checked = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person));
         // A card before making more than the limit comes from a tool that runs right away: it asks again as it did
+        // A goal's card for a step that makes, sends or deletes asks again too: its run never does those by itself
+        const taskCard = !!taskItemOf(action.conversationKey);
         const decision: GateDecision | null =
-            card.batch && checked?.kind === 'run' && checked.heading === 'makesNew' && checked.policyRevision !== undefined && checked.fingerprint
-                ? { kind: 'ask', heading: 'makesNew', notReviewed: false, policyRevision: checked.policyRevision, fingerprint: checked.fingerprint }
+            checked?.kind === 'run' && checked.policyRevision !== undefined && checked.fingerprint && (card.batch ? checked.heading === 'makesNew' : taskCard && TASK_ALWAYS_ASK.includes(checked.heading))
+                ? { kind: 'ask', heading: checked.heading, notReviewed: false, policyRevision: checked.policyRevision, fingerprint: checked.fingerprint }
                 : checked;
         if (!entry || !decision || decision.kind !== 'ask') {
             const why = decision?.kind === 'refuse' ? decision.line : 'That changed since, so I need you to ask me again.';
@@ -485,6 +648,7 @@ export class ToolApprovals {
             decision,
             cardOnly: true,
             ...(card.batch ? { batch: card.batch } : {}),
+            ...(taskItemOf(action.conversationKey) ? { task: { itemId: taskItemOf(action.conversationKey)! } } : {}),
         });
         if (proposed.kind === 'failed') await this.tell(botId, roomId, person, "I couldn't show the card. Try again in a moment.");
         // In a bubble there is no reply to carry the line, so it is said here
@@ -544,7 +708,7 @@ export class ToolApprovals {
             started = true;
             // The request this tap belongs to, taken before the tool runs: a person who writes again meanwhile starts a new one
             const requestEpoch = this.made.epochOf(this.countKey(botId, roomId, person));
-            const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid);
+            const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid, { heading: action.heading, callId: claim.attemptId });
             const outcome = outcomeOf(result);
             // What this tap let be made counts in the request, so a later step doesn't ask again for the same ones. A call that
             // proved it made nothing counts for nothing.
@@ -857,6 +1021,10 @@ export class ToolApprovals {
 
 /** A direct message's room, or a bubble's space: a card belongs to one or the other, never both. */
 const conversationKeyOf = (roomId: string, nearby = false) => `${nearby ? 'near' : 'dm'}:${roomId}`;
+
+/** A goal's or task's own conversation (Orbit's `taskConversationKey`), and the goal or task a conversation key names, if it is one. */
+const taskKeyOf = (itemId: string) => `task:${itemId}`;
+const taskItemOf = (conversationKey: string): string | null => /^task:([0-9a-f-]{36})$/i.exec(conversationKey)?.[1] ?? null;
 
 const changeKey = (botId: string, roomId: string, personUuid: string, toolName: string) => JSON.stringify([botId, roomId, personUuid, toolName]);
 

@@ -13,6 +13,7 @@ import { fetchFor, providerErrorText, statusFromError } from './ownKeyHttp';
 import { linkExternalAbort } from './abortUtils';
 import { resolveVisionSupport } from './visionModels';
 import * as Sentry from '@sentry/node';
+import { providerFailureLine } from '../../utils/sanitizedError';
 import { stepMessages, tooLongOf, type ReplySteps } from '../replySteps';
 
 /**
@@ -688,7 +689,7 @@ export class OpenAIProvider implements AIProvider {
             } catch (error: any) {
                 const latency = Date.now() - startTime;
 
-                span.setStatus({ code: 2, message: error.message || 'Unknown error' });
+                span.setStatus({ code: 2, message: providerFailureLine(error) });
 
                 // External cancellation (stop/correction or quick-call deadline)
                 // is not a provider failure — propagate it so callers treat it
