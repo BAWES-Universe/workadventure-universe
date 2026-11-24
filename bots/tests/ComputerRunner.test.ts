@@ -765,6 +765,35 @@ describe('the person’s part', () => {
             expect(seen.turns[1]).toBe(restartedPrompt({ kind: 'signin', what: null, where: null }));
             expect(seen.turns[2]).toBe(RESUME_PROMPT);
         });
+
+        it('tells the agent again when the restart turn was refused: the restart counts as told only once the agent has taken its words', async () => {
+            let looks = 0;
+            const restarted = { restarts: 1, restartAsk: { kind: 'signin' as const, what: null, where: null } };
+            // ask, the person has the screen and restarts, Brick is its own again; the restart turn is refused, the retry is taken
+            const states = [{ status: 'running', control: 'brick' }, { status: 'running', control: 'brick' }, { status: 'waiting', control: 'brick' }];
+            const state = () => states[looks++] ?? { status: 'running', control: 'brick', generation: 2, ...restarted };
+            const told = restartedPrompt({ kind: 'signin', what: null, where: null });
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), { ok: false, reason: 'failed' }, done('[[handover signin]]'), done('[[done]]')], state);
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(told);
+            // the refused turn did not tell it: the same words are sent again, never the plain look
+            expect(seen.turns[2]).toBe(told);
+            expect(seen.turns[2]).not.toBe(RESUME_PROMPT);
+            expect(seen.turns[2]).not.toBe(CONTINUE_PROMPT);
+        });
+
+        it('tells the agent again when it was already on a turn of its own (the restart turn was not taken, only reconnected to)', async () => {
+            let looks = 0;
+            const restarted = { restarts: 1, restartAsk: { kind: 'signin' as const, what: null, where: null } };
+            const states = [{ status: 'running', control: 'brick' }, { status: 'running', control: 'brick' }, { status: 'waiting', control: 'brick' }];
+            const state = () => states[looks++] ?? { status: 'running', control: 'brick', generation: 2, ...restarted };
+            const told = restartedPrompt({ kind: 'signin', what: null, where: null });
+            // the agent says it is busy with a turn this process did not start: that turn is read, and the restart words never reached it
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), { ok: false, reason: 'busy', responseId: 'r9' }, done('[[handover signin]]'), done('[[handover signin]]'), done('[[done]]')], state);
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(told);
+            expect(seen.turns.filter((turn) => turn === told).length).toBeGreaterThanOrEqual(2);
+        });
     });
 
     it('drops what the agent said when the person took over meanwhile, and waits until they hand it back', async () => {
