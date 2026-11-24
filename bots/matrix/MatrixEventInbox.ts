@@ -897,6 +897,9 @@ export function createEventInbox(
                             event = undefined;
                         }
                         found.closed!.push({ why: closure[1] as ClosedWhy, eventId, ...(event === undefined ? {} : { event }) });
+                        // GPT's seventh note (item 0): an entry whose server went away after paid work began fails closed (never run again, so no second charge, and the person is told).
+                        // The take-over itself says so, with the event and its room, so the loss is visible where it happens and not only to the router that reports it
+                        if (closure[1] === 'paid') say('An event whose server went away after paid work began was closed as unanswered; it is not run again (no second charge):', `${eventId}${room ? ` in ${room}` : ''}`);
                         continue;
                     }
                     try {
