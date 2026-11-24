@@ -1417,6 +1417,9 @@
             <PartnerProfilePanel
                 room={matrixRoom}
                 partner={$directPartner}
+                bot={partnerBotId !== undefined}
+                botState={shownBotState}
+                botDotState={botState}
                 on:close={() => openProfileRoomIdStore.set(undefined)}
             />
         {:else if roomDetailsOpen && matrixRoom}

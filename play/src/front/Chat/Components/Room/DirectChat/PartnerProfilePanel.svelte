@@ -33,11 +33,13 @@
     import { botApiService } from "../../../../external-modules/bots/services/BotApiService";
     import { botHomeRoom } from "../../../Bots/BotHomeRoom";
     import { visitBotRoom } from "../../../Bots/visitBotRoom";
+    import { profileStatusLine } from "../../Status/ChatStatus";
+    import type { ChatStatusFacts } from "../../Status/ChatStatus";
+    import type { BotAvailability } from "../../../Bots/BotChatStatus";
     import PartnerRoomBlock from "./PartnerRoomBlock.svelte";
     import { partnerNowIn, sameRoom, visitPerson } from "./PartnerNowIn";
     import type { DirectPartner } from "./DirectPartnerStore";
     import { isInUniverse } from "./PartnerPlace";
-    import { partnerStatus } from "./PartnerStatus";
     import { partnerStillInChat } from "./partnerStillInChat";
     import {
         canInvitePartner,
@@ -70,6 +72,11 @@
      */
     export let room: ChatRoom & ChatRoomMembershipManagement & ChatRoomNotificationControl;
     export let partner: DirectPartner;
+    /** Set for a chat with a Brick or another bot: its state replaces where a person is, as in the chat header. */
+    export let bot = false;
+    export let botState: BotAvailability | undefined = undefined;
+    /** The bot's state for the dot. It differs from the words only where the header stays quiet (someone with no access). */
+    export let botDotState: BotAvailability | undefined = botState;
 
     const dispatch = createEventDispatcher<{ close: void }>();
     const roomName = room.name;
@@ -98,8 +105,11 @@
     $: requestChatPerson(partnerChatId);
     $: name = personName($nameByChatId, partnerChatId, $roomName);
     $: picture = personPicture($wokaByChatId, partner.chatId, room.pictureStore);
-    $: status = partnerStatus(partner.place, $LL);
-    $: live = isInUniverse(partner.place);
+    $: facts = (
+        bot ? { kind: "bot", state: botDotState } : { kind: "person", place: partner.place }
+    ) as ChatStatusFacts;
+    $: status = profileStatusLine(facts, $LL, bot ? { words: botState } : undefined);
+    $: live = !bot && isInUniverse(partner.place);
     $: canViewProfile = canOpenPartnerProfile(partner);
     $: canInvite = canInvitePartner(partner, $invitesEnabledStore);
     // A person shows where they are now, when they share their room with you and you can enter it (Orbit decides).
@@ -197,13 +207,18 @@
             <div class="max-w-full break-words text-lg font-bold leading-6" data-testid="partnerProfileName">
                 {name}
             </div>
-            <div class="flex max-w-full items-center gap-1.5 text-xs text-white/60" data-testid="partnerProfileStatus">
-                <span
-                    class="h-1.5 w-1.5 shrink-0 rounded-full"
-                    style:background-color={status.color ?? "rgb(255 255 255 / 0.35)"}
-                />
-                <span class="truncate">{status.label}</span>
-            </div>
+            {#if status.label}
+                <div
+                    class="flex max-w-full items-center gap-1.5 text-xs text-white/60"
+                    data-testid="partnerProfileStatus"
+                >
+                    <span
+                        class="h-1.5 w-1.5 shrink-0 rounded-full"
+                        style:background-color={status.color ?? "rgb(255 255 255 / 0.35)"}
+                    />
+                    <span class="truncate">{status.label}</span>
+                </div>
+            {/if}
         </div>
 
         {#if $botRoom}
