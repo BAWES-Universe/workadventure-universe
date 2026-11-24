@@ -2258,14 +2258,18 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const appTopic = appOffer && appOffer.kind === 'app' && reply.claimApp ? await reply.claimApp() : null;
             if (appOffer && appOffer.kind === 'app' && appTopic) {
                 const { app, name, connectKind, state, connectionId, ask, asked, other } = appOffer;
-                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, connectKind, state, connectionId, ask, asked, other } };
                 const txnId = randomUUID();
+                // The card carries its transaction id, so a card that got through while its answer was lost can be found in the room (Sentry on 21de3f046)
+                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, connectKind, state, connectionId, ask, asked, other }, [NOTICE_TXN_KEY]: txnId };
                 await out
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch(async (error) => {
                         console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error);
-                        // The same: the card never reached the person, so Orbit takes the claim back
+                        // The same as the Brick suggestion: two answers that never came do not say the card was NOT delivered. The claim goes back only when the room was read and the card is not in it
+                        const there = await this.noticeInRoom(botUserId, event.room_id, txnId);
+                        if (there !== undefined) return;
+                        // The card never reached the person, so Orbit takes the claim back
                         await reply.releaseApp?.().catch(() => undefined);
                     });
             }
