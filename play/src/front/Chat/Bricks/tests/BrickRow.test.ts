@@ -66,7 +66,9 @@ vi.mock("../../../Stores/MenuStore", async () => {
     const store = await import("svelte/store");
     return { userIsConnected: store.writable(true) };
 });
-vi.mock("../../../Phaser/Game/GameManager", () => ({ gameManager: { getPlayerName: () => game.playerName } }));
+vi.mock("../../../Phaser/Game/GameManager", () => ({
+    gameManager: { getPlayerName: () => game.playerName, chatConnection: {} },
+}));
 vi.mock("../../Stores/ChatStore", async () => {
     const store = await import("svelte/store");
     return { chatSearchBarValue: store.writable("") };
@@ -77,14 +79,21 @@ vi.mock("../GuestBrickStore", async () => {
 });
 vi.mock("../BrickChat", async () => {
     const store = await import("svelte/store");
-    return { openBrickChat: game.openBrickChat, openingBrickChats: store.writable(new Set<string>()) };
+    const unopened = store.writable<ReadonlySet<string>>(new Set<string>());
+    return {
+        openBrickChat: game.openBrickChat,
+        openingBrickChats: store.writable(new Set<string>()),
+        // The Bricks the person never opened: one shared count, tested with the rules in Brick.test.ts
+        unopenedBricksOf: () => unopened,
+        unopened,
+    };
 });
 
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import { chatSearchBarValue } from "../../Stores/ChatStore";
 import type { BrickCard } from "../Brick";
-import { openingBrickChats } from "../BrickChat";
+import { openingBrickChats, unopenedBricksOf } from "../BrickChat";
 import BrickRow from "../BrickRow.svelte";
 
 const BRICK = "0b7c1d2e-1111-4222-8333-944455556666";
@@ -99,6 +108,8 @@ const brick = (over: Partial<BrickCard> = {}): BrickCard => ({
     hello: null,
     ...over,
 });
+
+const unopened = unopenedBricksOf({} as never) as unknown as Writable<ReadonlySet<string>>;
 
 describe("a person's own Brick in Chats, before its chat was ever opened (#1995)", () => {
     let target: HTMLElement;
@@ -116,6 +127,7 @@ describe("a person's own Brick in Chats, before its chat was ever opened (#1995)
         game.getDmStatus.mockResolvedValue({ [BRICK]: "online" });
         chatSearchBarValue.set("");
         (openingBrickChats as unknown as Writable<ReadonlySet<string>>).set(new Set());
+        unopened.set(new Set());
         target = document.createElement("div");
         document.body.appendChild(target);
     });
@@ -143,11 +155,37 @@ describe("a person's own Brick in Chats, before its chat was ever opened (#1995)
         expect(target.querySelector("img")?.getAttribute("src")).toBe("/static/images/bricks/brick-orange.png");
     });
 
-    it("has no unread badge and no count: nothing was sent to anyone", async () => {
+    it("has no unread badge once the person opened its chat (or never had to): nothing was sent to anyone", async () => {
         await show();
         expect(target.querySelector('[data-testid="roomRowUnread"]')).toBeNull();
         expect(target.querySelector(".notification-badge, [data-testid='notificationBadge']")).toBeNull();
         expect(text()).not.toMatch(/\b1\b/);
+        expect(target.querySelector(".font-bold")).toBeNull();
+    });
+
+    it("counts its hello as one unread message while the person never opened it: bold name, time in colour, a 1", async () => {
+        unopened.set(new Set([BRICK]));
+        await show();
+        const badge = byId("roomRowUnread");
+        expect(badge?.textContent?.trim()).toBe("1");
+        expect(badge?.classList.contains("u-badge")).toBe(true);
+        expect(badge?.getAttribute("aria-label")).toBe("1 unread message");
+        expect(target.querySelector(".font-bold")?.textContent).toBe("Brick");
+        expect(byId("roomRowTime")?.className).toContain("text-secondary-400");
+        // Still the hello under the name, and the same row
+        expect(byId("roomRowPreview")?.textContent).toContain("Hi Khalid, I'm Brick");
+    });
+
+    it("loses the count the moment it is opened, and counts again only for a Brick that was never opened", async () => {
+        unopened.set(new Set([BRICK]));
+        await show();
+        expect(byId("roomRowUnread")).not.toBeNull();
+        unopened.set(new Set());
+        await tick();
+        expect(byId("roomRowUnread")).toBeNull();
+        unopened.set(new Set(["another-brick"]));
+        await tick();
+        expect(byId("roomRowUnread")).toBeNull();
     });
 
     it("greets without a name when the game has none", async () => {
@@ -169,13 +207,14 @@ describe("a person's own Brick in Chats, before its chat was ever opened (#1995)
         expect(game.openBrickChat).toHaveBeenCalledTimes(3);
     });
 
-    it("says so while the chat is being opened", async () => {
+    it("shows no spinner while the chat is being opened: the chat screen opens at once", async () => {
         await show();
         expect(byId("brickRowOpening")).toBeNull();
         expect(byId("brickRow")?.getAttribute("aria-busy")).toBe("false");
         (openingBrickChats as unknown as Writable<ReadonlySet<string>>).set(new Set([BRICK]));
         await tick();
-        expect(byId("brickRowOpening")).not.toBeNull();
+        expect(byId("brickRowOpening")).toBeNull();
+        expect(target.querySelector(".animate-\\[spin_2s_linear_infinite\\]")).toBeNull();
         expect(byId("brickRow")?.getAttribute("aria-busy")).toBe("true");
     });
 

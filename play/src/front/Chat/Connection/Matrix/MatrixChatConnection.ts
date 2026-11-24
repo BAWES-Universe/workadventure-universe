@@ -120,6 +120,15 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     private directRepairs = new Map<Promise<unknown>, string[]>();
     /** Direct chats repairs found or saved, until the client's own copy of the list shows them (it only does after the next sync). */
     private repairedDirect: DirectMap = {};
+    private readonly _directChatPartners = writable<ReadonlySet<string> | undefined>(undefined);
+    /**
+     * The people the account lists a direct chat with: its `m.direct`, which every device of the account shares and which
+     * keeps a person after the chat was left or cleared. Undefined until the chats are loaded (the first sync), then
+     * kept up to date. A Brick's chat address in it means that chat was made, from some device, at some time.
+     */
+    readonly directChatPartners: Readable<ReadonlySet<string> | undefined> = {
+        subscribe: this._directChatPartners.subscribe,
+    };
     roomFolders: MapStore<MatrixRoomFolder["id"], MatrixRoomFolder> = new MapStore<
         MatrixRoomFolder["id"],
         MatrixRoomFolder
@@ -309,6 +318,7 @@ export class MatrixChatConnection implements ChatConnectionInterface {
                 case SyncState.Prepared:
                     // Ready first: whoever waits for the status to settle then finds the chats loaded.
                     this.isClientReady = true;
+                    this.refreshDirectChatPartners();
                     this.connectionStatus.set("ONLINE");
                     this._ignoredUsers.set(this.client.getIgnoredUsers());
                     this.startSavingWokaAsAvatar();
@@ -453,6 +463,7 @@ export class MatrixChatConnection implements ChatConnectionInterface {
 
     private onAccountDataEvent(event: MatrixEvent) {
         if (event.getType() === EventType.Direct) {
+            this.refreshDirectChatPartners();
             this.refreshRoomTypes();
             this.repairDirectAccountData();
         }
@@ -1199,6 +1210,19 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         for (const { userId, roomId } of rooms) {
             this.repairedDirect = withDirectRoom(this.repairedDirect, userId, roomId) ?? this.repairedDirect;
         }
+        this.refreshDirectChatPartners();
+    }
+
+    /** Reads who the account lists a direct chat with again, from its own list and from what this page saved to it. Not before the chats are loaded. */
+    private refreshDirectChatPartners(): void {
+        if (!this.isClientReady) return;
+        const partners = new Set<string>();
+        for (const map of [this.directMap(), this.repairedDirect]) {
+            for (const [userId, roomIds] of Object.entries(map ?? {})) {
+                if (roomIds && roomIds.length > 0) partners.add(userId);
+            }
+        }
+        this._directChatPartners.set(partners);
     }
 
     /** When the other person deleted the chat but I still have it, they are invited back into the same room. */
@@ -1530,6 +1554,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             throw new Error(CLIENT_NOT_INITIALIZED_ERROR_MSG);
         }
         await saveDirectRooms(this.client, [{ userId, roomId }]);
+        // Saved: the person has a chat with them from now on, on every device, before the next sync says so
+        this.rememberDirect([{ userId, roomId }]);
     }
 
     async isUserExist(address: string): Promise<boolean> {

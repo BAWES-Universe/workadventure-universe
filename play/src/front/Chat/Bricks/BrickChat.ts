@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/svelte";
 import { derived, get, readable, writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 import { localUserStore } from "../../Connection/LocalUserStore";
@@ -5,11 +6,15 @@ import { botApiService } from "../../external-modules/bots/services/BotApiServic
 import { LL } from "../../../i18n/i18n-svelte";
 import { gameManager } from "../../Phaser/Game/GameManager";
 import { warningMessageStore } from "../../Stores/ErrorStore";
+import { userIsConnected } from "../../Stores/MenuStore";
 import type { ChatConnectionInterface, ChatRoom, RoomFolder } from "../Connection/ChatConnection";
-import { openChatRoom, openDirectChatRoom } from "../Utils";
-import { openBrickChatWith, type BrickCard, type MakeItMemory } from "./Brick";
+import { selectedRoomStore } from "../Stores/SelectRoomStore";
+import { openDirectChatRoom, showRoom } from "../Utils";
+import { openBrickChatWith, unopenedBrickIds, type BrickCard, type MakeItMemory } from "./Brick";
 import { GUEST_BRICK_ID } from "./GuestBrick";
 import { openGuestBrickChat } from "./GuestBrickStore";
+import { myBricksByChatId, myBricksStore } from "./MyBricksStore";
+import { PendingBrickChatRoom, type PendingSend } from "./PendingBrickChat";
 
 /** The Bricks whose chat is being opened right now, so their row can say so and a second tap does nothing more. */
 const opening = writable<ReadonlySet<string>>(new Set());
@@ -17,6 +22,124 @@ export const openingBrickChats: Readable<ReadonlySet<string>> = { subscribe: ope
 
 const running = new Map<string, Promise<ChatRoom | undefined>>();
 const makeIt: MakeItMemory = new Map();
+
+/** The Bricks whose chat this device has shown, until the chat server's own list of direct chats says so (it follows a moment later). */
+const shown = writable<ReadonlySet<string>>(new Set());
+
+function markOpened(brickId: string): void {
+    if (!get(shown).has(brickId)) shown.update((ids) => new Set([...ids, brickId]));
+}
+
+/**
+ * The Bricks the person never opened, by Brick id (see unopenedBrickIds): each is one unread message, counted the same in
+ * the Brick's row, on the Chats tab and on the chat button, and the same on every device.
+ */
+export function unopenedBricksOf(connection: ChatConnectionInterface): Readable<ReadonlySet<string>> {
+    return derived(
+        [
+            myBricksStore,
+            myBricksByChatId,
+            connection.connectionStatus,
+            connection.directChatPartners ?? readable(undefined),
+            opening,
+            shown,
+        ],
+        ([$bricks, $byChatId, $status, $partners, $opening, $shown]) =>
+            unopenedBrickIds({
+                bricks: $bricks ? $byChatId : undefined,
+                partners: $partners,
+                online: $status === "ONLINE",
+                opening: $opening,
+                openedHere: $shown,
+            })
+    );
+}
+
+/** How many Bricks the person never opened: the number the chat button and the Chats tab add to the unread messages. */
+export function unopenedBrickCountOf(connection: ChatConnectionInterface): Readable<number> {
+    return derived(unopenedBricksOf(connection), ($ids) => $ids.size);
+}
+
+/** The screens of Bricks whose chat is still being made, by Brick id: each holds what the person writes meanwhile. */
+const pendings = new Map<string, PendingBrickChatRoom>();
+
+function makePending(brickId: string): PendingBrickChatRoom | undefined {
+    const first = (get(myBricksStore) ?? []).find((brick) => brick.id === brickId);
+    if (!first) return undefined;
+    const card: Readable<BrickCard> = derived(
+        myBricksStore,
+        ($bricks) => $bricks?.find((brick) => brick.id === brickId) ?? first
+    );
+    const holder: { room?: PendingBrickChatRoom } = {};
+    const room = new PendingBrickChatRoom(card, {
+        now: () => Date.now(),
+        setTimer: (run, ms) => setTimeout(run, ms),
+        clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+        sayStillLoading: () => warningMessageStore.addWarningMessage(get(LL).chat.chatsStillLoading()),
+        isShown: () => get(selectedRoomStore) === holder.room,
+        retry: () => {
+            openBrickChat(brickId).catch((error) => console.error(error));
+        },
+    });
+    holder.room = room;
+    return room;
+}
+
+/** Opens the Brick's own screen at once, while its chat is made behind it. Only for someone signed in, and for a Brick that is listed. */
+function showPending(brickId: string): void {
+    if (!get(userIsConnected)) return;
+    const pending = pendings.get(brickId) ?? makePending(brickId);
+    if (!pending) return;
+    pendings.set(brickId, pending);
+    pending.begin();
+    showRoom(pending);
+}
+
+/** The room takes the words in a chat the person wrote, and answers once the chat server has them. */
+type ConfirmingRoom = Partial<{
+    sendMessageConfirmed: (message: string) => Promise<void>;
+    sendStarter: (message: string, starter: string) => Promise<void>;
+}>;
+
+function sendConfirmed(room: ChatRoom, send: PendingSend): Promise<void> {
+    const confirming = room as ConfirmingRoom;
+    if (send.starter && confirming.sendStarter) return confirming.sendStarter(send.words, send.starter);
+    if (confirming.sendMessageConfirmed) return confirming.sendMessageConfirmed(send.words);
+    return Promise.reject(new Error("This chat cannot say when a message reached the chat server"));
+}
+
+/** What the person had typed on the screen of the chat being made goes to the real chat's message box. */
+async function carryTyped(room: ChatRoom, typed: string): Promise<void> {
+    if (typed.replace(/<br>/g, "").trim() === "") return;
+    const { draftMessageService } = await import("../Services/DraftMessageService");
+    const chatId = localUserStore.getChatId();
+    draftMessageService.saveDraft({
+        id: `${room.id}-${chatId ?? "0"}`,
+        roomId: room.id,
+        userId: chatId,
+        message: typed,
+    });
+}
+
+/**
+ * Shows the chat with a Brick once it is there. When the Brick's own screen was open for it, what the person wrote
+ * meanwhile goes into the chat first, one message at a time and in order, and the chat takes the screen's place only if the
+ * person is still looking at it.
+ */
+async function reveal(brickId: string, room: ChatRoom): Promise<void> {
+    markOpened(brickId);
+    const pending = pendings.get(brickId);
+    if (!pending) {
+        showRoom(room);
+        return;
+    }
+    const result = await pending.handOver({
+        send: (send) => sendConfirmed(room, send),
+        carry: (typed) => carryTyped(room, typed),
+        showReal: () => showRoom(room),
+    });
+    if (result === "switched" || result === "left") pendings.delete(brickId);
+}
 
 /** Whether a folder, or a folder inside one, holds a room with that id. Each folder is read once, so a folder that holds itself ends. */
 function inFolders(folders: readonly RoomFolder[], roomId: string, seen: Set<string> = new Set()): boolean {
@@ -40,7 +163,12 @@ export function openBrickChat(brickId: string): Promise<ChatRoom | undefined> {
     // The Brick for guests has no chat on any server: its chat is the one this device keeps
     if (brickId === GUEST_BRICK_ID) return Promise.resolve(openGuestBrickChat());
     const already = running.get(brickId);
-    if (already) return already;
+    if (already) {
+        // Tapped again while its chat is made: the screen that holds the person's words is shown again
+        const pending = pendings.get(brickId);
+        if (pending) showRoom(pending);
+        return already;
+    }
     opening.update((ids) => new Set([...ids, brickId]));
     const run = (async () => {
         const connection = await gameManager.getChatConnection();
@@ -51,12 +179,31 @@ export function openBrickChat(brickId: string): Promise<ChatRoom | undefined> {
                 ask: (id, myChatId) => botApiService.askDirectChat(id, myChatId),
                 hasChatWith: (chatId) => connection.getDirectRoomFor(chatId) !== undefined,
                 hasRoom: (roomId) => listed(connection, roomId),
-                openChatWith: (chatId) => openDirectChatRoom(chatId),
+                openChatWith: (chatId) =>
+                    openDirectChatRoom(chatId, {
+                        show: (room) => reveal(brickId, room),
+                        onFailure: pendings.has(brickId) ? () => pendings.get(brickId)?.setupFailed() : undefined,
+                    }),
                 openRoom: async (roomId) => {
-                    await openChatRoom(roomId);
-                    return connection.getRoomByID(roomId);
+                    try {
+                        const room = connection.getRoomByID(roomId);
+                        await reveal(brickId, room);
+                        return room;
+                    } catch (error) {
+                        console.error(error);
+                        Sentry.captureException(error);
+                        const pending = pendings.get(brickId);
+                        if (pending) pending.setupFailed();
+                        else warningMessageStore.addWarningMessage(get(LL).chat.failedToOpenRoom({ roomId }));
+                        return undefined;
+                    }
                 },
-                sayStillLoading: () => warningMessageStore.addWarningMessage(get(LL).chat.chatsStillLoading()),
+                sayStillLoading: () => {
+                    const pending = pendings.get(brickId);
+                    if (pending) pending.setupFailed();
+                    else warningMessageStore.addWarningMessage(get(LL).chat.chatsStillLoading());
+                },
+                showPending: () => showPending(brickId),
                 sleep: (ms) =>
                     new Promise((resolve) => {
                         setTimeout(resolve, ms);
@@ -66,8 +213,14 @@ export function openBrickChat(brickId: string): Promise<ChatRoom | undefined> {
             makeIt
         );
     })()
+        .then((room) => {
+            // No chat in the end: the screen held for it says so and gives the person's words back
+            if (!room) pendings.get(brickId)?.setupFailed();
+            return room;
+        })
         .catch((error: unknown) => {
             console.error("Could not open the chat with a Brick", error);
+            pendings.get(brickId)?.setupFailed();
             return undefined;
         })
         .finally(() => {

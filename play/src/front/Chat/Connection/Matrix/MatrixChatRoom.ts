@@ -828,6 +828,15 @@ export class MatrixChatRoom
             });
     }
 
+    /**
+     * Sends the words and answers once the chat server has them; rejects when it did not. For words written while a Brick's
+     * chat was still being made, which must go once and in order, and show as sent only when they did.
+     */
+    async sendMessageConfirmed(message: string): Promise<void> {
+        await this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, this.getMessageContent(message));
+        selectedChatMessageToReply.set(null);
+    }
+
     private getMessageContent(message: string): RoomMessageEventContent {
         const content: RoomMessageEventContent = { body: message, msgtype: MsgType.Text, formatted_body: message };
         this.applyReplyContentIfReplyTo(content);

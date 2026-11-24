@@ -33,7 +33,8 @@
     import { chatStatusStore } from "../Status/ChatStatusStore";
     import { statusDotColour } from "../Status/ChatStatus";
     import { gameManager } from "../../../Phaser/Game/GameManager";
-    import { myBricksByChatId } from "../../Bricks/MyBricksStore";
+    import { brickPicture, myBricksByChatId } from "../../Bricks/MyBricksStore";
+    import { ownBrickInChat } from "../../Bricks/Brick";
     import { brickHello } from "../../Bricks/BrickHello";
     import { previewLine } from "./MessageActions/messageActions";
     import RoomMenu from "./RoomMenu/RoomMenu.svelte";
@@ -61,16 +62,35 @@
         ? getContext(PERSON_COLOUR_CONTEXT)
         : readable(() => undefined);
     const myChatId = localUserStore.getChatId();
-    $: partnerId = room.type === "direct" ? $members.find((member) => member.id !== myChatId)?.id : undefined;
+    // A chat whose one other member is one of the person's own Bricks is that Brick's chat from its first moment, whatever type
+    // or name the chat server gives it while it is made (its name is then the Brick's raw chat address): it is named and
+    // pictured as the Brick. A chat with anyone else keeps the rules it had.
+    $: ownBrickChat = ownBrickInChat(
+        $members.map((member) => member.id),
+        myChatId,
+        $myBricksByChatId
+    );
+    $: partnerId =
+        room.type === "direct" || ownBrickChat !== undefined
+            ? $members.find((member) => member.id !== myChatId)?.id
+            : undefined;
     // Someone outside the world is asked of Orbit (once), for their Woka and the name they go by.
     $: requestChatPerson(partnerId);
     // The dot on a direct chat's woka: the same status the chat header and People show for them.
     // Followed when the same chat row turns into a direct chat (its type is refreshed under the same id).
     $: partnerStatus = room.type === "direct" ? chatStatusStore(room) : undefined;
     $: statusDot = $partnerStatus ? statusDotColour($partnerStatus, $LL) : undefined;
-    $: partnerWoka = partnerId ? personPicture($wokaByChatId, partnerId, room.pictureStore) : undefined;
+    $: partnerWoka = ownBrickChat
+        ? brickPicture(ownBrickChat.characterTextureId)
+        : partnerId
+        ? personPicture($wokaByChatId, partnerId, room.pictureStore)
+        : undefined;
     // A direct chat is titled with the name the other person goes by in Universe, else the chat room's name.
-    $: title = room.type === "direct" ? personName($nameByChatId, partnerId, $roomName) : $roomName;
+    $: title = ownBrickChat
+        ? ownBrickChat.name
+        : room.type === "direct"
+        ? personName($nameByChatId, partnerId, $roomName)
+        : $roomName;
 
     $: chunks = highlightWords({
         text: title.match(/\[\d*]/) ? title.substring(0, title.search(/\[\d*]/)) : title,
@@ -146,7 +166,7 @@
     data-testid={$roomName}
 >
     <div class="relative shrink-0">
-        {#if room.type === "direct"}
+        {#if room.type === "direct" || ownBrickChat}
             <!-- Their woka: live while they're in Universe, else the one saved as their chat picture. -->
             <TopRowAvatar
                 pictureStore={partnerWoka ?? room.pictureStore}
