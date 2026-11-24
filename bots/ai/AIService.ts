@@ -4200,7 +4200,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // The job "try again" carries on in this turn, when the person asked for it (piece 8)
             ...(memory?.computerRetry ? { retry: memory.computerRetry } : {}),
             // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two
-            ...(memory ? { startKeys: (memory.computerStarts ??= new Map()) } : {}),
+            ...(memory ? { startKeys: (memory.computerStarts ??= new Map()), endedShown: (memory.computerEndedShown ??= {}) } : {}),
             ...(this.computerStartKeys ? { startKeyStore: this.computerStartKeys } : {}),
             // Orbit refused to carry a job on: the reply carries a "Start a new job" button for it, and nothing is started here (finding 6)
             ...(memory ? { offerNewJob: (title: string) => void (memory.pendingNewJob = { title }) } : {}),

@@ -13,8 +13,8 @@ import * as Sentry from '@sentry/node';
 import type { StartKeyStore, StoredStartKey, StoredStartPayload } from '../server/ComputerStartKeys';
 import { jobLine, quotedTitle, type JobNote } from './JobStatusLine';
 import type { AdminApiService, CannotContinue } from '../server/AdminApiService';
-import { CANNOT_CONTINUE_NOTE, cannotContinue, cannotContinueSaid, NEW_JOB_OFFER_NOTE, newJobOfferSaid, RETIRED_NOTE, STALE_CONSENT_NOTE, START_REFUSAL_WORDS, startRefusalSaid, TRY_AGAIN_WORDS, WHICH_EARLIER_JOB_NOTE, whichEarlierJobSaid } from './ComputerTryAgainWords';
-import { quotedTitles } from './ComputerControlWords';
+import { CANNOT_CONTINUE_NOTE, cannotContinue, cannotContinueSaid, NEW_JOB_OFFER_NOTE, newJobOfferSaid, RETIRED_NOTE, STALE_CONSENT_NOTE, START_REFUSAL_WORDS, startRefusalSaid, TRY_AGAIN_WORDS, WHICH_EARLIER_DATED_NOTE, WHICH_EARLIER_JOB_NOTE, whichEarlierDatedSaid, whichEarlierJobSaid } from './ComputerTryAgainWords';
+import { quotedTitles, whichDated } from './ComputerControlWords';
 import { computerControlNote, isComputerControlTool } from './ComputerControlTools';
 
 export const COMPUTER_TOOL = 'use_computer';
@@ -48,6 +48,8 @@ export function computerToolDefinitions(): { type: 'function'; function: { name:
                         app_cannot: { type: 'string', description: 'Only when one of your apps could seem to fit this job: in a few words, why that app cannot do it (it has no such action, or the job lives on a website screen). Leave out otherwise.' },
                         reads_only: { type: 'boolean', description: 'True when the job only looks and writes nothing anywhere (it may run beside another job). Leave out otherwise.' },
                         try_again: { type: 'boolean', description: 'True only when your instructions name a job under "Try again" and the person asks you to try that job again or carry on with it: it carries on from where it stopped. Leave out otherwise.' },
+                        latest: { type: 'boolean', description: 'With try_again: true only when their words say the latest one ("try the latest Visa form again"). Never otherwise: two jobs with one title are asked about.' },
+                        pick: { type: 'integer', description: 'With try_again, after they were asked which of several jobs of one title they mean: the number of the one they chose, counting the jobs in the question from the first one named.' },
                     },
                     required: ['job'],
                 },
@@ -217,6 +219,8 @@ export function timedKey(issued: number, rest: string): string {
 
 export interface ComputerToolContext {
     admin: Pick<AdminApiService, 'startComputerJob'> & Partial<Pick<AdminApiService, 'lookUpComputerStart' | 'ackComputerStart' | 'computerEndedJobs' | 'retireComputerStart'>>;
+    /** The ended jobs the last "which job do you mean?" named, in the order it named them (kept across messages): the answer picks one of them by its number, never by a list read again. */
+    endedShown?: { ids?: string[]; at?: number };
     /** The apps this person has connected to this Brick in this reply (their names), so a job an app can do is not started on the computer. */
     apps?: string[];
     botId: string;
@@ -310,6 +314,11 @@ export const OPEN_START_SLOT = '\u0000open';
 export const FOUND_EARLIER_SLOT = '\u0000found';
 /** A `try_again` that ended without a start in this turn (it asked which job, or offered a new one): until the person's next message, no start of any kind goes out, whatever the model calls next (GPT seventh note, E). */
 export const TRY_AGAIN_ASKED_SLOT = '\u0000tryagain';
+/**
+ * A `try_again` of this turn that found no job to carry on and asked nothing (the ended jobs could not be read): the title it named stays in the entry's `key` ('' for none). Until the person's
+ * next message no ORDINARY start of that title (or of any title, when it named none) goes out in this turn: a lone retry authorises no new paid job (GPT's eighth note, E).
+ */
+export const TRY_AGAIN_HELD_SLOT = '\u0000tryagain-held';
 /** A `try_again` of this turn is still being checked (the ended jobs are being read): the calls of a round run together, so until it has settled nothing else starts either (CodeRabbit on the round 8 head, 3 and 15). */
 export const TRY_AGAIN_PENDING_SLOT = '\u0000tryagain-pending';
 /** The `try_again` of this turn that is still reading the ended jobs, as a promise that settles when it is over (none: undefined, so a call with nothing to wait for does not yield). A call that begins beside it decides only after it has settled. */
@@ -328,6 +337,12 @@ const turnEpochs = new WeakMap<Map<string, StartKeyEntry>, number>();
 const epochOf = (starts: Map<string, StartKeyEntry> | undefined): number => (starts ? (turnEpochs.get(starts) ?? 0) : 0);
 const OVERTAKEN_NOTE = 'They wrote again while this was being checked, so nothing was started by this call.';
 const START_DISPATCHED_NOTE = 'A start for this person was already sent in this same turn, so this call sent nothing more and asked them nothing. Do not call use_computer again in this turn. Say nothing more about starting: what that start did is told to them separately.';
+const TRY_AGAIN_HELD_NOTE = 'They asked to try a job again and it could not be found just now, so NOTHING was started: a retry never becomes a new job on its own. Say in one plain sentence that it could not be checked and they can ask again in a moment. Do not call use_computer again for it in this turn.';
+/** The note when an ordinary start of this turn is held back by a retry that found nothing (see `TRY_AGAIN_HELD_SLOT`), else undefined. */
+const heldBack = (starts: Map<string, StartKeyEntry> | undefined, job: string): string | undefined => {
+    const held = starts?.get(TRY_AGAIN_HELD_SLOT);
+    return held && (held.key === '' || sameTitle(text(held.key, TITLE_MAX), job)) ? TRY_AGAIN_HELD_NOTE : undefined;
+};
 const TRY_AGAIN_ASKED_NOTE = 'They have not chosen yet, so NOTHING was started. A fixed line under your reply already asked them: do not ask it again and do not call use_computer again in this turn. Only their next message can start anything.';
 /** A message with no time of its own is never the consent of a paid start (GPT's eighth note, A2): nothing is started from it and the person is asked to say it again. */
 const NO_CONSENT_TIME_NOTE = 'Nothing was started: this message carries no time of its own, so no job can be started from it. Say in one short sentence, in the person\'s language, that you could not start it from that message and that they can ask again.';
@@ -476,6 +491,9 @@ function terminalAnswer(reason: string, title: string | undefined, context: Comp
 const titleKey = (value: string): string => value.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 const sameTitle = (one: string, other: string): boolean => titleKey(one) === titleKey(other);
 
+/** How long the jobs a "which job do you mean?" named are kept for the answer to pick from. */
+const ENDED_SHOWN_KEEP_MS = 6 * 60 * 60_000;
+
 /**
  * `try_again` with no job to carry on for this turn. Reads the person's ended jobs on this Brick (Orbit's own list, never the model's word): one that the words name exactly carries on;
  * ended jobs otherwise are asked about ("which job do you mean?"); none is offered a new job. Nothing here sends a start.
@@ -483,7 +501,7 @@ const sameTitle = (one: string, other: string): boolean => titleKey(one) === tit
 async function tryAgainWithoutJob(args: Record<string, unknown>, context: ComputerToolContext, stillThisTurn: () => boolean): Promise<{ carryOn: { id: string; title: string } } | { answer: Record<string, unknown>; asked: boolean }> {
     // The title is compared as the person's words gave it, up to what Orbit keeps (200), NEVER cut to the 120 a start carries first: a longer title would never match itself (CodeRabbit on the round 8 head, 2)
     const named = typeof args.job === 'string' ? args.job.replace(/\s+/g, ' ').trim().slice(0, ENDED_TITLE_READ_MAX) : '';
-    let ended: Array<{ id: string; title: string }> | null = null;
+    let ended: Array<{ id: string; title: string; endedAt?: number }> | null = null;
     try {
         ended = (await context.admin.computerEndedJobs?.(context.botId, context.userId)) ?? null;
     } catch {
@@ -492,18 +510,33 @@ async function tryAgainWithoutJob(args: Record<string, unknown>, context: Comput
     // The person may have written again while the ended jobs were being read: nothing of this retry (no question, no offer) reaches the newer turn
     if (!stillThisTurn()) return { asked: false, answer: { started: false, success: false, note: OVERTAKEN_NOTE } };
     if (!ended) return { asked: false, answer: { started: false, success: false, note: 'The computer could not be reached just now, so nothing was started. Say so in one plain sentence; they can ask again in a moment.' } };
-    // A title that appears twice stands for its newest job; at most three are shown
-    const titles: Array<{ id: string; title: string }> = [];
-    for (const one of ended) if (!titles.some((seen) => sameTitle(seen.title, one.title))) titles.push(one);
-    const shown = titles.slice(0, 3);
-    const matches = named ? titles.filter((one) => sameTitle(one.title, named)) : [];
+    // The answer to a question that named several jobs: the one they chose, by its number in that question, among the jobs it named and Orbit still lists (never a list read anew)
+    const shownIds = context.endedShown?.ids;
+    const picked = typeof args.pick === 'number' && Number.isInteger(args.pick) && shownIds && context.endedShown?.at !== undefined && Date.now() - context.endedShown.at < ENDED_SHOWN_KEEP_MS ? shownIds[args.pick - 1] : undefined;
+    const chosen = picked ? ended.find((one) => one.id === picked) : undefined;
+    if (chosen) return { carryOn: { id: chosen.id, title: chosen.title } };
+    // Every ended job counts, never the newest of each title (two jobs with one title are two jobs): one that the words name exactly carries on; two or more are asked about, unless the words say the latest
+    const matches = named ? ended.filter((one) => sameTitle(one.title, named)) : [];
     if (matches.length === 1) return { carryOn: { id: matches[0].id, title: matches[0].title } };
+    if (matches.length > 1 && args.latest === true) {
+        // Orbit lists them newest first; an end time, when it gives one, decides
+        const newest = matches.reduce((best, one) => ((one.endedAt ?? -Infinity) > (best.endedAt ?? -Infinity) ? one : best), matches[0]);
+        return { carryOn: { id: newest.id, title: newest.title } };
+    }
+    // At most three are shown, newest first: the jobs that share the title they named, else the latest ended jobs
+    const shown = (matches.length > 1 ? matches : ended).slice(0, 3);
     const answer = { started: false, success: false } as const;
     if (shown.length > 0) {
-        const line = TRY_AGAIN_WORDS.whichEarlierJob(quotedTitles(shown.map((one) => one.title)));
-        if (!context.confirmations) return { asked: true, answer: { ...answer, asked: 'which', note: whichEarlierJobSaid(line) } };
+        const dated = shown.some((one, index) => shown.some((other, at) => at !== index && sameTitle(other.title, one.title)));
+        const line = whichDated('ended', shown.map((one) => ({ title: one.title, ...(one.endedAt === undefined ? {} : { at: one.endedAt }) })), Date.now(), sameTitle, (quoted) => TRY_AGAIN_WORDS.whichEarlierJob(quoted));
+        // The jobs the question named, in its order: the answer picks one of these
+        if (context.endedShown) {
+            context.endedShown.ids = shown.map((one) => one.id);
+            context.endedShown.at = Date.now();
+        }
+        if (!context.confirmations) return { asked: true, answer: { ...answer, asked: 'which', note: dated ? whichEarlierDatedSaid(line) : whichEarlierJobSaid(line) } };
         context.confirmations.say(line);
-        return { asked: true, answer: { ...answer, asked: 'which', note: WHICH_EARLIER_JOB_NOTE } };
+        return { asked: true, answer: { ...answer, asked: 'which', note: dated ? WHICH_EARLIER_DATED_NOTE : WHICH_EARLIER_JOB_NOTE } };
     }
     // No earlier job to list: the offer to start it as a new job (the card is the existing one), or, with no title for the work, the plain line
     // what is offered is a start, so its title is held to what a start carries
@@ -542,6 +575,8 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             const overtaken = context.startKeys !== undefined && (context.startKeys.get(TRY_AGAIN_PENDING_SLOT) !== pending || epochOf(context.startKeys) !== turn);
             // A question put to the person ends every start of this turn (set in the same step that lets the mark go); a lookup that could not be answered, or a job carried on, asks nothing and blocks nothing
             if ('answer' in settled && settled.asked && !overtaken) context.startKeys?.set(TRY_AGAIN_ASKED_SLOT, { key: '', at: Date.now(), open: false });
+            // A retry that found nothing to carry on and asked nothing (the ended jobs could not be read) authorises no ordinary start of its title in this turn, whichever call comes first (GPT's eighth note, E)
+            else if ('answer' in settled && !settled.asked && !overtaken) context.startKeys?.set(TRY_AGAIN_HELD_SLOT, { key: text(args.job, ENDED_TITLE_READ_MAX), at: Date.now(), open: false });
             if (overtaken && 'carryOn' in settled) return { started: false, success: false, note: OVERTAKEN_NOTE };
         } finally {
             if (context.startKeys?.get(TRY_AGAIN_PENDING_SLOT) === pending) context.startKeys.delete(TRY_AGAIN_PENDING_SLOT);
@@ -552,6 +587,11 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
     }
     const job = carryOn ? text(carryOn.title, TITLE_MAX) : text(args.job, TITLE_MAX);
     if (!job) return { error: 'Say in a few words what the job is.' };
+    // An ordinary start of the title a retry of this turn could not find a job for: nothing is sent, whichever of the two calls came first
+    if (args.try_again !== true) {
+        const held = heldBack(context.startKeys, job);
+        if (held) return { started: false, success: false, note: held };
+    }
     const brief = typeof args.details === 'string' ? args.details.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ').trim().slice(0, DETAILS_MAX) : '';
     // A job that carries on was already on the computer: the order of choosing was made when it began
     const fits = carryOn ? null : appThatFits(job, brief, context.apps);
@@ -730,6 +770,12 @@ export async function runComputerTool(args: Record<string, unknown>, context: Co
             if (context.startKeys?.has(TRY_AGAIN_ASKED_SLOT)) {
                 if (!priorSend) await dropKey();
                 return { started: false, success: false, note: TRY_AGAIN_ASKED_NOTE };
+            }
+            // A retry beside this call that found nothing to carry on: this ordinary start of its title is held back too (the retry may have settled while this call waited)
+            const heldNote = args.try_again === true ? undefined : heldBack(context.startKeys, job);
+            if (heldNote) {
+                if (!priorSend) await dropKey();
+                return { started: false, success: false, note: heldNote };
             }
             // From here a start is on its way, whatever comes back: a `try_again` of this turn that begins now must not say that nothing was started
             if (context.startKeys) dispatchedTurns.add(context.startKeys);

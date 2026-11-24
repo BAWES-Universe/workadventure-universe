@@ -1836,16 +1836,19 @@ export class AdminApiService {
      * pick). An Orbit that sends no `ended` list is answered with the one `retry` job it names. `null` when Orbit cannot be asked or the computer is not on (nothing is listed, and nothing is
      * started either way). One request, read only.
      */
-    async computerEndedJobs(viaBotId: string, userId: string): Promise<Array<{ id: string; title: string }> | null> {
+    async computerEndedJobs(viaBotId: string, userId: string): Promise<Array<{ id: string; title: string; endedAt?: number }> | null> {
         try {
             const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown; ended?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1', ended: '5' });
             if (!(response.data?.available === true && response.data?.on === true)) return null;
-            const jobs: Array<{ id: string; title: string }> = [];
+            const jobs: Array<{ id: string; title: string; endedAt?: number }> = [];
             if (Array.isArray(response.data.ended)) {
                 for (const raw of response.data.ended) {
                     if (typeof raw !== 'object' || raw === null || (raw as { continuable?: unknown }).continuable !== true) continue;
                     const one = retryJobOf({ ...raw, how: 'ended' });
-                    if (one && !jobs.some((seen) => seen.id === one.id)) jobs.push({ id: one.id, title: one.title });
+                    // When it ended (milliseconds), as Orbit says it (a time, or a number): the question that tells two jobs of one title apart says how long ago
+                    const rawEnd = (raw as { endedAt?: unknown }).endedAt;
+                    const endedAt = typeof rawEnd === 'number' ? rawEnd : typeof rawEnd === 'string' ? Date.parse(rawEnd) : NaN;
+                    if (one && !jobs.some((seen) => seen.id === one.id)) jobs.push({ id: one.id, title: one.title, ...(Number.isFinite(endedAt) && endedAt > 0 ? { endedAt } : {}) });
                 }
                 return jobs;
             }

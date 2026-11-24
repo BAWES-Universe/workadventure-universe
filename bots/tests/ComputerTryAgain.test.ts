@@ -13,7 +13,7 @@ import axios from 'axios';
 import { AdminApiService, COMPUTER_CONTINUES_HEADER, cannotContinueOf } from '../server/AdminApiService';
 import { CANNOT_CONTINUE_NOTE, START_NEW_JOB_LABEL, START_REFUSAL_WORDS, TRY_AGAIN_WORDS, cannotContinue } from '../ai/ComputerTryAgainWords';
 import { AIService } from '../ai/AIService';
-import { ConfirmationQueue, computerToolDefinitions, forgetSettledStarts, OPEN_START_SLOT, runComputerTool, TRY_AGAIN_ASKED_SLOT, TRY_AGAIN_PENDING_SLOT, startKeyFor, type ComputerToolContext, type StartKeyEntry } from '../ai/ComputerTools';
+import { ConfirmationQueue, computerToolDefinitions, forgetSettledStarts, OPEN_START_SLOT, runComputerTool, TRY_AGAIN_ASKED_SLOT, TRY_AGAIN_HELD_SLOT, TRY_AGAIN_PENDING_SLOT, startKeyFor, type ComputerToolContext, type StartKeyEntry } from '../ai/ComputerTools';
 import { asksToTryAgain, offersTryAgain, retryJobOf, tryAgainNote, type RetryJob } from '../ai/ComputerTryAgain';
 import { jobLine, quotedTitle } from '../ai/JobStatusLine';
 import { CONTROL_WORDS } from '../ai/ComputerControlWords';
@@ -459,11 +459,12 @@ describe('try_again with no job named for this turn', () => {
     const world = (ended: unknown, answer: unknown = started) => ({ startComputerJob: vi.fn().mockResolvedValue(answer), computerEndedJobs: vi.fn().mockResolvedValue(ended) });
     const ctx = (admin: ReturnType<typeof world>, over: Partial<ComputerToolContext> = {}): ComputerToolContext => ({ admin: admin as never, botId: BRICK, userId: 'uuid-alice', ...over });
 
-    it('two or more ended jobs: asks which, newest first, a repeated title once, at most three; nothing is started', async () => {
+    it('two or more ended jobs: asks which, newest first, at most three, a title shown twice told apart; nothing is started', async () => {
         const admin = world([TAXI, { ...TAXI, id: 'dup-dup-dup-dup' }, VISA, FLIGHT, { id: 'zzzz-zzzz-zzzz', title: 'Fourth one' }]);
         const queue = new ConfirmationQueue();
         const answer = await runComputerTool({ job: 'try again', try_again: true }, ctx(admin, { confirmations: queue }));
-        expect(queue.tell()).toEqual(['Which job do you mean: “Taxi booking”, “Visa form” or “Flight search”?']);
+        // two jobs share a title and Orbit gave no time: they are told apart by their order (FINAL, 24 Nov)
+        expect(queue.tell()).toEqual(['Which job do you mean: “Taxi booking” (newer), “Taxi booking” (older) or “Visa form”?']);
         expect(admin.startComputerJob).not.toHaveBeenCalled();
         expect(answer).toMatchObject({ started: false, asked: 'which' });
         expect(String(answer.note)).toMatch(/NOTHING was started/);
@@ -485,10 +486,76 @@ describe('try_again with no job named for this turn', () => {
         expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ title: 'Visa form', continuesJobId: OLD }));
     });
 
-    it('two ended jobs of one title: the newest stands for both, and it carries on', async () => {
-        const admin = world([{ id: 'newest-newest-1', title: 'Visa form' }, { id: 'older-older-123', title: 'visa form' }]);
-        await runDelivered({ job: 'Visa form', try_again: true }, ctx(admin));
-        expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: 'newest-newest-1' }));
+    // GPT's eighth note, E2: two jobs with one title are two jobs; the person is asked (a fixed, dated line), or says the latest
+    describe('two ended jobs of one title', () => {
+        const minutes = (n: number) => Date.now() - n * 60_000;
+        const twins = () => [
+            { id: 'newest-newest-1', title: 'Visa form', endedAt: minutes(25) },
+            { id: 'older-older-123', title: 'visa form', endedAt: minutes(3 * 24 * 60) },
+        ];
+
+        it('are never taken for one: nothing carries on, and the question says when each ended', async () => {
+            const admin = world(twins());
+            const queue = new ConfirmationQueue();
+            const answer = await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: queue }));
+            expect(queue.tell()).toEqual(['Which “Visa form” do you mean: the one that ended 25 minutes ago, or the one that ended 3 days ago?']);
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            expect(answer).toMatchObject({ started: false, asked: 'which' });
+            expect(String(answer.note)).toMatch(/pick/);
+        });
+
+        it('"the latest" (latest: true) keeps the quick path: the newest carries on, no question', async () => {
+            const admin = world(twins());
+            const queue = new ConfirmationQueue();
+            await runDelivered({ job: 'Visa form', try_again: true, latest: true }, ctx(admin, { confirmations: queue }));
+            expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: 'newest-newest-1' }));
+            expect(queue.tell()).toEqual([]);
+        });
+
+        it('the end time decides which is the latest when Orbit lists them in another order', async () => {
+            const admin = world([...twins()].reverse());
+            await runDelivered({ job: 'Visa form', try_again: true, latest: true }, ctx(admin));
+            expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: 'newest-newest-1' }));
+        });
+
+        it('the answer picks one by its number in the question: that one carries on, and only that one', async () => {
+            const admin = world(twins());
+            const shown = {};
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: new ConfirmationQueue(), endedShown: shown, startKeys: new Map() }));
+            // the next message: a new turn
+            await runDelivered({ job: 'Visa form', try_again: true, pick: 2 }, ctx(admin, { endedShown: shown, startKeys: new Map() }));
+            expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+            expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: 'older-older-123' }));
+        });
+
+        it('a number with no question behind it, or one that names no job, picks nothing: they are asked', async () => {
+            const admin = world(twins());
+            const queue = new ConfirmationQueue();
+            await runComputerTool({ job: 'Visa form', try_again: true, pick: 2 }, ctx(admin, { confirmations: queue, endedShown: {} }));
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            expect(queue.tell()).toHaveLength(1);
+            const asked = new ConfirmationQueue();
+            const shown = {};
+            await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: new ConfirmationQueue(), endedShown: shown, startKeys: new Map() }));
+            await runComputerTool({ job: 'Visa form', try_again: true, pick: 5 }, ctx(admin, { confirmations: asked, endedShown: shown, startKeys: new Map() }));
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+            expect(asked.tell()).toHaveLength(1);
+        });
+
+        it('a picked job Orbit no longer lists is never carried on', async () => {
+            const shown = { ids: ['gone-gone-1234'], at: Date.now() };
+            const admin = world(twins());
+            await runComputerTool({ job: 'Visa form', try_again: true, pick: 1 }, ctx(admin, { confirmations: new ConfirmationQueue(), endedShown: shown }));
+            expect(admin.startComputerJob).not.toHaveBeenCalled();
+        });
+
+        it('a single match is unchanged: it carries on without a question', async () => {
+            const admin = world([twins()[0], TAXI]);
+            const queue = new ConfirmationQueue();
+            await runDelivered({ job: 'Visa form', try_again: true }, ctx(admin, { confirmations: queue }));
+            expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: 'newest-newest-1' }));
+            expect(queue.tell()).toEqual([]);
+        });
     });
 
     it('titles in Arabic are told apart (a different title is a different job)', async () => {
@@ -587,6 +654,7 @@ describe('try_again with no job named for this turn', () => {
         const heldWorld = (hold: Promise<unknown>) => ({ startComputerJob: vi.fn().mockResolvedValue(started), computerEndedJobs: vi.fn().mockReturnValue(hold) });
         /** Lets everything that can run without the held promise run. */
         const settleMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+        const slowStore = (gate: { promise: Promise<void> }) => ({ expected: () => true, delete: async () => undefined, claim: async (_scope: string, entry: { key: string; at: number; payload?: unknown }) => (await gate.promise, { ...entry, mine: true }) });
 
         it('a fresh start dispatched while the try_again lookup is still pending WAITS for it, and is refused when the question was asked; so is every call after', async () => {
             const hold = deferred<unknown>();
@@ -690,6 +758,79 @@ describe('try_again with no job named for this turn', () => {
             expect(admin.startComputerJob).not.toHaveBeenCalled();
         });
 
+        // GPT's eighth note, E: a lone retry whose target cannot be found authorises no ordinary paid start of its title, in either order of the two calls
+        describe('a retry whose ended-job lookup failed', () => {
+            it('retry FIRST: a sibling ordinary start of the same title sends nothing', async () => {
+                const hold = deferred<unknown>();
+                const admin = heldWorld(hold.promise);
+                const over = { startKeys: new Map(), confirmations: new ConfirmationQueue() };
+                const asking = runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin as never, over));
+                const sibling = runComputerTool({ job: 'Visa form' }, ctx(admin as never, over));
+                await settleMicrotasks();
+                hold.reject(new Error('down'));
+                expect(await asking).toMatchObject({ started: false });
+                const answer = await sibling;
+                expect(answer).toMatchObject({ started: false });
+                expect(String(answer.note)).toMatch(/NOTHING was started/);
+                expect(admin.startComputerJob).not.toHaveBeenCalled();
+                // and one that comes after, in the same turn
+                expect(await runComputerTool({ job: 'visa FORM' }, ctx(admin as never, over))).toMatchObject({ started: false });
+                expect(admin.startComputerJob).not.toHaveBeenCalled();
+            });
+
+            it('start FIRST (waiting on its own steps): it is stopped right before its paid send once the retry found nothing', async () => {
+                const admin = { startComputerJob: vi.fn().mockResolvedValue(started), computerEndedJobs: vi.fn().mockRejectedValue(new Error('down')) };
+                const gate = deferred<void>();
+                const over = { startKeys: new Map(), confirmations: new ConfirmationQueue(), startKeyStore: slowStore(gate) as never };
+                const sibling = runComputerTool({ job: 'Visa form' }, ctx(admin as never, over));
+                const asking = runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin as never, over));
+                await asking;
+                gate.resolve();
+                expect(await sibling).toMatchObject({ started: false });
+                expect(admin.startComputerJob).not.toHaveBeenCalled();
+                // nothing is left behind for the next ask to send
+                expect([...over.startKeys.values()].some((entry) => entry.open)).toBe(false);
+            });
+
+            it('a start with ANOTHER title in the same turn (a genuinely separate ask) still goes', async () => {
+                const hold = deferred<unknown>();
+                const admin = heldWorld(hold.promise);
+                const over = { startKeys: new Map() };
+                const asking = runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin as never, over));
+                const other = runDelivered({ job: 'Book a taxi' }, ctx(admin as never, over));
+                await settleMicrotasks();
+                hold.reject(new Error('down'));
+                await asking;
+                expect(await other).toMatchObject({ started: true });
+                expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+            });
+
+            it('a retry that named no title holds every ordinary start of the turn; the next message starts one', async () => {
+                const hold = deferred<unknown>();
+                const admin = heldWorld(hold.promise);
+                const over = { startKeys: new Map<string, StartKeyEntry>() };
+                const asking = runComputerTool({ try_again: true } as never, ctx(admin as never, over));
+                const sibling = runComputerTool({ job: 'Anything at all' }, ctx(admin as never, over));
+                await settleMicrotasks();
+                hold.reject(new Error('down'));
+                await asking;
+                expect(await sibling).toMatchObject({ started: false });
+                expect(admin.startComputerJob).not.toHaveBeenCalled();
+                // their next message (a new turn): a deliberate fresh start is theirs to make
+                forgetSettledStarts(over.startKeys);
+                expect(await runDelivered({ job: 'Anything at all' }, ctx(admin as never, over))).toMatchObject({ started: true });
+                expect(admin.startComputerJob).toHaveBeenCalledTimes(1);
+            });
+
+            it('a second retry that DOES find its job carries it on (it is what they asked for)', async () => {
+                const admin = { startComputerJob: vi.fn().mockResolvedValue(started), computerEndedJobs: vi.fn().mockRejectedValueOnce(new Error('down')).mockResolvedValue([VISA]) };
+                const over = { startKeys: new Map() };
+                await runComputerTool({ job: 'Visa form', try_again: true }, ctx(admin as never, over));
+                expect(await runDelivered({ job: 'Visa form', try_again: true }, ctx(admin as never, over))).toMatchObject({ started: true });
+                expect(admin.startComputerJob).toHaveBeenCalledWith(BRICK, 'uuid-alice', expect.objectContaining({ continuesJobId: OLD }));
+            });
+        });
+
         // CodeRabbit on 543f5b35, R2-1: a retry overtaken by the person's next message leaves no offer in the newer turn
         it('the person writes again while the ended jobs are read and none exist: no "start a new job" offer and no words reach the newer turn; a current retry still offers', async () => {
             const hold = deferred<unknown>();
@@ -742,7 +883,6 @@ describe('try_again with no job named for this turn', () => {
         });
 
         // CodeRabbit on 543f5b35, R2-2: a start waiting on the shared store when the person writes again is sent nowhere in the newer turn
-        const slowStore = (gate: { promise: Promise<void> }) => ({ expected: () => true, delete: async () => undefined, claim: async (_scope: string, entry: { key: string; at: number; payload?: unknown }) => (await gate.promise, { ...entry, mine: true }) });
 
         it('a carried-on continuation waiting on the store while the person writes again: nothing is sent, and the record that was never sent goes with it (the newer turn is not marked as dispatched)', async () => {
             const admin = heldWorld(Promise.resolve([VISA, TAXI]));
@@ -888,7 +1028,34 @@ describe('try_again with no job named for this turn', () => {
         const memory = new Map();
         const down = world(null);
         await runComputerTool({ job: 'Visa form', try_again: true }, ctx(down, { startKeys: memory }));
+        // no open start, no asked mark: only the hold on an ORDINARY start of that title (GPT's eighth note, E), which the person's next message clears
+        expect([...memory.keys()]).toEqual([TRY_AGAIN_HELD_SLOT]);
+        expect(memory.has(TRY_AGAIN_ASKED_SLOT)).toBe(false);
+        forgetSettledStarts(memory);
         expect(memory.size).toBe(0);
+    });
+
+    it('Orbit\'s list carries when each job ended (an ISO time, or a number), and none when it says none', async () => {
+        const service = new AdminApiService('http://orbit.test');
+        vi.spyOn(service, 'isConfigured').mockReturnValue(true);
+        (service as unknown as { brickCall: unknown }).brickCall = vi.fn().mockResolvedValue({
+            data: {
+                available: true,
+                on: true,
+                ended: [
+                    { id: OLD, title: 'Visa form', continuable: true, endedAt: '2026-11-24T14:05:00.000Z' },
+                    { id: 'job-numeric-1', title: 'Visa form', continuable: true, endedAt: 1_795_000_000_000 },
+                    { id: 'job-null-0001', title: 'Visa form', continuable: true, endedAt: null },
+                    { id: 'job-junk-0001', title: 'Visa form', continuable: true, endedAt: 'soon' },
+                ],
+            },
+        });
+        expect(await service.computerEndedJobs(BRICK, 'uuid-alice')).toEqual([
+            { id: OLD, title: 'Visa form', endedAt: Date.parse('2026-11-24T14:05:00.000Z') },
+            { id: 'job-numeric-1', title: 'Visa form', endedAt: 1_795_000_000_000 },
+            { id: 'job-null-0001', title: 'Visa form' },
+            { id: 'job-junk-0001', title: 'Visa form' },
+        ]);
     });
 
     it('Orbit\'s list: only `continuable` ended jobs are offered; an Orbit with no `ended` list gives the one `retry` job', async () => {
