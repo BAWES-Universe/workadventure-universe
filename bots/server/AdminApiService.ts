@@ -679,6 +679,11 @@ export interface ComputerControlAsk {
     pauseRunning?: boolean;
     /** With `stop`: the jobs the person confirmed. Orbit ends only those still live, never a job that began after the question was asked. */
     confirmedJobIds?: string[];
+    /**
+     * With `cancel`, sent only when the job was shown as never started and so goes without a question: Orbit then cancels it only if it still has not started, and otherwise
+     * cancels nothing and answers `{ ok: false, reason: 'started' }` (the job began after it was listed: the person is asked first, as for any job that has started).
+     */
+    expected?: 'not_started';
     isGuest?: boolean;
     /**
      * This control's own id (GPT's sixth answer, finding 4), made once where the person asked for it and the same every time THAT ask is sent again: Orbit applies a control once
@@ -2252,6 +2257,7 @@ export class AdminApiService {
                     ...(ask.action === 'stop' && Array.isArray(ask.confirmedJobIds) && ask.confirmedJobIds.length > 0 ? { confirmedJobIds: ask.confirmedJobIds } : {}),
                     ...(typeof ask.text === 'string' ? { text: ask.text } : {}),
                     ...(ask.pauseRunning ? { pauseRunning: true } : {}),
+                    ...(ask.action === 'cancel' && ask.expected === 'not_started' ? { expected: 'not_started' } : {}),
                 },
                 undefined,
                 undefined,

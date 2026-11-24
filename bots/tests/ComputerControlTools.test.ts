@@ -308,8 +308,34 @@ describe('cancel one job: Brick always asks first, and only the person\'s next m
         const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { cancel: viewOf(working()) });
         const c = chat(orbit.admin);
         await c.run(CANCEL_JOB_TOOL, { job: 'taxi' });
-        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi' }]);
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi', expected: 'not_started' }]);
         expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking')]);
+    });
+
+    it('a job that began after the list was read: Orbit says started, nothing was cancelled, and the person is asked first like any job that has started', async () => {
+        const orbit = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { cancel: { ok: false, reason: 'started' } });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'taxi' });
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi', expected: 'not_started' }]);
+        // asked, never told as cancelled, refused or unknown
+        expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Taxi booking')]);
+        // their yes in the next message: the job is shown as started by now, and goes without `expected`
+        const started = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking', { stepDone: 1 })]), { cancel: viewOf(working()) });
+        const d = chat(started.admin, c.state);
+        d.nextMessage('Yes');
+        await d.run(CANCEL_JOB_TOOL, { job: 'taxi' });
+        expect(started.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi' }]);
+        expect(await d.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelled, 'Taxi booking')]);
+    });
+
+    it('a job that started is never sent with expected: only a job shown as never started carries it', async () => {
+        const orbit = door(viewOf(working(), [paused('job-hotel', 'Hotel booking')]), { cancel: viewOf(working()) });
+        const c = chat(orbit.admin);
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        await c.deliver();
+        c.nextMessage();
+        await c.run(CANCEL_JOB_TOOL, { job: 'hotel' });
+        expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-hotel' }]);
     });
 
     it('a paused job has started: it is asked about first, every time, like a working one', async () => {
@@ -695,8 +721,16 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             const { orbit, c } = await askedAll([visa(), taxi(), flight()], { cancel: { ...viewOf(null) } });
             c.nextMessage('Yes, cancel Taxi booking');
             await c.run(STOP_COMPUTER_TOOL);
-            expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi' }]);
+            expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi', expected: 'not_started' }]);
             expect(await c.deliver()).toEqual([`${lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking')}\nI haven't stopped “Visa form” and “Flight search”.`]);
+        });
+
+        it('a never-started job that began meanwhile (Orbit says started) is not cancelled: it is asked about, and the one that had not begun is cancelled', async () => {
+            const { orbit, c } = await askedAll([visa(), taxi(), flight()], { cancel: { ok: false, reason: 'started' } });
+            c.nextMessage('Yes, cancel Taxi booking');
+            await c.run(STOP_COMPUTER_TOOL);
+            expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi', expected: 'not_started' }]);
+            expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.askCancel, 'Taxi booking')]);
         });
 
         it('words that fit two titles ask which, over the delivered list, and stop nothing', async () => {
@@ -724,7 +758,7 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             one.c.nextMessage('Yes, cancel Book taxi');
             await one.c.run(STOP_COMPUTER_TOOL);
             // only "Book taxi" never started: it is cancelled at once, and "Taxi" is left alone
-            expect(one.orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-booktaxi' }]);
+            expect(one.orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-booktaxi', expected: 'not_started' }]);
             expect(await one.c.deliver()).toEqual([`${lineOf(CONTROL_WORDS.cancelledQueued, 'Book taxi')}\nI haven't stopped “Flight search” and “Taxi”.`]);
             const two = await askedAll([flight(), bookTaxi(), bareTaxi()]);
             two.c.nextMessage('Yes, cancel Book taxi and Flight search');
@@ -769,7 +803,7 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             });
             c.nextMessage('Yes, cancel Taxi booking and Hotel booking');
             await c.run(STOP_COMPUTER_TOOL);
-            expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi' }]);
+            expect(orbit.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi', expected: 'not_started' }]);
             const said = await c.deliver();
             expect(said.join('\n')).toContain(lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking'));
         });
@@ -1196,6 +1230,17 @@ describe('Orbit\'s door for Brick (AdminApiService.controlComputerJobs)', () => 
         process.env.BOT_SERVICE_TOKEN = 'token';
         return new AdminApiService('https://orbit.example', 'admin-token');
     };
+    it('the expected flag goes to Orbit in the body of a cancel, and only on a cancel', async () => {
+        const api = service();
+        request.mockResolvedValueOnce({ data: { ok: false, reason: 'started' } });
+        const answer = await api.controlComputerJobs(BRICK, 'u', { action: 'cancel', jobId: 'j', expected: 'not_started' });
+        expect(answer).toEqual({ ok: false, reason: 'started' });
+        expect(request.mock.calls[0][0].data).toMatchObject({ action: 'cancel', jobId: 'j', expected: 'not_started' });
+        request.mockResolvedValueOnce({ data: { ok: true } });
+        await api.controlComputerJobs(BRICK, 'u', { action: 'pause', jobId: 'j', expected: 'not_started' });
+        expect(request.mock.calls[1][0].data).not.toHaveProperty('expected');
+    });
+
     it('sends exactly the fields the door takes, and reads the view, the note\'s delivery and the steps', async () => {
         request.mockResolvedValueOnce({ data: { ok: true, view: { job: { id: 'job-visa', title: 'Visa form', status: 'running', control: 'brick', cost: 5 }, queued: [] }, note: { seq: 3, delivery: 'now' } } });
         const answer = await service().controlComputerJobs(BRICK, 'uuid-alice', { action: 'note', jobId: 'job-visa', text: 'hello', isGuest: false });
@@ -1559,7 +1604,7 @@ describe('CodeRabbit N2/N3: which jobs started, and which job a selector names',
         const never = door(viewOf(working(), [inLine('job-taxi', 'Taxi booking')]), { cancel: viewOf(working()) });
         const c = chat(never.admin);
         await c.run(CANCEL_JOB_TOOL, { job: 'taxi' });
-        expect(never.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi' }]);
+        expect(never.acted()).toEqual([{ action: 'cancel', jobId: 'job-taxi', expected: 'not_started' }]);
         expect(await c.deliver()).toEqual([lineOf(CONTROL_WORDS.cancelledQueued, 'Taxi booking')]);
     });
 

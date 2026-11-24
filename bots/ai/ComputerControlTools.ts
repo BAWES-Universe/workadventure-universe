@@ -685,12 +685,22 @@ async function control(name: string, args: Record<string, unknown>, context: Com
             // A job that has started (or is paused) is always named back first; one that never started used nothing and goes at once (the approved mock, pictures 13 and 14)
             if (hasStarted(job) && (!ask || !ask.told || !ask.answerable)) return askFirst(context, key, { kind: 'cancel', jobIds: [job.id], titles: [job.title] }, [lineOf(CONTROL_WORDS.askCancel, job.title)]);
             context.state.asks.delete(key);
-            return once(context, key, async () => {
-                const answer = await acting({ action: 'cancel', jobId: job.id });
+            // A job shown as never started goes without a question, but only if it still has not started when Orbit looks: it says `started` and cancels nothing otherwise
+            let startedSince = false;
+            const done = await once(context, key, async () => {
+                const answer = await acting({ action: 'cancel', jobId: job.id, ...(hasStarted(job) ? {} : { expected: 'not_started' as const }) });
+                if (!answer.ok && reasonOf(answer) === 'started') {
+                    startedSince = true;
+                    return { result: { done: false }, lines: [] };
+                }
                 if (!answer.ok) return refused(reasonOf(answer), job, view);
                 const cancelled = lineOf(hasStarted(job) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, job.title);
                 return { result: { done: true }, lines: [leftOut && leftOut.length > 0 ? `${cancelled}\n${CONTROL_WORDS.notStopped(othersOf(leftOut))}` : cancelled] };
             });
+            if (!startedSince) return done;
+            // It began after the list was read: nothing was cancelled, and it is asked about like any job that has started. This turn holds no cancel for it, so the question is not cut short
+            context.state.calls.delete(key);
+            return askFirst(context, key, { kind: 'cancel', jobIds: [job.id], titles: [job.title], ...(leftOut ? { leftOut } : {}) }, [lineOf(CONTROL_WORDS.askCancel, job.title)]);
         }
         case TELL_JOB_TOOL: {
             const message = cleanMessage(args.message);
@@ -862,7 +872,9 @@ async function askNarrowed(
     if (named.length === 0) return say(context, [CONTROL_WORDS.stoppedNothingLeft(0, narrowed.jobIds.length, narrowed.titles.length === 1 ? narrowed.titles[0] : undefined)], { done: false, success: false });
     const statement = CONTROL_WORDS.narrowedStatement(quotedTitles(named.map((job) => job.title)), othersOf(narrowed.leftOut));
     if (named.every((job) => !hasStarted(job))) {
-        return once(context, `stop|${named.map((job) => job.id).join('|')}`, async () => {
+        // Jobs Orbit found started since the list was read: nothing was cancelled for them, and they are asked about below, like any job that has started
+        const startedSince: ComputerControlJob[] = [];
+        const done = await once(context, `stop|${named.map((job) => job.id).join('|')}`, async () => {
             const lines: string[] = [];
             // `done` only when EVERY selected job was cancelled: a cancel that broke or came back unknown may or may not have been taken, a refused one was not, and one never sent (a newer message came) was not
             // (CodeRabbit on the round 10 head). `unknown` says some cancel may have gone through
@@ -873,7 +885,11 @@ async function askNarrowed(
                 if (context.state.turn !== origin) break;
                 try {
                     // eslint-disable-next-line no-await-in-loop
-                    const answer = await door({ action: 'cancel', jobId: job.id, commandId: commandIdOf(context.state, context.inbound?.eventId, 'cancel', job.id, '') });
+                    const answer = await door({ action: 'cancel', jobId: job.id, expected: 'not_started', commandId: commandIdOf(context.state, context.inbound?.eventId, 'cancel', job.id, '') });
+                    if (!answer.ok && reasonOf(answer) === 'started') {
+                        startedSince.push(job);
+                        continue;
+                    }
                     if (answer.ok) cancelled += 1;
                     else if (reasonOf(answer) === 'unknown') known = false;
                     lines.push(answer.ok ? lineOf(CONTROL_WORDS.cancelledQueued, job.title) : refused(reasonOf(answer), job, view).lines[0]);
@@ -885,9 +901,19 @@ async function askNarrowed(
             }
             // Only when nothing was said at all (a newer message came before the first cancel went) is there nothing to tell
             if (lines.length === 0) return { result: { done: false, stale: true }, lines: [] };
-            if (narrowed.leftOut.length > 0) lines.push(CONTROL_WORDS.notStopped(othersOf(narrowed.leftOut)));
+            // The jobs left alone are said last: with a question still to come (some jobs began) they are said after its yes, with the question's own record of them
+            if (narrowed.leftOut.length > 0 && startedSince.length === 0) lines.push(CONTROL_WORDS.notStopped(othersOf(narrowed.leftOut)));
             return { result: cancelled === named.length ? { done: true } : { done: false, ...(known ? {} : { unknown: true }) }, lines: [lines.join('\n')] };
         });
+        if (startedSince.length === 0) return done;
+        // This turn holds no cancel for the jobs that began: the question about them is not cut short by the record of the others
+        context.state.calls.delete(`stop|${named.map((job) => job.id).join('|')}`);
+        const asked =
+            startedSince.length === 1
+                ? askFirst(context, `cancel|${startedSince[0].id}`, { kind: 'cancel', jobIds: [startedSince[0].id], titles: [startedSince[0].title], leftOut: narrowed.leftOut }, [lineOf(CONTROL_WORDS.askCancel, startedSince[0].title)])
+                : askFirst(context, 'stop', { kind: 'stop', jobIds: startedSince.map((job) => job.id), titles: startedSince.map((job) => job.title), leftOut: narrowed.leftOut }, [CONTROL_WORDS.askCancelMany(quotedTitles(startedSince.map((job) => job.title)))]);
+        // Lines already said for the jobs that were cancelled stay said (the model is given both when it says them itself)
+        return context.confirmations || typeof done.note !== 'string' || done.stale === true ? asked : { ...asked, note: `${done.note} ${String(asked.note)}` };
     }
     if (named.length === 1) {
         const job = named[0];
