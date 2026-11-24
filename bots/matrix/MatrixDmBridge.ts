@@ -2224,15 +2224,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const topic = offer && offer.kind === 'offer' && reply.claimOffer ? await reply.claimOffer() : null;
             if (offer && offer.kind === 'offer' && topic) {
                 const { ask, name, line, instructions } = offer;
-                const content = { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } };
-                // Orbit counted it as shown when it allowed it, so a send that fails once is tried again; one that fails twice gives the claim back (releaseOffer).
-                // Both tries are one message to Matrix: a first try that arrived but whose answer was lost is not sent twice.
                 const txnId = randomUUID();
+                // The card carries its transaction id, so a card that got through while its answer was lost can be found in the room (Sentry on 3eed7eeb6)
+                const content = { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions }, [NOTICE_TXN_KEY]: txnId };
+                // Orbit counted it as shown when it allowed it, so a send that fails once is tried again; one that fails twice gives the claim back (releaseOffer) only when the card is not in the room.
+                // Both tries are one message to Matrix: a first try that arrived but whose answer was lost is not sent twice.
                 await out
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
                     .catch(async (error) => {
                         console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error);
+                        // Two answers that never came (timeouts, a 5xx) do not say the card was NOT delivered: the claim is given back only when the room was read and the card is not in it.
+                        // A room that cannot be read keeps the claim (a topic that stays spent is better than a second card for the same suggestion)
+                        const there = await this.noticeInRoom(botUserId, event.room_id, txnId);
+                        if (there !== undefined) return;
                         // The card never reached the person: Orbit takes the claim back, so the topic is not spent on a card nobody saw
                         await reply.releaseOffer?.().catch(() => undefined);
                     });

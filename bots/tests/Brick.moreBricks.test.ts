@@ -23,7 +23,7 @@ import { BotRegistry } from '../server/BotRegistry';
 import { brickChangedEverywhere, listenForBrickChanges } from '../server/brickChanges';
 import { BRICK_NOT_MADE_TEXT, DmReplyService, brickMadeText } from '../server/DmReplyService';
 import { ConversationMemory } from '../memory/ConversationMemory';
-import { BRICK_MADE_KEY, BRICK_MAKE_KEY, BRICK_OFFER_KEY, COMPUTER_NEW_JOB_KEY, COMPUTER_NEW_JOB_OFFER_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
+import { BRICK_MADE_KEY, BRICK_MAKE_KEY, BRICK_OFFER_KEY, COMPUTER_NEW_JOB_KEY, COMPUTER_NEW_JOB_OFFER_KEY, NOTICE_TXN_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { AIService } from '../ai/AIService';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from '../ai/BrickTools';
 import type { MatrixEvent } from '../matrix/MatrixAppServiceRouter';
@@ -679,7 +679,7 @@ describe("More Bricks in a Brick's chat", () => {
         expect(order).toEqual(['answer', 'card']);
         expect(claimOffer).toHaveBeenCalledTimes(1);
         const { kind: _kind, ...card } = offer;
-        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: offer.ask, [BRICK_OFFER_KEY]: card }, expect.any(String)]);
+        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: offer.ask, [BRICK_OFFER_KEY]: card, [NOTICE_TXN_KEY]: expect.any(String) }, expect.any(String)]);
 
         client.sendMessage.mockClear();
         claimOffer.mockClear();
@@ -759,6 +759,30 @@ describe("More Bricks in a Brick's chat", () => {
         releaseOffer.mockRejectedValueOnce(new Error('orbit down'));
         await expect(bridge.onEvent(message('pasta, please?'))).resolves.toBeUndefined();
         expect(releaseOffer).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not give the suggestion back when both tries got no answer but the card is in the room, or the room cannot be read (Sentry on 3eed7eeb6)', async () => {
+        const offer = { kind: 'offer', topic: 'recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const { bridge, client, deps } = makeBridge();
+        await bridge.onEvent(invite());
+        const releaseOffer = vi.fn(async () => undefined);
+        const claimOffer = vi.fn(async () => 'recipes');
+        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer, releaseOffer });
+
+        // both answers were lost, but the first try arrived: the card is among the Brick's own messages under its transaction id
+        client.sendMessage.mockRejectedValueOnce(new Error('timeout')).mockRejectedValueOnce(new Error('timeout'));
+        client.getRecentMessages.mockImplementationOnce(async () => {
+            const sent = client.sendMessage.mock.calls.filter(([, , content]: any[]) => BRICK_OFFER_KEY in content).pop()!;
+            return [{ type: 'm.room.message', room_id: ROOM, sender: BRICK_USER, event_id: '$card', content: sent[2] }] as MatrixEvent[];
+        });
+        await bridge.onEvent(message('pasta again?'));
+        expect(releaseOffer).not.toHaveBeenCalled();
+
+        // both answers were lost and the room cannot be read: nothing is known, so the claim stays (a second card is worse than a spent topic)
+        client.sendMessage.mockRejectedValueOnce(new Error('timeout')).mockRejectedValueOnce(new Error('timeout'));
+        client.getRecentMessages.mockRejectedValueOnce(new Error('down'));
+        await bridge.onEvent(message('pasta once more?'));
+        expect(releaseOffer).not.toHaveBeenCalled();
     });
 
     it('hands "Make it" on with the Brick the card described, cut to size, and typed words with nothing', async () => {
