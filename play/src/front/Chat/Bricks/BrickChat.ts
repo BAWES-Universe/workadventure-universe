@@ -173,6 +173,10 @@ export function openBrickChat(brickId: string): Promise<ChatRoom | undefined> {
         if (pending) showRoom(pending);
         return already;
     }
+    // A screen left behind by an earlier try (the person went elsewhere) is not this tap's: it would take the chat for
+    // one the person left on purpose and show nothing
+    const left = pendings.get(brickId);
+    if (left && get(selectedRoomStore) !== left) pendings.delete(brickId);
     opening.update((ids) => new Set([...ids, brickId]));
     const run = (async () => {
         const connection = await gameManager.getChatConnection();

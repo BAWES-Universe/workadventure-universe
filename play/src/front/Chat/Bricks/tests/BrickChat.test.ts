@@ -573,6 +573,34 @@ describe("opening a Brick's chat on a screen of its own, before the chat exists"
         error.mockRestore();
     });
 
+    it("shows the chat when a Brick is tapped after an earlier try was left behind and the chat exists now", async () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const { connection, directRooms } = fakeConnection();
+        game.connection = connection;
+        game.askDirectChat.mockResolvedValue({ create: true, botChatId: chatIdOf(NEW) });
+        game.openDirectChatRoom.mockImplementation((_chatId, options) => {
+            options?.onFailure?.(new Error("chat server down"));
+            return Promise.resolve(undefined);
+        });
+        await openBrickChat(NEW);
+        const screen = game.showRoom.mock.calls[0][0] as PendingBrickChatRoom;
+        expect(screen).toBeInstanceOf(PendingBrickChatRoom);
+        // The person goes elsewhere; the chat is made later (here, on another device)
+        selected.set(undefined);
+        game.showRoom.mockClear();
+        directRooms.set([fakeRoom("!there:chat.test", [ME, chatIdOf(NEW)])]);
+        game.openDirectChatRoom.mockImplementation(async (chatId, options) => {
+            const room = { id: `chat with ${chatId}` };
+            if (options?.show) await options.show(room);
+            else game.showRoom(room);
+            return room;
+        });
+        await openBrickChat(NEW);
+        expect(game.showRoom).toHaveBeenCalledTimes(1);
+        expect(game.showRoom.mock.calls[0][0]).toMatchObject({ id: `chat with ${chatIdOf(NEW)}` });
+        error.mockRestore();
+    });
+
     it("sends the words again, once, when the person writes after a failed try and the chat is there now", async () => {
         const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
         const { connection } = fakeConnection();
