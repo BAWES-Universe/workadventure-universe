@@ -569,6 +569,29 @@ describe("how the chat draws a person's own Bricks", () => {
             expect(heard).toHaveLength(1);
         });
 
+        it("does not tell onLimit about a refusal that arrives after the person signed out of that account", async () => {
+            await loadMyBricks();
+            let refuse: (error: unknown) => void = () => undefined;
+            api.makeMyBrick.mockReturnValue(
+                new Promise((_resolve, reject) => {
+                    refuse = reject;
+                })
+            );
+            const heard: (string | undefined)[] = [];
+            const pending = makeMyBrick("Teal Brick", "brick-teal", { onLimit: (retryAt) => heard.push(retryAt) });
+            // Signed out (and maybe into another account) while the make was out
+            forgetMyBricks();
+            refuse(
+                Object.assign(new Error("too many"), {
+                    status: 429,
+                    code: "new_bricks_limit",
+                    retryAt: "2026-11-21T12:40:00.000Z",
+                })
+            );
+            expect(await pending).toBeUndefined();
+            expect(heard).toEqual([]);
+        });
+
         it("makes nothing and changes nothing when Orbit refuses", async () => {
             await loadMyBricks();
             api.makeMyBrick.mockRejectedValue(new Error("400"));

@@ -213,7 +213,8 @@ export async function makeMyBrick(
     } catch (error) {
         const limit = newBricksLimitOf(error);
         if (limit) {
-            options.onLimit?.(limit.retryAt);
+            // The answer of an account the person has since left is not theirs to be told about (same check as the success path)
+            if (asked === generation) options.onLimit?.(limit.retryAt);
             return undefined;
         }
         console.warn("Could not make a Brick", error);
