@@ -318,11 +318,12 @@ export class MatrixChatConnection implements ChatConnectionInterface {
                 case SyncState.Prepared:
                     // Ready first: whoever waits for the status to settle then finds the chats loaded.
                     this.isClientReady = true;
+                    // Repairs first: the list of direct chats is not read while a repair is still running (see refreshDirectChatPartners)
+                    this.repairDirectAccountData();
                     this.refreshDirectChatPartners();
                     this.connectionStatus.set("ONLINE");
                     this._ignoredUsers.set(this.client.getIgnoredUsers());
                     this.startSavingWokaAsAvatar();
-                    this.repairDirectAccountData();
                     this.forgetLeftRooms();
                     break;
                 case SyncState.Error:
@@ -463,9 +464,9 @@ export class MatrixChatConnection implements ChatConnectionInterface {
 
     private onAccountDataEvent(event: MatrixEvent) {
         if (event.getType() === EventType.Direct) {
+            this.repairDirectAccountData();
             this.refreshDirectChatPartners();
             this.refreshRoomTypes();
-            this.repairDirectAccountData();
         }
         if (event.getType() === EventType.IgnoredUserList) {
             this._ignoredUsers.set(this.client?.getIgnoredUsers() ?? []);
@@ -1184,6 +1185,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     private trackDirectRepair(repair: Promise<unknown>, roomIds: string[]): void {
         const done = () => {
             this.directRepairs.delete(repair);
+            // The list of direct chats is read again once the last repair is over
+            this.refreshDirectChatPartners();
         };
         this.directRepairs.set(repair, roomIds);
         repair.then(done, done);
@@ -1213,13 +1216,25 @@ export class MatrixChatConnection implements ChatConnectionInterface {
         this.refreshDirectChatPartners();
     }
 
-    /** Reads who the account lists a direct chat with again, from its own list and from what this page saved to it. Not before the chats are loaded. */
+    /**
+     * Reads who the account lists a direct chat with again, from its own list and from what this page saved to it. Not
+     * before the chats are loaded, and not while a repair of the list is running: a chat that is only about to be listed
+     * would show as one nobody opened. A chat whose first invite could not be read is not known to be unopened either, so
+     * the people in it count as chat partners.
+     */
     private refreshDirectChatPartners(): void {
-        if (!this.isClientReady) return;
+        if (!this.isClientReady || this.directRepairs.size > 0) return;
         const partners = new Set<string>();
         for (const map of [this.directMap(), this.repairedDirect]) {
             for (const [userId, roomIds] of Object.entries(map ?? {})) {
                 if (roomIds && roomIds.length > 0) partners.add(userId);
+            }
+        }
+        if (this.invitesUnread.size > 0) {
+            const myUserId = this.client?.getUserId();
+            for (const room of this.allRooms()) {
+                if (!this.invitesUnread.has(room.id)) continue;
+                for (const member of get(room.members)) if (member.id !== myUserId) partners.add(member.id);
             }
         }
         this._directChatPartners.set(partners);

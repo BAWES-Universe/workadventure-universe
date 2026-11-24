@@ -2,7 +2,7 @@ import type { MatrixClient } from "matrix-js-sdk";
 import { EventType } from "matrix-js-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Readable } from "svelte/store";
-import { readable, writable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
 import { MapStore } from "@workadventure/store-utils";
 import type { MatrixRoomFolder } from "../MatrixRoomFolder";
 import type { MatrixChatRoom } from "../MatrixChatRoom";
@@ -836,6 +836,32 @@ describe("MatrixChatConnection: the chat with one person", () => {
                 await settle();
 
                 expect(createMessagesRequest).toHaveBeenCalledTimes(2);
+            });
+
+            it("does not say who the account has a direct chat with while a repair is running, then says it with the repaired chat", async () => {
+                addRoom("!r1", { type: "multiple" });
+                firstEvents["!r1"] = [directInvite(ALICE)];
+                const seen: Array<ReadonlySet<string> | undefined> = [];
+                connection.directChatPartners.subscribe((partners) => seen.push(partners));
+
+                connection["repairDirectAccountData"]();
+                connection["refreshDirectChatPartners"]();
+                // The chat is about to be listed: Alice is not offered as someone with no chat yet
+                expect(get(connection.directChatPartners)).toBeUndefined();
+
+                await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
+                expect(seen.every((partners) => partners === undefined || partners.has(ALICE))).toBe(true);
+            });
+
+            it("counts the people of a chat whose first invite could not be read as chat partners, so it is not one nobody opened", async () => {
+                addRoom("!r1", { type: "multiple" });
+                createMessagesRequest.mockRejectedValueOnce(new Error("offline"));
+
+                connection["repairDirectAccountData"]();
+                await vi.waitFor(() => expect(get(connection.directChatPartners)).toBeDefined());
+
+                expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true);
+                expect(get(connection.directChatPartners)?.has(ME)).toBe(false);
             });
 
             it("when the list cannot be saved, still finds the chat for Message, and tries the save again next time", async () => {
