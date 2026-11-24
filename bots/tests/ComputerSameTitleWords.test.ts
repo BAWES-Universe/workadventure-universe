@@ -56,6 +56,9 @@ describe('jobs of one title are told apart', () => {
         // three of one title in a mixed list: each has its own word (CodeRabbit on the round 10 head)
         expect(ended([{ title: 'Visa form' }, { title: 'Visa form' }, { title: 'Visa form' }, { title: 'Taxi booking' }])).toBe('Which job do you mean: “Visa form” (newest), “Visa form” (middle), “Visa form” (oldest) or “Taxi booking”?');
     });
+    it('four of one title in a mixed list are numbered by their place in the whole question, the number a pick names', () => {
+        expect(live([{ title: 'Taxi booking' }, { title: 'Visa form' }, { title: 'Visa form' }, { title: 'Visa form' }, { title: 'Visa form' }])).toBe('Which one do you mean: “Taxi booking”, “Visa form” (no. 2), “Visa form” (no. 3), “Visa form” (no. 4) or “Visa form” (no. 5)?');
+    });
     it('no title shown twice: the plain question, unchanged', () => {
         expect(ended([{ title: 'Visa form', at: ago(25) }, { title: 'Taxi booking', at: ago(60) }])).toBe('Which job do you mean: “Visa form” or “Taxi booking”?');
         expect(ended([{ title: 'Visa form', at: ago(25) }])).toBe('Do you mean “Visa form”?');
