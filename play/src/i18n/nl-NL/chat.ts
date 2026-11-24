@@ -270,6 +270,34 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Nu in",
         inThisRoom: "Je bent in deze ruimte",
     },
+    brick: {
+        computer: {
+            screenInControl: "Jij hebt de controle · {name} wacht",
+            lastStepLine: "Betaal en verstuur, geef het dan terug. {name} wacht tot je klaar bent.",
+            trustTitle: "{name} heeft er volledig gebruik van",
+            trustLine:
+                "{name} kan er alles op installeren en uitvoeren en bij alles komen wat erop staat. Een inlog die erop is gedaan, kan worden gebruikt in elke taak van {name}.",
+            screenControlLine: "Je typt op de computer van {name}. {name} kan bij alles komen wat erop staat.",
+            gettingItReady: "Voorbereiden…",
+            runningTitle: "Er draait nog iets",
+            runningLine:
+                "Een programma dat {name} heeft geïnstalleerd draait nog op deze computer. Het kan zien wat je typt. Een herstart sluit het af.",
+            restartFirst: "Eerst herstarten",
+            takeOverAnyway: "Toch overnemen",
+            restartingHead: "Herstarten · {name} vraagt het je opnieuw",
+            restartingLine:
+                "De computer van {name} wordt herstart. Alles sluit af, daarna maakt {name} de pagina weer klaar en vraagt het je.",
+            restartingBar: "{job} · computer wordt herstart",
+            runningAgainTitle: "Het draait nog",
+            runningAgainLine:
+                "Het is na de herstart opnieuw gestart en kan dus nog steeds zien wat je typt. Ga alleen verder als dat voor deze stap goed is.",
+            notNow: "Nu niet",
+            screenInControlRunning: "Jij hebt de controle · er draait nog een programma",
+            screenControlRunningLine:
+                "Je typt op de computer van {name}. Een programma dat {name} heeft geïnstalleerd draait nog en kan zien wat je typt.",
+            notReady: "De computer kon niet worden voorbereid. Er is niets gewijzigd. Probeer het opnieuw.",
+        },
+    },
 };
 
 export default chat;

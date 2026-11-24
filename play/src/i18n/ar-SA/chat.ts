@@ -629,6 +629,32 @@ const chat: DeepPartial<Translation["chat"]> = {
         peopleOnline: "{count} شخصًا متصلًا في هذا العالم",
         unreadChats: "رسائل غير مقروءة",
     },
+    brick: {
+        computer: {
+            screenInControl: "أنت المتحكم · {name} ينتظر",
+            lastStepLine: "ادفع وأرسل، ثم أعد التحكم. {name} ينتظر حتى تنتهي.",
+            trustTitle: "{name} يستخدم هذا الحاسوب بالكامل",
+            trustLine:
+                "يستطيع {name} تثبيت وتشغيل أي شيء عليه والوصول إلى كل ما فيه. يمكن استخدام أي تسجيل دخول يتم عليه في أي مهمة يقوم بها {name}.",
+            screenControlLine: "أنت تكتب على حاسوب {name}. يستطيع {name} الوصول إلى كل ما عليه.",
+            gettingItReady: "جارٍ التجهيز…",
+            runningTitle: "ما زال شيء ما قيد التشغيل",
+            runningLine: "برنامج ثبّته {name} ما زال يعمل على هذا الحاسوب. يمكنه أن يرى ما تكتبه. إعادة التشغيل تغلقه.",
+            restartFirst: "أعد التشغيل أولًا",
+            takeOverAnyway: "تولَّ التحكم رغم ذلك",
+            restartingHead: "إعادة التشغيل · سيسألك {name} مرة أخرى",
+            restartingLine: "جارٍ إعادة تشغيل حاسوب {name}. سيُغلق كل شيء عليه، ثم يجهّز {name} الصفحة من جديد ويسألك.",
+            restartingBar: "{job} · جارٍ إعادة تشغيل الحاسوب",
+            runningAgainTitle: "ما زال قيد التشغيل",
+            runningAgainLine:
+                "بدأ من جديد بعد إعادة التشغيل، لذا ما زال بإمكانه أن يرى ما تكتبه. تابع فقط إذا كان ذلك مناسبًا لهذه الخطوة.",
+            notNow: "ليس الآن",
+            screenInControlRunning: "أنت المتحكم · برنامج ما زال قيد التشغيل",
+            screenControlRunningLine:
+                "أنت تكتب على حاسوب {name}. برنامج ثبّته {name} ما زال يعمل ويمكنه أن يرى ما تكتبه.",
+            notReady: "تعذّر تجهيز الحاسوب. لم يتغيّر شيء عليه. حاول مرة أخرى.",
+        },
+    },
 };
 
 export default chat;

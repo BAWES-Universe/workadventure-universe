@@ -182,6 +182,34 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Něnto w",
         inThisRoom: "Sy w toś tej rumnosći",
     },
+    brick: {
+        computer: {
+            screenInControl: "Ty maš kontrolu · {name} caka",
+            lastStepLine: "Zapłaś a wótpósćel, pótom kontrolu wróśi. {name} caka, až sy gótowy.",
+            trustTitle: "{name} móžo to licadło połnje wužywaś",
+            trustLine:
+                "{name} móžo na njom wšykno instalěrowaś a wugbaś a na wšykno tam pśistup měś. Pśizjawjenje, kótaresož se na njom stawa, móžo se we kuždem nadawku {name} wužywaś.",
+            screenControlLine: "Ty pišoš na licadle {name}. {name} móžo na wšykno na njom pśistup měś.",
+            gettingItReady: "Pśigótujo se…",
+            runningTitle: "Nejcosi hyšći běžy",
+            runningLine:
+                "Program, kótaryž jo {name} instalěrował, hyšći na toś tom licadle běžy. Móžo wiźeś, což pišoš. Znowego startowanje jo zacynijo.",
+            restartFirst: "Nejpjerwjej znowego startowaś",
+            takeOverAnyway: "Tola pśewześ",
+            restartingHead: "Znowego startowanje · {name} se će znowego pšašaś",
+            restartingLine:
+                "Licadło {name} se znowego startujo. Wšykno se zacynijo, pótom {name} bok znowego pśigótujo a se će pšaša.",
+            restartingBar: "{job} · licadło se znowego startujo",
+            runningAgainTitle: "Hyšći běžy",
+            runningAgainLine:
+                "Jo se pó znowegostartowanju znowego startowało, a togodla móžo hyšći wiźeś, což pišoš. Źi dalej jano, gaž jo to za toś ten kšaceł dobre.",
+            notNow: "Něnto nic",
+            screenInControlRunning: "Ty maš kontrolu · program hyšći běžy",
+            screenControlRunningLine:
+                "Ty pišoš na licadle {name}. Program, kótaryž jo {name} instalěrował, hyšći běžy a móžo wiźeś, což pišoš.",
+            notReady: "Licadło njejo se mógło pśigótowaś. Nic njejo se změniło. Wopytaj hyšći raz.",
+        },
+    },
 };
 
 export default chat;

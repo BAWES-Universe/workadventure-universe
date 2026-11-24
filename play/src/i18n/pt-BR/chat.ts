@@ -492,6 +492,34 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Agora em",
         inThisRoom: "Você está nesta sala",
     },
+    brick: {
+        computer: {
+            screenInControl: "Você está no controle · {name} está esperando",
+            lastStepLine: "Pague e envie, depois devolva o controle. {name} espera até você terminar.",
+            trustTitle: "{name} tem uso total do computador",
+            trustLine:
+                "{name} pode instalar e executar qualquer coisa nele e acessar tudo o que há lá. Um login feito nele pode ser usado em qualquer tarefa de {name}.",
+            screenControlLine: "Você está digitando no computador de {name}. {name} pode acessar tudo o que há nele.",
+            gettingItReady: "Preparando…",
+            runningTitle: "Algo ainda está em execução",
+            runningLine:
+                "Um programa instalado por {name} ainda está em execução neste computador. Ele poderia ver o que você digita. Reiniciar o fecha.",
+            restartFirst: "Reiniciar primeiro",
+            takeOverAnyway: "Assumir mesmo assim",
+            restartingHead: "Reiniciando · {name} vai perguntar de novo",
+            restartingLine:
+                "Reiniciando o computador de {name}. Tudo se fecha, depois {name} deixa a página pronta de novo e pergunta a você.",
+            restartingBar: "{job} · reiniciando o computador",
+            runningAgainTitle: "Ainda está em execução",
+            runningAgainLine:
+                "Ele voltou a iniciar depois da reinicialização, então ainda poderia ver o que você digita. Continue só se isso for aceitável para esta etapa.",
+            notNow: "Agora não",
+            screenInControlRunning: "Você está no controle · um programa ainda está em execução",
+            screenControlRunningLine:
+                "Você está digitando no computador de {name}. Um programa instalado por {name} ainda está em execução e poderia ver o que você digita.",
+            notReady: "Não foi possível preparar o computador. Nada foi alterado nele. Tente novamente.",
+        },
+    },
 };
 
 export default chat;
