@@ -757,6 +757,19 @@ describe("a Brick's computer on screen (#2000)", () => {
             expect(byId("brickScreenNotNow")).not.toBeNull();
         });
 
+        it("keyboard focus never starts on Take over anyway: the first choice in the order is Restart first (or Not now when no restart is offered), and nothing grabs focus", async () => {
+            await openScreen(waitingForYou({ state: "blocked", restartOffered: true }));
+            const order = () =>
+                [...target.querySelectorAll(".bs-actions button")].map((b) => b.getAttribute("data-testid"));
+            expect(order()).toEqual(["brickScreenRestart", "brickScreenNotNow", "brickScreenAnyway"]);
+            expect(target.querySelector("[autofocus]")).toBeNull();
+            expect(document.activeElement?.getAttribute("data-testid")).not.toBe("brickScreenAnyway");
+            piece?.$destroy();
+            await openScreen(waitingForYou({ state: "blocked", restartOffered: false }));
+            expect(order()).toEqual(["brickScreenNotNow", "brickScreenAnyway"]);
+            expect(document.activeElement?.getAttribute("data-testid")).not.toBe("brickScreenAnyway");
+        });
+
         it("Take over anyway sends the person's choice, and says a program is still running in control", async () => {
             await openScreen(waitingForYou({ state: "blocked", restartOffered: true }));
             game.brickComputerAction.mockResolvedValue({ job: job({ control: "person" }) });

@@ -208,7 +208,7 @@
                 ></span
             >
         </div>
-        <div class="bs-actions">
+        <div class="bs-actions block">
             <div class="bs-btns" class:col={check?.restartOffered}>
                 {#if check?.restartOffered}
                     <!-- Restart first is the main choice and sits alone on top; "Not now" and "Take over anyway" share the row under it, as on the screen after a restart -->
@@ -420,6 +420,13 @@
     .bs-btns.col {
         flex-direction: column;
     }
+    /* With big text or a long translation the two quiet buttons wrap onto two lines (Not now above Take over anyway) instead of cutting their words */
+    .bs-btns.col > .bs-btns {
+        flex-wrap: wrap;
+    }
+    .bs-btns.col > .bs-btns > :global(*) {
+        flex: 1 1 140px;
+    }
     /* In a column "flex: 1" would shrink a button to its words: each keeps its own height */
     .bs-btns.col > :global(*) {
         flex: none;
@@ -476,6 +483,13 @@
             width: 440px;
             max-width: 100%;
         }
+        /* The choices under the warning line up with the warning card, not 16 px in from its edge */
+        .bs-actions.block:not(.watch) {
+            align-items: stretch;
+        }
+        .bs-actions.block:not(.watch) .bs-btns {
+            width: 100%;
+        }
     }
     .bs-go,
     .bs-quiet,
@@ -485,10 +499,12 @@
         justify-content: center;
         gap: 8px;
         width: 100%;
-        height: 48px;
+        min-height: 48px;
+        padding: 6px 16px;
         margin: 0;
         border: 0;
         border-radius: 999px;
+        text-align: center;
         font: inherit;
         font-size: 15px;
         font-weight: 700;
