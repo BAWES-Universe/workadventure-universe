@@ -218,6 +218,15 @@ describe("calls on one job of a Brick's computer", () => {
             expect(brickComputerOf(BRICK)?.job?.control).toBe("person");
         });
 
+        it("says started for a Cancel of a never-started job that Orbit found started (409 with that reason), and reads the computer again", async () => {
+            game.brickComputerJobAction.mockRejectedValue(refused(409, "started"));
+            expect(await brickComputerJobAction(BRICK, "j2", "cancel", { expected: "not_started" })).toEqual({
+                ok: false,
+                why: "started",
+            });
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
+        });
+
         it("says it is already ending when a stop or a finish got there first", async () => {
             game.brickComputerJobAction.mockRejectedValue(refused(409, "ending"));
             expect(await brickComputerJobAction(BRICK, "j1", "pause")).toEqual({ ok: false, why: "ending" });

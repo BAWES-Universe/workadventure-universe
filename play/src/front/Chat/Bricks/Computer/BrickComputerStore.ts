@@ -134,6 +134,7 @@ export async function dismissComputerNotice(brickId: string, jobId: string): Pro
  * - changed: the job moved on since the page was drawn (already resumed, already started); the page is read again.
  * - out-of-time: Resume while this month's computer time is still used up; the job stays paused (the panel offers Ask for more).
  * - over-limit: Resume while a spending limit the person set is still reached; the job stays paused.
+ * - started: a Cancel sent as "never started" found the job started, so nothing was cancelled; the page is read again and the person is asked first.
  * - failed: Orbit could not be reached or said something else.
  */
 export type JobRefusal =
@@ -152,6 +153,8 @@ function refusalOf(error: unknown): JobRefusal {
     if (!refused || typeof refused !== "object") return "failed";
     if (refused.status === 404) return "gone";
     if (refused.status !== 409) return "failed";
+    // A Cancel sent as "never started" that Orbit found started cancelled nothing (the panel's route answers 409 with this reason)
+    if (refused.reason === "started") return "started";
     if (refused.reason === "taken_over") return "taken-over";
     if (refused.reason === "ending") return "ending";
     if (refused.reason === "over") return "gone";
