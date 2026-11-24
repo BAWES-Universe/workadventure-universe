@@ -592,7 +592,7 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     const jobs = jobsOf(view);
     const words = clean(args.job, JOB_WORDS_MAX);
 
-    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, args, context.state, view, jobs, door, context.confirmations, shown);
+    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, args, context, view, jobs, door, shown);
     // The list was read while a newer message may have come: a call that began on an older message changes nothing (a cancel or a stop must not run on the strength of a message that is no longer the latest)
     if (context.state.turn !== turn) return STALE_CALL;
     // A yes that named only some of the jobs a Stop listed ended nothing: Brick says what it will do, and asks about exactly those jobs (GPT's eighth note, D). Whichever of the two tools the model calls
@@ -953,7 +953,7 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
 }
 
 /** "How is it going?": the jobs as Orbit has them, in words for the model (no fixed line: it changes nothing), and the steps a named job took so far when Orbit keeps them. */
-async function seeJobs(words: string, args: Record<string, unknown>, state: ControlState, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>, queue?: ConfirmationQueue, shown?: ControlState['shown']): Promise<Record<string, unknown>> {
+async function seeJobs(words: string, args: Record<string, unknown>, context: ComputerControlContext, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>, shown?: ControlState['shown']): Promise<Record<string, unknown>> {
     const result: Record<string, unknown> = {
         jobs: jobs.map((job) => shownJob(job, view)),
         note: jobs.length
@@ -966,13 +966,10 @@ async function seeJobs(words: string, args: Record<string, unknown>, state: Cont
     const found: Found = hasPick ? (chosen ? { job: chosen } : { none: true }) : findJob(words, jobs);
     if (!('job' in found)) {
         if (!('which' in found)) return { ...result, notFound: true };
-        // The model words this question itself: the ids go with it in the same order as the titles it is given, so the person's number picks the job they were shown (CodeRabbit on the round 9 head)
-        const ids = found.which.map((job) => job.id);
-        const seq = (state.askedSeq = (state.askedSeq ?? 0) + 1);
-        // Kept once the reply that carries these words was delivered (a reply with no queue to wait on keeps them at once)
-        if (queue) queue.afterDelivery(() => commitShown(state, ids, seq));
-        else commitShown(state, ids, seq);
-        return { ...result, which: found.which.map((job) => job.title) };
+        // The question is a fixed line (the model never words it), and the choices are kept only with that line: a reply that leaves the question out must not replace the ones the person was last shown.
+        // The same ordered list is rendered and saved, so a number in the question is the job it names (CodeRabbit on the round 3 head)
+        const which = whichLine(found.which, context);
+        return say(context, [which.line], { jobs: result.jobs, done: false, asked: 'which' }, which.keep);
     }
     const activity = await door({ action: 'activity', jobId: found.job.id });
     if (activity.ok && activity.steps?.length) return { ...result, job: found.job.id, stepsSoFar: activity.steps.map((step) => step.label) };

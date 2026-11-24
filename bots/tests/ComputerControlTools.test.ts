@@ -573,17 +573,29 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             expect(c.state.shown?.ids).not.toContain('job-4');
         });
 
-        it('computer_jobs keeps the jobs it names for an ambiguous title in the order of its titles, so the number picks the one they were given', async () => {
+        it('computer_jobs asks the ambiguous question as a fixed line and keeps the jobs in the order of that line, so the number picks the one they were given', async () => {
             const orbit = door(viewOf(working({ askedAt: minutesAgo(125) }), [inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) })]));
             const c = chat(orbit.admin);
             const result = await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form' });
-            expect(result.which).toEqual(['Visa form', 'Visa form']);
-            // kept once the reply that carries these words was delivered, never before
+            expect(result).toMatchObject({ asked: 'which' });
+            // kept once the reply that carries the question was delivered, never before
             expect(c.state.shown).toBeUndefined();
-            await c.deliver();
-            expect(c.state.shown?.ids).toEqual(['job-visa', 'job-visa-2']);
+            expect(await c.deliver()).toEqual(['Which “Visa form” do you mean: the one you asked for 10 minutes ago, or the one you asked for 2 hours ago?']);
+            // the newest first, as the question names them
+            expect(c.state.shown?.ids).toEqual(['job-visa-2', 'job-visa']);
             c.nextMessage('the second one');
-            expect(await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form', pick: 2 })).toMatchObject({ job: 'job-visa-2' });
+            expect(await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form', pick: 2 })).toMatchObject({ job: 'job-visa' });
+        });
+
+        it('a computer_jobs reply that leaves the question out never replaces the choices the person was last shown', async () => {
+            const orbit = door(viewOf(working({ askedAt: minutesAgo(125) }), [inLine('job-visa-2', 'Visa form', { askedAt: minutesAgo(10) })]));
+            const c = chat(orbit.admin);
+            c.state.shown = { ids: ['job-visa', 'job-visa-2'], at: Date.now(), seq: 1 };
+            c.state.askedSeq = 1;
+            await c.run(COMPUTER_JOBS_TOOL, { job: 'Visa form' });
+            // the question is a fixed line: the model's own summary cannot carry the choices, and nothing is kept until the line itself is delivered
+            c.drop();
+            expect(c.state.shown?.ids).toEqual(['job-visa', 'job-visa-2']);
         });
 
         it('a computer_jobs reply that never reached the person leaves the choices they were last shown; a late delivery never puts an older list back', async () => {
@@ -606,7 +618,7 @@ describe('stop everything: always asks, naming every job, and ends exactly those
             await second.deliver('$second');
             expect(c.state.shown?.seq).toBe(4);
             await first.deliver('$first');
-            expect(firstLines).toEqual([]);
+            expect(firstLines).toHaveLength(1);
             expect(c.state.shown?.seq).toBe(4);
         });
 
