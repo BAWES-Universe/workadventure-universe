@@ -833,8 +833,12 @@ export class MatrixChatRoom
      * chat was still being made, which must go once and in order, and show as sent only when they did.
      */
     async sendMessageConfirmed(message: string): Promise<void> {
-        await this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, this.getMessageContent(message));
-        selectedChatMessageToReply.set(null);
+        // Plain words: a reply picked in another chat (the composer's reply target is global) is not this message's
+        await this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, {
+            body: message,
+            msgtype: MsgType.Text,
+            formatted_body: message,
+        });
     }
 
     private getMessageContent(message: string): RoomMessageEventContent {

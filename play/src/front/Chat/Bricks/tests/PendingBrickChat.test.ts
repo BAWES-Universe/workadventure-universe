@@ -215,6 +215,49 @@ describe("handing what was written to the real chat", () => {
         expect(into.showReal).not.toHaveBeenCalled();
     });
 
+    it("does not show the real chat when the person went elsewhere while the typed words were being carried", async () => {
+        const { room, setShown } = screen();
+        const { into } = realChat();
+        room.readTypedFrom(() => "half a sentence");
+        (into.carry as ReturnType<typeof vi.fn>).mockImplementation(() => {
+            // The person taps away while the words are being put into the real chat's box
+            setShown(false);
+        });
+        await expect(room.handOver(into)).resolves.toBe("left");
+        expect(into.carry).toHaveBeenCalledWith("half a sentence");
+        expect(into.showReal).not.toHaveBeenCalled();
+    });
+
+    it("keeps the words typed and not sent when the person leaves the screen, and hands them to the real chat's box", async () => {
+        const { room, setShown } = screen();
+        const { into } = realChat();
+        room.readTypedFrom(() => "half a sentence");
+        room.screenLeft();
+        setShown(false);
+        await expect(room.handOver(into)).resolves.toBe("left");
+        expect(into.carry).toHaveBeenCalledWith("half a sentence");
+        expect(into.showReal).not.toHaveBeenCalled();
+    });
+
+    it("gives the kept words back once when the person comes back to the screen", () => {
+        const { room } = screen();
+        room.readTypedFrom(() => "half a sentence");
+        room.screenLeft();
+        expect(room.takeLeftTyped()).toBe("half a sentence");
+        expect(room.takeLeftTyped()).toBe("");
+    });
+
+    it("keeps nothing from a box that holds only blank words", async () => {
+        const { room, setShown } = screen();
+        const { into } = realChat();
+        room.readTypedFrom(() => "<br> ");
+        room.screenLeft();
+        setShown(false);
+        await expect(room.handOver(into)).resolves.toBe("left");
+        expect(into.carry).not.toHaveBeenCalled();
+        expect(room.takeLeftTyped()).toBe("");
+    });
+
     it("puts what was not sent back into the message box when the chat server refuses, and stays", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         const { room, deps } = screen();

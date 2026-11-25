@@ -593,6 +593,11 @@
                 }
             }
         }
+        // The screen of a Brick's chat being made, shown again: what was typed and not sent when it was left comes back
+        if (room instanceof PendingBrickChatRoom) {
+            const kept = room.takeLeftTyped();
+            if (kept) message = kept;
+        }
         draftLoaded = true;
     });
 

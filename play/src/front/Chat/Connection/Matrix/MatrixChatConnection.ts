@@ -1218,12 +1218,17 @@ export class MatrixChatConnection implements ChatConnectionInterface {
 
     /**
      * Reads who the account lists a direct chat with again, from its own list and from what this page saved to it. Not
-     * before the chats are loaded, and not while a repair of the list is running: a chat that is only about to be listed
-     * would show as one nobody opened. A chat whose first invite could not be read is not known to be unopened either, so
+     * before the chats are loaded, and not while a repair of the list is running (it is withheld until the last one ends): a chat that is only
+     * about to be listed would show as one nobody opened. A chat whose first invite could not be read is not known to be unopened either, so
      * the people in it count as chat partners.
      */
     private refreshDirectChatPartners(): void {
-        if (!this.isClientReady || this.directRepairs.size > 0) return;
+        if (!this.isClientReady) return;
+        // Withheld, not kept as it was: a list read before the repair ends could still miss a chat that is about to be listed
+        if (this.directRepairs.size > 0) {
+            this._directChatPartners.set(undefined);
+            return;
+        }
         const partners = new Set<string>();
         for (const map of [this.directMap(), this.repairedDirect]) {
             for (const [userId, roomIds] of Object.entries(map ?? {})) {

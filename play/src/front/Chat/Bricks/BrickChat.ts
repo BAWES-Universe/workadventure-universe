@@ -63,6 +63,9 @@ export function unopenedBrickCountOf(connection: ChatConnectionInterface): Reada
 /** The screens of Bricks whose chat is still being made, by Brick id: each holds what the person writes meanwhile. */
 const pendings = new Map<string, PendingBrickChatRoom>();
 
+/** Words left typed on a screen that was dropped before its chat was there, by Brick id: they go to the chat when it is shown. */
+const strays = new Map<string, string>();
+
 function makePending(brickId: string): PendingBrickChatRoom | undefined {
     const first = (get(myBricksStore) ?? []).find((brick) => brick.id === brickId);
     if (!first) return undefined;
@@ -130,6 +133,11 @@ async function reveal(brickId: string, room: ChatRoom): Promise<void> {
     const pending = pendings.get(brickId);
     if (!pending) {
         markOpened(brickId);
+        const kept = strays.get(brickId);
+        if (kept) {
+            strays.delete(brickId);
+            await carryTyped(room, kept).catch((error: unknown) => console.error(error));
+        }
         showRoom(room);
         return;
     }
@@ -176,7 +184,12 @@ export function openBrickChat(brickId: string): Promise<ChatRoom | undefined> {
     // A screen left behind by an earlier try (the person went elsewhere) is not this tap's: it would take the chat for
     // one the person left on purpose and show nothing
     const left = pendings.get(brickId);
-    if (left && get(selectedRoomStore) !== left) pendings.delete(brickId);
+    if (left && get(selectedRoomStore) !== left) {
+        pendings.delete(brickId);
+        // What they left typed on it goes to the chat when it is shown
+        const kept = left.takeLeftTyped();
+        if (kept) strays.set(brickId, kept);
+    }
     opening.update((ids) => new Set([...ids, brickId]));
     const run = (async () => {
         const connection = await gameManager.getChatConnection();

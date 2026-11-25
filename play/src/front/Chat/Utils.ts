@@ -127,7 +127,8 @@ export const openDirectChatRoom = async (
         }
         // There is no chat with yourself (another of your tabs or devices has your chat id).
         if (chatID === localUserStore.getChatId()) return undefined;
-        const room = await findDirectChatRoom(chatID, false);
+        // A caller with a screen of its own (a Brick's chat) sends into the room as soon as it is shown: the room is joined first
+        const room = await findDirectChatRoom(chatID, options?.show !== undefined);
         if (options?.show) await options.show(room);
         else showRoom(room);
         return room;

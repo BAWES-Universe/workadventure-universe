@@ -19,6 +19,7 @@ const game = vi.hoisted(() => ({
     openDirectChatRoom: vi.fn<(chatId: string, options?: OpenOptions) => Promise<unknown>>(),
     showRoom: vi.fn<(room: unknown) => void>(),
     warn: vi.fn<(message: string) => void>(),
+    saveDraft: vi.fn<(draft: { roomId: string; message: string }) => void>(),
     openGuestBrickChat: vi.fn<() => unknown>(),
     signedIn: undefined as unknown,
     selected: undefined as unknown,
@@ -63,6 +64,7 @@ vi.mock("../MyBricksStore", async () => {
     return { myBricksStore: game.bricks, myBricksByChatId: game.byChatId };
 });
 vi.mock("@sentry/svelte", () => ({ captureException: vi.fn() }));
+vi.mock("../../Services/DraftMessageService", () => ({ draftMessageService: { saveDraft: game.saveDraft } }));
 vi.mock("../BrickLookPicture", async () => {
     const store = await import("svelte/store");
     return { brickPicture: () => store.readable(undefined) };
@@ -598,6 +600,37 @@ describe("opening a Brick's chat on a screen of its own, before the chat exists"
         await openBrickChat(NEW);
         expect(game.showRoom).toHaveBeenCalledTimes(1);
         expect(game.showRoom.mock.calls[0][0]).toMatchObject({ id: `chat with ${chatIdOf(NEW)}` });
+        error.mockRestore();
+    });
+
+    it("puts the words left typed on a screen that was left behind into the chat's message box when the chat is shown", async () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const { connection, directRooms } = fakeConnection();
+        game.connection = connection;
+        game.askDirectChat.mockResolvedValue({ create: true, botChatId: chatIdOf(NEW) });
+        game.openDirectChatRoom.mockImplementation((_chatId, options) => {
+            options?.onFailure?.(new Error("chat server down"));
+            return Promise.resolve(undefined);
+        });
+        await openBrickChat(NEW);
+        const screen = game.showRoom.mock.calls[0][0] as PendingBrickChatRoom;
+        // They typed something, did not send it, and went elsewhere
+        screen.readTypedFrom(() => "brief at 8?");
+        screen.screenLeft();
+        selected.set(undefined);
+        // The chat is there when they tap the Brick again
+        directRooms.set([fakeRoom("!there:chat.test", [ME, chatIdOf(NEW)])]);
+        game.openDirectChatRoom.mockImplementation(async (chatId, options) => {
+            const room = { id: `chat with ${chatId}` };
+            if (options?.show) await options.show(room);
+            else game.showRoom(room);
+            return room;
+        });
+        await openBrickChat(NEW);
+        expect(game.saveDraft).toHaveBeenCalledTimes(1);
+        expect(game.saveDraft).toHaveBeenCalledWith(
+            expect.objectContaining({ roomId: `chat with ${chatIdOf(NEW)}`, message: "brief at 8?" })
+        );
         error.mockRestore();
     });
 

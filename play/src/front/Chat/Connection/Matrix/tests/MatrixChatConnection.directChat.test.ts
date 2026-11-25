@@ -854,6 +854,19 @@ describe("MatrixChatConnection: the chat with one person", () => {
                 expect(seen.every((partners) => partners === undefined || partners.has(ALICE))).toBe(true);
             });
 
+            it("withholds the list again, not keeping the older one, when a repair starts after the list was already read", async () => {
+                addRoom("!r1", { type: "multiple" });
+                firstEvents["!r1"] = [directInvite(ALICE)];
+                // The list was read before: an older answer is there
+                connection["_directChatPartners"].set(new Set(["@old:matrix.test"]));
+
+                connection["repairDirectAccountData"]();
+                connection["refreshDirectChatPartners"]();
+                expect(get(connection.directChatPartners)).toBeUndefined();
+
+                await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
+            });
+
             it("counts the people of a chat whose first invite could not be read as chat partners, so it is not one nobody opened", async () => {
                 addRoom("!r1", { type: "multiple" });
                 createMessagesRequest.mockRejectedValueOnce(new Error("offline"));

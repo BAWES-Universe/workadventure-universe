@@ -326,7 +326,8 @@
     }
     // What is typed and not sent goes to the real chat's box when it takes this screen's place
     $: pendingRoom?.readTypedFrom(() => messageInputBarRef?.currentText() ?? "");
-    onDestroy(() => pendingRoom?.readTypedFrom(undefined));
+    // Leaving the screen keeps what is typed and not sent: it is put back when the screen is shown again
+    onDestroy(() => pendingRoom?.screenLeft());
 
     // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
     // map), and what is keyed on this is made again with it. A number, so the same chat set again changes nothing.
@@ -1699,6 +1700,23 @@
                             </div>
                         </li>
                     {/if}
+                {/if}
+                {#if pendingRoom && shownHello && $messages.length > 0}
+                    <!-- What is written while the chat is made is faded under the hello, which stays above it until the
+                         chat takes over -->
+                    {#key shownHello.key}
+                        <li class="run-start" data-testid="brickHello">
+                            {#if shownHello.message.date}
+                                <div class="flex justify-center mb-3" data-testid="chatDayLabel">
+                                    <span
+                                        class="px-3 py-1.5 m-0 text-xs text-center border border-solid border-white/10 rounded-2xl text-white/80"
+                                        >{dayLabel(shownHello.message.date, $locale)}</span
+                                    >
+                                </div>
+                            {/if}
+                            <Message message={shownHello.message} plain />
+                        </li>
+                    {/key}
                 {/if}
                 {#each drawnEntries as entry, drawnIndex (entry.message.id)}
                     {@const index = firstDrawnIndex + drawnIndex}

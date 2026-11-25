@@ -122,9 +122,26 @@ export class PendingBrickChatRoom implements ChatRoom {
             .map((line) => line.send.words);
     }
 
-    /** The screen says how to read what is typed in its message box (and, with nothing, that it is gone). */
-    readTypedFrom(read: (() => string) | undefined): void {
+    /** What was typed in the message box when the screen was left: it comes back when the screen is shown again, or goes to the real chat. */
+    private leftTyped = "";
+
+    /** The screen says how to read what is typed in its message box. */
+    readTypedFrom(read: () => string): void {
         this.carryText = read;
+    }
+
+    /** The screen was left (or closed): what is typed and not sent is kept here, so it is not lost with the screen. */
+    screenLeft(): void {
+        const typed = this.carryText?.() ?? "";
+        this.carryText = undefined;
+        if (hasWords(typed)) this.leftTyped = typed;
+    }
+
+    /** Takes what was kept when the screen was left: the screen shown again puts it back into its message box. */
+    takeLeftTyped(): string {
+        const typed = this.leftTyped;
+        this.leftTyped = "";
+        return typed;
     }
 
     /** The setup starts (or starts again): the wait runs from now. */
@@ -262,8 +279,15 @@ export class PendingBrickChatRoom implements ChatRoom {
                 return "stayed";
             }
             this.phase = "done";
-            if (!this.deps.isShown()) return "left";
+            if (!this.deps.isShown()) {
+                // The person is elsewhere: what they left typed here goes to the real chat's message box
+                const kept = this.takeLeftTyped();
+                if (hasWords(kept)) await into.carry(kept);
+                return "left";
+            }
             await into.carry(this.carryText?.() ?? "");
+            // Carrying takes a moment: the person may have gone elsewhere meanwhile, and the chat does not take their place
+            if (!this.deps.isShown()) return "left";
             into.showReal();
             return "switched";
         })().finally(() => {
