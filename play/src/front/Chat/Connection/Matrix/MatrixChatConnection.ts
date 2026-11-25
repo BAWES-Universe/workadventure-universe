@@ -78,6 +78,8 @@ const CLIENT_NOT_INITIALIZED_ERROR_MSG = "MatrixClient not yet initialized";
 const ROOM_LIST_WAIT_MS = 8000;
 /** How long opening a chat waits for a repair of the account's direct list that is still running. */
 const DIRECT_REPAIR_WAIT_MS = 4000;
+/** How long a repair that does not end can keep the list of direct chats withheld: after that the list is read as it is. */
+const PARTNERS_WITHHELD_MAX_MS = 30_000;
 // The one default woka (shared with the game), so the chat never mistakes it for a chosen woka.
 export { defaultWoka };
 export const defaultColor = "#626262";
@@ -118,6 +120,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     /** Repairs of the account's direct list that are running now, so opening a chat can wait for them. */
     /** The repairs of the account's direct list that are running, each with the rooms it is working on. */
     private directRepairs = new Map<Promise<unknown>, string[]>();
+    /** The repairs that keep the list of direct chats withheld: each stops doing so when it ends, or after a while if it never does. */
+    private withholdingRepairs = new Set<Promise<unknown>>();
     /** Direct chats repairs found or saved, until the client's own copy of the list shows them (it only does after the next sync). */
     private repairedDirect: DirectMap = {};
     /** Direct chats the account's list could not be saved with yet: counted as chat partners, but still to be repaired. */
@@ -1185,12 +1189,21 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     }
 
     private trackDirectRepair(repair: Promise<unknown>, roomIds: string[]): void {
+        this.directRepairs.set(repair, roomIds);
+        this.withholdingRepairs.add(repair);
+        // A repair whose request never answers must not hide the unread count for the rest of the session
+        const giveUp = setTimeout(() => {
+            if (!this.withholdingRepairs.delete(repair)) return;
+            console.warn("A repair of the list of direct chats is taking long: the chats listed so far are counted");
+            this.refreshDirectChatPartners();
+        }, PARTNERS_WITHHELD_MAX_MS);
         const done = () => {
+            clearTimeout(giveUp);
             this.directRepairs.delete(repair);
+            this.withholdingRepairs.delete(repair);
             // The list of direct chats is read again once the last repair is over
             this.refreshDirectChatPartners();
         };
-        this.directRepairs.set(repair, roomIds);
         // Whoever starts a repair (the account's list arriving, or a chat being opened), the list read before it is withheld at once
         this.refreshDirectChatPartners();
         repair.then(done, done);
@@ -1235,7 +1248,7 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     private refreshDirectChatPartners(): void {
         if (!this.isClientReady) return;
         // Withheld, not kept as it was: a list read before the repair ends could still miss a chat that is about to be listed
-        if (this.directRepairs.size > 0) {
+        if (this.withholdingRepairs.size > 0) {
             this._directChatPartners.set(undefined);
             return;
         }

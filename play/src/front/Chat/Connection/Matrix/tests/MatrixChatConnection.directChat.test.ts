@@ -658,6 +658,31 @@ describe("MatrixChatConnection: the chat with one person", () => {
             await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
         });
 
+        it("reads the list of people the account has a chat with again when a repair never ends", async () => {
+            vi.useFakeTimers();
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            try {
+                addRoom("!stuck", { type: "multiple", dmInviter: ALICE });
+                setAccountData.mockImplementationOnce(
+                    () =>
+                        new Promise(() => {
+                            // never answers
+                        })
+                );
+                directMap = { "@bob:matrix.test": ["!bob"] };
+                connection["repairDirectAccountData"]();
+                await vi.advanceTimersByTimeAsync(10);
+                expect(get(connection.directChatPartners)).toBeUndefined();
+
+                await vi.advanceTimersByTimeAsync(31_000);
+                expect(get(connection.directChatPartners)?.has("@bob:matrix.test")).toBe(true);
+                expect(warn).toHaveBeenCalledTimes(1);
+            } finally {
+                warn.mockRestore();
+                vi.useRealTimers();
+            }
+        });
+
         it("opening the chat goes on after a few seconds when the repair is stuck", async () => {
             vi.useFakeTimers();
             try {
