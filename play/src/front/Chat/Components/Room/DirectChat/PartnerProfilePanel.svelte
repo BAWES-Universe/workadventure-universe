@@ -1,6 +1,6 @@
 <script lang="ts">
     import { createEventDispatcher, getContext, hasContext } from "svelte";
-    import { readable } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import LL from "../../../../../i18n/i18n-svelte";
     import type {
@@ -39,7 +39,7 @@
     import BrickPicture from "../../../Bricks/BrickPicture.svelte";
     import BrickVisitCard from "../../../Bricks/BrickVisitCard.svelte";
     import { openBrickChat } from "../../../Bricks/BrickChat";
-    import { myBricksByChatId } from "../../../Bricks/MyBricksStore";
+    import { loadMyBricks, myBricksByChatId, myBricksStore } from "../../../Bricks/MyBricksStore";
     import { openBrickPage } from "../../../Bricks/Templates/OpenBrick";
     import PartnerRoomBlock from "./PartnerRoomBlock.svelte";
     import { partnerNowIn, sameRoom, visitPerson } from "./PartnerNowIn";
@@ -155,25 +155,38 @@
             .finally(() => (blockInProgress = false));
     }
 
+    /**
+     * The id of the Brick when this chat is with one of the person's own. When Orbit has not been asked for their Bricks yet
+     * it is asked before the chat is cleared: not knowing the Bricks is not knowing the Brick is someone else's. When Orbit
+     * does not answer either, the Brick is not known to be theirs and the person is left on the list of chats.
+     */
+    async function ownBrickIdOf(chatId: string | undefined): Promise<string | undefined> {
+        if (!chatId) return undefined;
+        if (get(myBricksStore) === undefined) await loadMyBricks();
+        return get(myBricksByChatId).get(chatId)?.id;
+    }
+
     function deleteChat() {
         // The name as it is now: once the chat is gone the panel no longer knows it.
         const cleared = isBrick;
-        const brickId = ownBrick?.id;
+        const chatId = isBrick ? partner.chatId : undefined;
         const notification = cleared
             ? $LL.chat.directChat.clearChat.notification({ name })
             : $LL.chat.directChat.deleteChat.notification({ name });
         // Deleting a chat leaves it and forgets it, so it goes from the person's lists and not just from view. For a Brick
         // that is clearing it: its server starts a new, empty chat with the person's next message, and the Brick keeps what
         // it learned.
-        room.leaveRoom({ forget: true })
-            .then(() => {
-                dispatch("close");
-                if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
-                showChatDoneToast(notification);
-                // The person's own Brick opens again at once, as a new empty chat. When its server is still dropping the old
-                // one it does not, and the person is left on the list of chats, told that the chat was cleared.
-                if (brickId) openBrickChat(brickId).catch((error) => console.error(error));
-            })
+        ownBrickIdOf(chatId)
+            .then((brickId) =>
+                room.leaveRoom({ forget: true }).then(() => {
+                    dispatch("close");
+                    if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
+                    showChatDoneToast(notification);
+                    // The person's own Brick opens again at once, as a new empty chat. When its server is still dropping the old
+                    // one it does not, and the person is left on the list of chats, told that the chat was cleared.
+                    if (brickId) openBrickChat(brickId).catch((error) => console.error(error));
+                })
+            )
             .catch((error) => {
                 console.error("Failed to delete the chat", error);
                 warningMessageStore.addWarningMessage(

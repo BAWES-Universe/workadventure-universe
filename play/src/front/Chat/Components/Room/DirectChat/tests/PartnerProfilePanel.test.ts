@@ -18,13 +18,26 @@ const bricks = vi.hoisted(() => ({
         },
     },
     mine: [] as MyBrick[],
+    unloaded: false,
+    arrives: new Map<string, unknown>(),
+    load: vi.fn(),
     openBrickPage: vi.fn<(id: string, options?: { backToChat?: boolean }) => void>(),
     openBrickChat: vi.fn(() => Promise.resolve(undefined)),
     toasts: [] as string[],
     // Where the bot server says a Brick lives, when a test gives it a room
     home: undefined as unknown,
 }));
-vi.mock("../../../../Bricks/MyBricksStore", () => ({ myBricksByChatId: bricks.byChatId }));
+vi.mock("../../../../Bricks/MyBricksStore", () => ({
+    myBricksByChatId: bricks.byChatId,
+    // Orbit not asked yet: the list is undefined until asking brings the Bricks (none when it does not answer)
+    myBricksStore: {
+        subscribe(run: (value: MyBrick[] | undefined) => void) {
+            run(bricks.unloaded ? undefined : bricks.mine);
+            return () => undefined;
+        },
+    },
+    loadMyBricks: bricks.load,
+}));
 vi.mock("../../../../Bricks/Templates/OpenBrick", () => ({ openBrickPage: bricks.openBrickPage }));
 vi.mock("../../../../Bricks/BrickChat", () => ({ openBrickChat: bricks.openBrickChat }));
 // Its visit card and picture have their own tests (BricksPage.test.ts): here only that the profile draws them
@@ -70,7 +83,6 @@ vi.mock("../PartnerActions", async () => {
     return {
         ...actual,
         canOpenPartnerProfile: () => false,
-        canReportPartner: () => false,
         partnerFriendAction: () => undefined,
     };
 });
@@ -161,6 +173,16 @@ describe("a chat's profile panel for a Brick", () => {
             { id: BRICK, name: "Brick", description: "Your everyday helper", characterTextureId: "brick-orange" },
         ];
         bricks.byChatId.value = new Map(bricks.mine.map((brick) => [`@bot_${brick.id}:chat.example.com`, brick]));
+        bricks.unloaded = false;
+        bricks.arrives = new Map();
+        bricks.load.mockReset();
+        bricks.load.mockImplementation(() => {
+            if (bricks.arrives.size > 0) {
+                bricks.byChatId.value = bricks.arrives;
+                bricks.unloaded = false;
+            }
+            return Promise.resolve();
+        });
         bricks.openBrickPage.mockClear();
         bricks.openBrickChat.mockClear();
         bricks.toasts.length = 0;
@@ -271,6 +293,36 @@ describe("a chat's profile panel for a Brick", () => {
         expect(room.leaveRoom).toHaveBeenCalledWith({ forget: true });
         expect(bricks.toasts).toEqual(["Cleared your chat with Brick"]);
         expect(bricks.openBrickChat).toHaveBeenCalledWith(BRICK);
+    });
+
+    it("asks Orbit for the person's Bricks when it has not yet, and still opens the new chat with their own Brick", async () => {
+        const own = ownBrick();
+        bricks.unloaded = true;
+        bricks.arrives = bricks.byChatId.value;
+        bricks.byChatId.value = new Map();
+        await open(own, { bot: true, botState: "online" });
+        byId("partnerDeleteChat")?.click();
+        await settle();
+        byId("partnerDeleteConfirmButton")?.click();
+        await settle();
+        expect(bricks.load).toHaveBeenCalled();
+        expect(room.leaveRoom).toHaveBeenCalledWith({ forget: true });
+        expect(bricks.openBrickChat).toHaveBeenCalledWith(BRICK);
+    });
+
+    it("clears the chat and leaves the person on the list when Orbit cannot say whose Brick it is", async () => {
+        const own = ownBrick();
+        bricks.unloaded = true;
+        bricks.byChatId.value = new Map();
+        await open(own, { bot: true, botState: "online" });
+        byId("partnerDeleteChat")?.click();
+        await settle();
+        byId("partnerDeleteConfirmButton")?.click();
+        await settle();
+        expect(bricks.load).toHaveBeenCalled();
+        expect(room.leaveRoom).toHaveBeenCalledWith({ forget: true });
+        expect(bricks.toasts).toEqual(["Cleared your chat with Brick"]);
+        expect(bricks.openBrickChat).not.toHaveBeenCalled();
     });
 
     it("clears the chat with someone else's Brick, and leaves the person on the list", async () => {

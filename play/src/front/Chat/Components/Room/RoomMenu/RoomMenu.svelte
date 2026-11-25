@@ -1,6 +1,6 @@
 <script lang="ts">
     import { getContext, hasContext, onDestroy, onMount } from "svelte";
-    import { readable } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { openModal } from "svelte-modals";
     import type {
@@ -25,7 +25,7 @@
     import { botIdFromChatId } from "../../../Bots/BotChatStatus";
     import MemorySheet from "../../../Bricks/MemorySheet.svelte";
     import { openBrickChat } from "../../../Bricks/BrickChat";
-    import { myBricksStore } from "../../../Bricks/MyBricksStore";
+    import { loadMyBricks, myBricksStore } from "../../../Bricks/MyBricksStore";
     import { directPartnerStore } from "../DirectChat/DirectPartnerStore";
     import { partnerStillInChat } from "../DirectChat/partnerStillInChat";
     import {
@@ -131,24 +131,37 @@
     // A chat with a Brick (anyone's) is cleared, not deleted: it starts again empty, and the Brick keeps what it learned
     $: clearsChat = $partner !== undefined && isBotPartner($partner);
 
+    /**
+     * Whether a bot's chat is with one of the person's own Bricks. When Orbit has not been asked yet it is asked before the
+     * chat is cleared: not knowing the Bricks is not knowing the bot is someone else's. When Orbit does not answer either, the
+     * bot is not known to be theirs and the person is left on the list of chats, told that the chat was cleared.
+     */
+    async function ownBrickIdOf(botId: string | undefined): Promise<string | undefined> {
+        if (!botId) return undefined;
+        if (get(myBricksStore) === undefined) await loadMyBricks();
+        return (get(myBricksStore) ?? []).some((brick) => brick.id === botId) ? botId : undefined;
+    }
+
     function closeMenuAndLeaveRoom() {
         toggleRoomOptions();
         // Says which chat went: "Deleted your chat with Mishari", "Left Design team".
         const cleared = clearsChat;
-        const brickId = cleared ? ownBrickId : undefined;
+        const botId = cleared ? memoryBotId : undefined;
         const notification = cleared
             ? $LL.chat.directChat.clearChat.notification({ name })
             : isDirect
             ? $LL.chat.directChat.deleteChat.notification({ name })
             : $LL.chat.roomMenu.leaveRoom.notification({ name });
         // Deleting a chat leaves it and forgets it, so it goes from the person's lists and not just from view.
-        room.leaveRoom(isDirect ? { forget: true } : undefined)
-            .then(() => {
-                if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
-                showChatDoneToast(notification);
-                // The person's own Brick opens again as a new empty chat
-                if (brickId) openBrickChat(brickId).catch((error) => console.error(error));
-            })
+        ownBrickIdOf(botId)
+            .then((brickId) =>
+                room.leaveRoom(isDirect ? { forget: true } : undefined).then(() => {
+                    if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
+                    showChatDoneToast(notification);
+                    // The person's own Brick opens again as a new empty chat
+                    if (brickId) openBrickChat(brickId).catch((error) => console.error(error));
+                })
+            )
             .catch((error) => {
                 console.error("Failed to leave room", error);
                 if (cleared) warningMessageStore.addWarningMessage($LL.chat.directChat.clearChat.failed());
@@ -195,8 +208,6 @@
 
     // What a bot remembers about this person (game #2003): in a chat with any bot, theirs or someone else's
     $: memoryBotId = isDirect && $partner && isBotPartner($partner) ? botIdFromChatId($partner.chatId) : undefined;
-    $: ownBrickId =
-        memoryBotId && ($myBricksStore ?? []).some((brick) => brick.id === memoryBotId) ? memoryBotId : undefined;
 
     function openMemory() {
         toggleRoomOptions();

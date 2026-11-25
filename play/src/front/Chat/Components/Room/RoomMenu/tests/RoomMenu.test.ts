@@ -22,7 +22,14 @@ const brickChat = vi.hoisted(() => ({ openBrickChat: vi.fn(() => Promise.resolve
 vi.mock("../../../../Bricks/BrickChat", () => brickChat);
 // Who the chat is with: a person by default; a test can make it a bot
 const partner = vi.hoisted(() => ({ chatId: "@ada:chat.example.com", isBot: false }));
-const sheet = vi.hoisted(() => ({ openModal: vi.fn(), own: [] as { id: string }[] }));
+const sheet = vi.hoisted(() => ({
+    openModal: vi.fn(),
+    own: [] as { id: string }[],
+    // Orbit has not been asked for the person's Bricks yet; asking brings these (none when it does not answer)
+    unloaded: false,
+    arrives: [] as { id: string }[],
+    load: vi.fn(),
+}));
 vi.mock("../../DirectChat/DirectPartnerStore", async () => {
     const { readable: store } = await import("svelte/store");
     return {
@@ -36,10 +43,15 @@ vi.mock("../../DirectChat/DirectPartnerStore", async () => {
 });
 // What a bot remembers about the person has its own tests; here only that the chat menu offers it
 vi.mock("../../../../Bricks/MemorySheet.svelte", () => ({ default: {} }));
-vi.mock("../../../../Bricks/MyBricksStore", async () => {
-    const { readable: store } = await import("svelte/store");
-    return { myBricksStore: store(sheet.own) };
-});
+vi.mock("../../../../Bricks/MyBricksStore", () => ({
+    myBricksStore: {
+        subscribe(run: (value: { id: string }[] | undefined) => void) {
+            run(sheet.unloaded ? undefined : sheet.own);
+            return () => undefined;
+        },
+    },
+    loadMyBricks: sheet.load,
+}));
 vi.mock("../../DirectChat/partnerStillInChat", async () => {
     const { readable: store } = await import("svelte/store");
     return { partnerStillInChat: () => store(true) };
@@ -137,6 +149,16 @@ describe("a direct chat's ⋯ menu", () => {
         partner.chatId = "@ada:chat.example.com";
         partner.isBot = false;
         sheet.own.length = 0;
+        sheet.unloaded = false;
+        sheet.arrives = [];
+        sheet.load.mockReset();
+        sheet.load.mockImplementation(() => {
+            if (sheet.arrives.length > 0) {
+                sheet.own.push(...sheet.arrives);
+                sheet.unloaded = false;
+            }
+            return Promise.resolve();
+        });
     });
 
     afterEach(() => {
@@ -244,6 +266,40 @@ describe("a direct chat's ⋯ menu", () => {
             expect(room.leaveRoom).toHaveBeenCalledWith({ forget: true });
             expect(shownNote()).toBe("chat.directChat.clearChat.notification:Brick");
             expect(brickChat.openBrickChat).toHaveBeenCalledWith(BOT);
+        });
+
+        it("asks Orbit for the person's Bricks when it has not yet, and still opens the new chat with their own Brick", async () => {
+            partner.chatId = `@bot_${BOT}:chat.example.com`;
+            sheet.unloaded = true;
+            sheet.arrives = [{ id: BOT }];
+            const room = directRoom("Brick");
+            await open(new Map([[partner.chatId, "Brick"]]), room);
+
+            click('[data-testid="deleteChatOption"]');
+            await tick();
+            click('[data-testid="deleteChatConfirmButton"]');
+            await settle();
+
+            expect(sheet.load).toHaveBeenCalled();
+            expect(room.leaveRoom).toHaveBeenCalledWith({ forget: true });
+            expect(brickChat.openBrickChat).toHaveBeenCalledWith(BOT);
+        });
+
+        it("clears the chat and leaves the person on the list when Orbit cannot say whose Brick it is", async () => {
+            partner.chatId = `@bot_${BOT}:chat.example.com`;
+            sheet.unloaded = true;
+            const room = directRoom("Brick");
+            await open(new Map([[partner.chatId, "Brick"]]), room);
+
+            click('[data-testid="deleteChatOption"]');
+            await tick();
+            click('[data-testid="deleteChatConfirmButton"]');
+            await settle();
+
+            expect(sheet.load).toHaveBeenCalled();
+            expect(room.leaveRoom).toHaveBeenCalledWith({ forget: true });
+            expect(shownNote()).toBe("chat.directChat.clearChat.notification:Brick");
+            expect(brickChat.openBrickChat).not.toHaveBeenCalled();
         });
 
         it("does not open a chat with someone else's Brick: the person is left on the list", async () => {
