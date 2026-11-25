@@ -1191,6 +1191,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             this.refreshDirectChatPartners();
         };
         this.directRepairs.set(repair, roomIds);
+        // Whoever starts a repair (the account's list arriving, or a chat being opened), the list read before it is withheld at once
+        this.refreshDirectChatPartners();
         repair.then(done, done);
     }
 

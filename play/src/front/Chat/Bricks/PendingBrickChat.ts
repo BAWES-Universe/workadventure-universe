@@ -258,49 +258,59 @@ export class PendingBrickChatRoom implements ChatRoom {
         this.phase = "flushing";
         const run = (async (): Promise<HandOverResult> => {
             let sentAny = false;
-            // One at a time, each after the chat server took the one before: the wait is the point.
-            /* eslint-disable no-await-in-loop */
-            for (;;) {
-                const next = get(this.lines).find((line) => !line.sent);
-                if (!next) break;
-                try {
-                    await into.send(next.send);
-                } catch (error) {
-                    console.warn("Could not send what was written while the chat was made", error);
-                    this.phase = "failed";
-                    this.takeUnsent();
-                    this.deps.sayStillLoading();
-                    return "failed";
+            /** Sends what is written and not sent, one at a time, each after the chat server took the one before: the wait is the point. */
+            const sendLines = async (): Promise<boolean> => {
+                /* eslint-disable no-await-in-loop */
+                for (;;) {
+                    const next = get(this.lines).find((line) => !line.sent);
+                    if (!next) return true;
+                    try {
+                        await into.send(next.send);
+                    } catch (error) {
+                        console.warn("Could not send what was written while the chat was made", error);
+                        this.phase = "failed";
+                        this.takeUnsent();
+                        this.deps.sayStillLoading();
+                        return false;
+                    }
+                    next.sent = true;
+                    sentAny = true;
+                    this.publish();
                 }
-                next.sent = true;
-                sentAny = true;
-                this.publish();
-            }
-            /* eslint-enable no-await-in-loop */
+                /* eslint-enable no-await-in-loop */
+            };
+            if (!(await sendLines())) return "failed";
             // Gave up on before and nothing was written since: when the person's box holds words (the ones given back), they
             // stay as they are. An empty box has nothing to lose, so the chat that turned up late takes the screen's place.
             if (wasFailed && !sentAny && hasWords(this.carryText?.() ?? "")) {
                 this.phase = "failed";
                 return "stayed";
             }
-            this.phase = "done";
-            if (!this.deps.isShown()) {
-                // The person is elsewhere: what they left typed here goes to the real chat's message box
-                const kept = this.takeLeftTyped();
-                if (hasWords(kept) && !(await carried(into, kept))) {
-                    // Kept for the next time the screen or the chat is opened; the chat will be tried again
-                    this.leftTyped = kept;
+            // The phase stays "flushing" until the very end: a line written while the typed words are carried is taken in below,
+            // and not left unsent on a screen that is about to go
+            /* eslint-disable no-await-in-loop */
+            for (;;) {
+                if (!this.deps.isShown()) {
+                    // The person is elsewhere: what they left typed here goes to the real chat's message box
+                    const kept = this.takeLeftTyped();
+                    if (hasWords(kept) && !(await carried(into, kept))) {
+                        // Kept for the next time the screen or the chat is opened; the chat will be tried again
+                        this.leftTyped = kept;
+                        this.phase = "failed";
+                        return "stayed";
+                    }
+                } else if (!(await carried(into, this.carryText?.() ?? ""))) {
+                    // The words are still in the box: the person stays here, told to try again, and writing again hands over again
                     this.phase = "failed";
+                    this.deps.sayStillLoading();
                     return "stayed";
                 }
-                return "left";
+                if (!get(this.lines).some((line) => !line.sent)) break;
+                // Written while the words were carried: sent now, in order, before the chat takes the screen
+                if (!(await sendLines())) return "failed";
             }
-            if (!(await carried(into, this.carryText?.() ?? ""))) {
-                // The words are still in the box: the person stays here, told to try again, and writing again hands over again
-                this.phase = "failed";
-                this.deps.sayStillLoading();
-                return "stayed";
-            }
+            /* eslint-enable no-await-in-loop */
+            this.phase = "done";
             // Carrying takes a moment: the person may have gone elsewhere meanwhile, and the chat does not take their place
             if (!this.deps.isShown()) return "left";
             into.showReal();

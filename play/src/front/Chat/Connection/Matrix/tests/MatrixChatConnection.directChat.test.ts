@@ -634,6 +634,30 @@ describe("MatrixChatConnection: the chat with one person", () => {
             expect(createRoom).not.toHaveBeenCalled();
         });
 
+        it("withholds the list of people the account has a chat with as soon as opening a chat starts a repair, then reads it again", async () => {
+            const room = addRoom("!chat", { type: "multiple", dmInviter: ALICE });
+            let finishSave: (() => void) | undefined;
+            setAccountData.mockImplementationOnce(
+                (_type: string, next: Record<string, string[]>) =>
+                    new Promise((resolve) => {
+                        finishSave = () => {
+                            directMap = next;
+                            resolve({});
+                        };
+                    })
+            );
+            // The list was read before: an older answer is there
+            connection["_directChatPartners"].set(new Set(["@old:matrix.test"]));
+
+            const opening = connection.createDirectRoom(ALICE);
+            await vi.waitFor(() => expect(finishSave).toBeDefined());
+            expect(get(connection.directChatPartners)).toBeUndefined();
+
+            finishSave?.();
+            await expect(opening).resolves.toBe(room);
+            await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
+        });
+
         it("opening the chat goes on after a few seconds when the repair is stuck", async () => {
             vi.useFakeTimers();
             try {

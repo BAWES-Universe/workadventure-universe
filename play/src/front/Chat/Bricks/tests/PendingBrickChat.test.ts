@@ -228,6 +228,31 @@ describe("handing what was written to the real chat", () => {
         expect(into.showReal).not.toHaveBeenCalled();
     });
 
+    it("sends a line written while the typed words are carried, in order, before the chat takes the screen", async () => {
+        const { room } = screen();
+        const { into, sent, gates } = realChat();
+        room.readTypedFrom(() => "half a sentence");
+        let finishCarry: () => void = () => undefined;
+        (into.carry as ReturnType<typeof vi.fn>).mockImplementationOnce(
+            () =>
+                new Promise<void>((resolve) => {
+                    finishCarry = resolve;
+                })
+        );
+        const done = room.handOver(into);
+        await flush();
+        // Nothing was written before: the words are being carried when the person writes
+        room.sendMessage("late line");
+        finishCarry();
+        await flush();
+        gates[0].release();
+        await expect(done).resolves.toBe("switched");
+        expect(sent).toEqual([{ words: "late line" }]);
+        expect(shownWords(room)).toEqual(["late line"]);
+        expect(stillSending(room)).toEqual([false]);
+        expect(into.showReal).toHaveBeenCalledTimes(1);
+    });
+
     it("stays on the screen, told to try again, when the typed words cannot be carried to the real chat's box", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         const { room, deps } = screen();
