@@ -282,10 +282,20 @@ export class PendingBrickChatRoom implements ChatRoom {
             if (!this.deps.isShown()) {
                 // The person is elsewhere: what they left typed here goes to the real chat's message box
                 const kept = this.takeLeftTyped();
-                if (hasWords(kept)) await into.carry(kept);
+                if (hasWords(kept) && !(await carried(into, kept))) {
+                    // Kept for the next time the screen or the chat is opened; the chat will be tried again
+                    this.leftTyped = kept;
+                    this.phase = "failed";
+                    return "stayed";
+                }
                 return "left";
             }
-            await into.carry(this.carryText?.() ?? "");
+            if (!(await carried(into, this.carryText?.() ?? ""))) {
+                // The words are still in the box: the person stays here, told to try again, and writing again hands over again
+                this.phase = "failed";
+                this.deps.sayStillLoading();
+                return "stayed";
+            }
             // Carrying takes a moment: the person may have gone elsewhere meanwhile, and the chat does not take their place
             if (!this.deps.isShown()) return "left";
             into.showReal();
@@ -302,6 +312,20 @@ export class PendingBrickChatRoom implements ChatRoom {
     readonly loadMorePreviousMessages = (): Promise<void> => Promise.resolve();
     readonly startTyping = (): Promise<object> => Promise.resolve({});
     readonly stopTyping = (): Promise<object> => Promise.resolve({});
+}
+
+/**
+ * Puts the typed words into the real chat's box, and says whether that worked. It can fail (the draft store is out of
+ * reach): the hand-over must then go back to "failed", or the screen would stay finished and every later message faded.
+ */
+async function carried(into: PendingHandOver, typed: string): Promise<boolean> {
+    try {
+        await into.carry(typed);
+        return true;
+    } catch (error) {
+        console.warn("Could not carry what was typed to the chat", error);
+        return false;
+    }
 }
 
 /** Whether what is typed in the message box (as the box holds it, with line breaks) says anything. */

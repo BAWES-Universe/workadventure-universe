@@ -228,6 +228,41 @@ describe("handing what was written to the real chat", () => {
         expect(into.showReal).not.toHaveBeenCalled();
     });
 
+    it("stays on the screen, told to try again, when the typed words cannot be carried to the real chat's box", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { room, deps } = screen();
+        const { into } = realChat();
+        room.readTypedFrom(() => "half a sentence");
+        (into.carry as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("chunk failed to load"));
+        await expect(room.handOver(into)).resolves.toBe("stayed");
+        expect(into.showReal).not.toHaveBeenCalled();
+        expect(room.failed).toBe(true);
+        expect(deps.sayStillLoading).toHaveBeenCalledTimes(1);
+        // Writing again makes the chat again, and the next hand-over goes through
+        room.sendMessage("one more");
+        expect(deps.retry).toHaveBeenCalledTimes(1);
+        const again = realChat();
+        const second = room.handOver(again.into);
+        await flush();
+        again.gates[0].release();
+        await expect(second).resolves.toBe("switched");
+        expect(again.into.showReal).toHaveBeenCalledTimes(1);
+        warn.mockRestore();
+    });
+
+    it("keeps the words of a person who went elsewhere when they cannot be carried, for the next time", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const { room, setShown } = screen();
+        const { into } = realChat();
+        room.readTypedFrom(() => "half a sentence");
+        room.screenLeft();
+        setShown(false);
+        (into.carry as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("chunk failed to load"));
+        await expect(room.handOver(into)).resolves.toBe("stayed");
+        expect(room.takeLeftTyped()).toBe("half a sentence");
+        warn.mockRestore();
+    });
+
     it("keeps the words typed and not sent when the person leaves the screen, and hands them to the real chat's box", async () => {
         const { room, setShown } = screen();
         const { into } = realChat();

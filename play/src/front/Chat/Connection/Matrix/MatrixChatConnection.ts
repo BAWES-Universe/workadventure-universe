@@ -120,6 +120,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
     private directRepairs = new Map<Promise<unknown>, string[]>();
     /** Direct chats repairs found or saved, until the client's own copy of the list shows them (it only does after the next sync). */
     private repairedDirect: DirectMap = {};
+    /** Direct chats the account's list could not be saved with yet: counted as chat partners, but still to be repaired. */
+    private unsavedDirect: DirectMap = {};
     private readonly _directChatPartners = writable<ReadonlySet<string> | undefined>(undefined);
     /**
      * The people the account lists a direct chat with: its `m.direct`, which every device of the account shares and which
@@ -1204,6 +1206,12 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             })
             .catch((error: unknown) => {
                 console.warn("Unable to repair the list of direct chats", error);
+                // Not listed, so the repair is tried again; but they are still my direct chats, and a chat left out of the
+                // partners would show as one nobody opened
+                for (const { userId, roomId } of rooms) {
+                    this.unsavedDirect = withDirectRoom(this.unsavedDirect, userId, roomId) ?? this.unsavedDirect;
+                }
+                this.refreshDirectChatPartners();
                 return false;
             });
     }
@@ -1230,7 +1238,7 @@ export class MatrixChatConnection implements ChatConnectionInterface {
             return;
         }
         const partners = new Set<string>();
-        for (const map of [this.directMap(), this.repairedDirect]) {
+        for (const map of [this.directMap(), this.repairedDirect, this.unsavedDirect]) {
             for (const [userId, roomIds] of Object.entries(map ?? {})) {
                 if (roomIds && roomIds.length > 0) partners.add(userId);
             }

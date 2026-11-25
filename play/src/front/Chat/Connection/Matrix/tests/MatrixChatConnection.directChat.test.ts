@@ -684,6 +684,23 @@ describe("MatrixChatConnection: the chat with one person", () => {
             expect(setAccountData).toHaveBeenCalledOnce();
         });
 
+        it("still counts a chat as one with its person when the list cannot be saved, and saves it again next time", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            addRoom("!chat", { type: "multiple", dmInviter: ALICE });
+            setAccountData.mockRejectedValueOnce(new Error("offline"));
+
+            connection["repairDirectAccountData"]();
+            await vi.waitFor(() => expect(setAccountData).toHaveBeenCalledOnce());
+            await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
+            expect(directMap).toBeUndefined();
+
+            // Not listed, so the next repair saves it
+            connection["repairDirectAccountData"]();
+            await vi.waitFor(() => expect(directMap).toEqual({ [ALICE]: ["!chat"] }));
+            expect(setAccountData).toHaveBeenCalledTimes(2);
+            warn.mockRestore();
+        });
+
         it("saves all the missing ones in one write", async () => {
             addRoom("!one", { dmInviter: ALICE });
             addRoom("!two", { dmInviter: "@bob:matrix.test" });
