@@ -144,6 +144,11 @@ export class PendingBrickChatRoom implements ChatRoom {
         return typed;
     }
 
+    /** Words an earlier screen of this Brick's chat kept: they come back in this screen's message box when it is shown. */
+    keepTyped(typed: string): void {
+        if (hasWords(typed)) this.leftTyped = typed;
+    }
+
     /** The setup starts (or starts again): the wait runs from now. */
     begin(): void {
         if (this.phase === "flushing" || this.phase === "done") return;

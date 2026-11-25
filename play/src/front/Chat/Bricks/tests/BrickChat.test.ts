@@ -634,6 +634,32 @@ describe("opening a Brick's chat on a screen of its own, before the chat exists"
         error.mockRestore();
     });
 
+    it("gives the words left typed on a screen left behind to the new screen when the Brick is tapped before its chat exists", async () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const { connection } = fakeConnection();
+        game.connection = connection;
+        game.askDirectChat.mockResolvedValue({ create: true, botChatId: chatIdOf(NEW) });
+        game.openDirectChatRoom.mockImplementation((_chatId, options) => {
+            options?.onFailure?.(new Error("chat server down"));
+            return Promise.resolve(undefined);
+        });
+        await openBrickChat(NEW);
+        const first = game.showRoom.mock.calls[0][0] as PendingBrickChatRoom;
+        first.readTypedFrom(() => "brief at 8?");
+        first.screenLeft();
+        selected.set(undefined);
+        game.showRoom.mockClear();
+        // Tapped again: still no chat, so a new screen is made, and it holds the words
+        await openBrickChat(NEW);
+        const second = game.showRoom.mock.calls[0][0] as PendingBrickChatRoom;
+        expect(second).toBeInstanceOf(PendingBrickChatRoom);
+        expect(second).not.toBe(first);
+        expect(second.takeLeftTyped()).toBe("brief at 8?");
+        // And they are not also put into a chat's draft later
+        expect(game.saveDraft).not.toHaveBeenCalled();
+        error.mockRestore();
+    });
+
     it("sends the words again, once, when the person writes after a failed try and the chat is there now", async () => {
         const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
         const { connection } = fakeConnection();

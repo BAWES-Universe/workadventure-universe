@@ -94,6 +94,12 @@ function showPending(brickId: string): void {
     const pending = pendings.get(brickId) ?? makePending(brickId);
     if (!pending) return;
     pendings.set(brickId, pending);
+    // What the person left typed on an earlier screen of this chat comes back in this one's message box
+    const stray = strays.get(brickId);
+    if (stray) {
+        strays.delete(brickId);
+        pending.keepTyped(stray);
+    }
     pending.begin();
     showRoom(pending);
 }
