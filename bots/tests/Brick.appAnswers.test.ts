@@ -227,6 +227,20 @@ describe('an answer that is still too long loses whole items, and says how many'
         expect(read.long_note || read.other_note).toBeDefined();
     });
 
+    it('leaves the other lists whole when what is too long is inside one item that shortening lists cannot fix', () => {
+        const answer = { labels: [{ n: 'a' }, { n: 'b' }, { n: 'c' }], people: [{ n: 'x' }, { n: 'y' }], messages: [{ id: 1, text: prose(200_000) }, { id: 2, text: 'second' }] };
+        const text = fitAppAnswer(answer);
+        // No list was shortened to its first item for nothing: the cut notice is the only word about length
+        expect(text).toContain('Only the first 72,000 of ');
+        expect(text).not.toMatch(/Showing \d+ of \d+/);
+        expect(text.startsWith('{"labels":[{"n":"a"},{"n":"b"},{"n":"c"}],"people":[{"n":"x"},{"n":"y"}],"messages":[{"id":1,')).toBe(true);
+        // The same lists beside something that does fit once they are shortened are still shortened
+        const fits = fitAppAnswer({ messages: Array.from({ length: 50 }, (_, n) => ({ id: n, text: prose(3_000) })), labels: [{ n: 'a' }, { n: 'b' }] });
+        expect(fits).toMatch(/Showing \d+ of 50/);
+        expect(fits.length).toBeLessThanOrEqual(RUN_ANSWER_MAX);
+        expect(fits).toContain('"labels":[{"n":"a"},{"n":"b"}]');
+    });
+
     it('cuts what cannot be shortened (one item, or no list) with the chat notice, never silently', () => {
         const one = { id: 1, text: prose(200_000) };
         const text = fitAppAnswer({ items: [one] });

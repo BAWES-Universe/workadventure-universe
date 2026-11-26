@@ -245,7 +245,9 @@ export function fitAppAnswer(value: unknown, max: number = RUN_ANSWER_MAX, mail 
     if (taken.count === 0 && asIs.length <= max) return asIs;
     // Still too long: raw HTML is read as its text too
     if (asText(answer).length > max) answer = tidy(value, { count: 0 }, true, mail);
-    // Whole items out of the longest list, then of the next longest, until it fits or no list can be shortened
+    // Whole items out of the longest list, then of the next longest, until it fits or no list can be shortened. When that never makes it fit (what
+    // is too long is inside one item), the lists are given back whole: shortening them cut things that were not the reason, and the cut below keeps their first items
+    const whole = typeof answer === 'object' && answer !== null && asText(answer).length > max ? (JSON.parse(JSON.stringify(answer)) as unknown) : null;
     for (let round = 0; round < 12 && asText(answer).length > max; round++) {
         const place = longestList(answer);
         if (!place) break;
@@ -259,5 +261,6 @@ export function fitAppAnswer(value: unknown, max: number = RUN_ANSWER_MAX, mail 
         }
         answer = showFirst(answer, place, low);
     }
+    if (whole !== null && asText(answer).length > max) answer = whole;
     return cutWithNote(asText(answer), max);
 }
