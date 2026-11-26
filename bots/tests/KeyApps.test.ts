@@ -301,6 +301,25 @@ describe('the two tools of a Brick for keys', () => {
         expect(http.post).toHaveBeenCalledWith(`${ORBIT}/api/bots/bot-1/key-apps/grant-1/page-jobs`, { requesterKey: 'sara-uuid', artifactId: 'art-1', amount: '4.500', currency: 'KWD' }, expect.anything());
     });
 
+    it('tell the owner the price goes live when they publish, when the page\'s link still shows an older published version', async () => {
+        http.post.mockResolvedValueOnce({ status: 200, data: { job: saved(), replaced: false, waitsForPublish: true } });
+        const waiting = (await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'example', amount: '4.500', currency: 'KWD' }, context)) as { done: boolean; waitsForPublish?: boolean; note: string };
+        expect(waiting).toMatchObject({ done: true, waitsForPublish: true });
+        expect(waiting.note).toContain('once you publish this version. Until then, people who open the link can\'t pay.');
+        expect(waiting.note).not.toContain('now takes');
+        // The read-back carries it too
+        http.post.mockResolvedValueOnce({ status: 500, data: {} });
+        http.get.mockResolvedValueOnce({ status: 200, data: { job: saved(), waitsForPublish: true } });
+        expect(await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'example', amount: '4.500', currency: 'KWD' }, context)).toMatchObject({ done: true, waitsForPublish: true });
+        // Nothing waits, or an Orbit that does not say: the usual words
+        for (const data of [{ job: saved(), waitsForPublish: false }, { job: saved() }, { job: saved(), waitsForPublish: 'yes' }]) {
+            http.post.mockResolvedValueOnce({ status: 200, data });
+            const result = (await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'example', amount: '4.500', currency: 'KWD' }, context)) as { note: string };
+            expect(result).not.toHaveProperty('waitsForPublish');
+            expect(result.note).toContain('The page now takes 4.500 KWD');
+        }
+    });
+
     it('refuse a currency that is not exactly three letters, instead of cutting it to fit', async () => {
         for (const currency of ['USDT', 'US', '', 'K W', 'U$D', undefined, 3]) {
             const result = (await runKeyTool(PAYMENT_TOOL, { artifact: 'art-1', app: 'example', amount: '4.500', currency }, context)) as { error?: string };

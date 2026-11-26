@@ -610,6 +610,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         payNeedsUpdateSub: "Se você já pagou, confira aqui antes de pagar de novo.",
         payNeedsUpdateOwnerSub: "Peça a {maker} para criar a página de novo.",
         payUnavailable: "Pagamentos indisponíveis",
+        payNotTakingSub: "Esta página não está aceitando pagamentos no momento. Tente novamente mais tarde.",
         payLimit: "Tentativas demais por enquanto.",
         payLimitSub: "Tente de novo daqui a pouco.",
         payBoughtBefore: "Já comprou isto?",

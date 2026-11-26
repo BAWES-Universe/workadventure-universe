@@ -27,7 +27,15 @@ import type { ArtifactChat, ArtifactPay, ArtifactPayRequest } from "./ArtifactAp
 /** The id a page gives its request: short and plain, so it can only be echoed back and never carry anything else. */
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-export type PayProblem = "unavailable" | "limit" | "not_paid" | "cant_confirm" | "still_checking" | "none";
+/** `not_published`: the owner set the page's payment on a version newer than the one this person is shown; nothing was made (the page hears `unavailable`). */
+export type PayProblem =
+    | "unavailable"
+    | "not_published"
+    | "limit"
+    | "not_paid"
+    | "cant_confirm"
+    | "still_checking"
+    | "none";
 
 /** What the window says under the page while a payment is on its way. */
 export interface PayLine {
@@ -634,8 +642,14 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 // No answer ever came (not even after the same wish was sent again): an order may or may not have been made, and the wish can be asked about
                 // Orbit says "unsure" when it refused a start that may still have made an order: Check payment stays; without it the refusal is clear
                 const lost = gotNoAnswer(error) || (error instanceof ArtifactRequestError && error.unsure);
+                // Orbit refused because the payment was set on a version this person is not shown yet: definite, nothing was made, and the line says so
+                const unpublished =
+                    !limit && !lost && error instanceof ArtifactRequestError && error.code === "not_published";
                 end(
-                    { problem: limit ? "limit" : "unavailable", ...(lost ? { canCheck: true } : {}) },
+                    {
+                        problem: limit ? "limit" : unpublished ? "not_published" : "unavailable",
+                        ...(lost ? { canCheck: true } : {}),
+                    },
                     limit ? "limit" : "unavailable",
                     request,
                     from,

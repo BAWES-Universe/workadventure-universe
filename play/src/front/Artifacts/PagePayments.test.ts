@@ -273,6 +273,21 @@ describe("a page that takes payments, in the game's window", () => {
         clear.destroy();
     });
 
+    it("says why when Orbit refuses because the payment was set on a version this person is not shown yet, and the page hears only unavailable", async () => {
+        const close = vi.fn();
+        const popup = { location: { href: "" }, close } as unknown as Window;
+        const payments = make(
+            vi.fn().mockRejectedValueOnce(new ArtifactRequestError(409, "not_published")),
+            () => popup
+        );
+        ask(payments);
+        await flush();
+        expect(close).toHaveBeenCalled();
+        expect(get(payments.line)).toMatchObject({ problem: "not_published", canCheck: false });
+        expect(told()).toEqual(["unavailable"]);
+        payments.destroy();
+    });
+
     it("says it is too many tries on the server's own rate limit (429), however it words it", async () => {
         const limited = make(vi.fn().mockRejectedValueOnce(new ArtifactRequestError(429, "too_many_requests")));
         ask(limited);

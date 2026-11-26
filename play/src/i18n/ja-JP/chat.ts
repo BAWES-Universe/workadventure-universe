@@ -444,6 +444,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         payNeedsUpdateSub: "すでにお支払い済みの場合は、もう一度支払う前にここで確認してください。",
         payNeedsUpdateOwnerSub: "{maker}にページの作り直しを依頼してください。",
         payUnavailable: "お支払いは利用できません",
+        payNotTakingSub: "このページは現在お支払いを受け付けていません。しばらくしてからもう一度お試しください。",
         payLimit: "現在、試行回数が多すぎます。",
         payLimitSub: "しばらくしてからもう一度お試しください。",
         payBoughtBefore: "以前に購入しましたか？",

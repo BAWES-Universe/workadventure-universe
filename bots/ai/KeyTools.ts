@@ -127,6 +127,11 @@ interface SavedPageJob {
     active: boolean;
     /** What Orbit holds as the job's description: a text, null for none, undefined when the answer carried no such field. */
     description?: string | null;
+    /**
+     * The page's link still shows an older published version than the one these terms were set on (Orbit's `waitsForPublish`): people who open
+     * it by its link cannot pay until the owner publishes again. Only a real `true` counts; an Orbit that does not say it leaves it false.
+     */
+    waitsForPublish: boolean;
 }
 function savedJobOf(data: unknown): SavedPageJob | null {
     const job = (data as { job?: unknown } | null)?.job as Record<string, unknown> | null | undefined;
@@ -136,7 +141,8 @@ function savedJobOf(data: unknown): SavedPageJob | null {
     if (typeof amountMinor !== 'number' || !Number.isSafeInteger(amountMinor) || amountMinor < 0) return null;
     if (typeof exponent !== 'number' || ![0, 2, 3].includes(exponent) || typeof active !== 'boolean') return null;
     const description = typeof job.description === 'string' ? job.description : job.description === null ? null : undefined;
-    return { artifactId, connectionId, amountMinor, currency, exponent, amount, active, description };
+    const waitsForPublish = (data as { waitsForPublish?: unknown }).waitsForPublish === true;
+    return { artifactId, connectionId, amountMinor, currency, exponent, amount, active, description, waitsForPublish };
 }
 
 /** What the owner asked for, in the smallest unit of a currency with `exponent` decimals ("4.5" and "4.500" KWD are both 4500); null for text that is not an amount that fits. */
@@ -240,7 +246,11 @@ async function takePayments(args: Record<string, unknown>, context: KeyToolConte
     const done = (job: SavedPageJob): Record<string, unknown> => ({
         done: true,
         amount: `${job.amount} ${job.currency}`,
-        note: `The page now takes ${job.amount} ${job.currency} through ${app.short}: what was saved matches what they asked for. Say so in their language, like "Done. The Join button now takes 4.500 KWD." (name the button or page as they know it). Make sure the page asks for a checkout the way the tool says, and tell the person it needs to be shared with anyone with the link for visitors to pay. A test key makes test payments only.`,
+        ...(job.waitsForPublish ? { waitsForPublish: true } : {}),
+        note: job.waitsForPublish
+            ? // The terms are on a version the link does not show yet: visitors are refused until the owner publishes (Orbit charges nothing meanwhile)
+              `The page will take ${job.amount} ${job.currency} through ${app.short} once they publish this version: what was saved matches what they asked for, but the page's link still shows an older published version, and people who open it by its link can't pay until they publish. Say so in their language, like "Done. The Join button takes 4.500 KWD once you publish this version. Until then, people who open the link can't pay." (name the button or page as they know it). They publish with the Publish button above the page or in Share. Make sure the page asks for a checkout the way the tool says. A test key makes test payments only.`
+            : `The page now takes ${job.amount} ${job.currency} through ${app.short}: what was saved matches what they asked for. Say so in their language, like "Done. The Join button now takes 4.500 KWD." (name the button or page as they know it). Make sure the page asks for a checkout the way the tool says, and tell the person it needs to be shared with anyone with the link for visitors to pay. A test key makes test payments only.`,
     });
     let sent: { status: number; data: unknown } | null = null;
     try {

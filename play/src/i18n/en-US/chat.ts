@@ -2394,6 +2394,7 @@ const chat: BaseTranslation = {
         payNeedsUpdateSub: "If you already paid, check it here before paying again.",
         payNeedsUpdateOwnerSub: "Ask {maker:string} to make the page again.",
         payUnavailable: "Payments unavailable",
+        payNotTakingSub: "This page isn’t taking payments right now. Try again later.",
         payLimit: "Too many tries for now.",
         payLimitSub: "Try again in a little while.",
         payBoughtBefore: "Bought this before?",

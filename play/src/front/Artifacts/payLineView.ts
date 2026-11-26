@@ -118,6 +118,10 @@ export function describePayLine(
             ? { title: LL.payNotHeard(), sub: LL.payNotHeardSub(), actions: [check, ...restoreToo], closable: false }
             : { title: LL.payUnavailable(), sub: null, actions: restoreToo, closable: false };
     }
+    // The owner set the payment on a version this person is not shown yet: said plainly, without telling them a newer version exists
+    if (line.problem === "not_published") {
+        return { title: LL.payUnavailable(), sub: LL.payNotTakingSub(), actions: restoreToo, closable: false };
+    }
     if (line.problem === "limit") {
         // An answer that may have made an order (an uncertain refusal) can be checked
         return {

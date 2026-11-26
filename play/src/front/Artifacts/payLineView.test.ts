@@ -222,6 +222,13 @@ describe("the line under a paying page says what the approved mock says", () => 
             sub: null,
             actions: [],
         });
+        // The payment was set on a version this person is not shown yet: plain, nothing to press, no newer version named
+        expect(view({ problem: "not_published" })).toMatchObject({
+            title: "Payments unavailable",
+            sub: "This page isn’t taking payments right now. Try again later.",
+            actions: [],
+            closable: false,
+        });
         expect(view({})).toBeNull();
     });
 
