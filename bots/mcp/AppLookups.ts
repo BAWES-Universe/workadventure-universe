@@ -186,13 +186,16 @@ export function sessionRefused(answer: unknown, args: Record<string, unknown>): 
     const inner = isObject(data) && isObject(data.data) ? data.data : undefined;
     const hasResults = (value: Record<string, unknown> | undefined) => Array.isArray(value?.results) && value.results.length > 0;
     if (hasResults(isObject(data) ? data : undefined) || hasResults(inner)) return false;
-    if (SHOWS_ACTIONS_RAN.test(line)) return false;
-    if (!SESSION_NOT_ACCEPTED.test(line)) return false;
+    // The connector keeps the data of a failed call after its words (`Invalid session id x {"results":...}`): only the words are read here, as
+    // the one retry that uses this is a lookup (search, schemas), which changes nothing and is safe to send again
+    const message = line.replace(/\s[{[][\s\S]*$/, '');
+    if (SHOWS_ACTIONS_RAN.test(message)) return false;
+    if (!SESSION_NOT_ACCEPTED.test(message)) return false;
     // Only a bare refusal: its words are the refusal's own, and a session id named in it is exactly the one that was sent (compared as it is,
     // right after the word "session" or "id"), nothing that could tell of an action or of another session
     // A quoted word is a name, never a refusal's word: it must be the id that was sent, whatever it spells ("unknown" included)
-    for (const [, quoted] of line.matchAll(/["'`]([^"'`]*)["'`]/g)) if (quoted !== id) return false;
-    const words = line.replace(/["'`][^"'`]*["'`]/g, ' ').match(/[A-Za-z0-9_-]+/g) ?? [];
+    for (const [, quoted] of message.matchAll(/["'`]([^"'`]*)["'`]/g)) if (quoted !== id) return false;
+    const words = message.replace(/["'`][^"'`]*["'`]/g, ' ').match(/[A-Za-z0-9_-]+/g) ?? [];
     for (let at = 0; at < words.length; at++) {
         const previous = words[at - 1]?.toLowerCase();
         if (words[at] === id && (previous === 'session' || previous === 'id')) continue;

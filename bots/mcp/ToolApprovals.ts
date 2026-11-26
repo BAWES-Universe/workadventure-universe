@@ -748,7 +748,8 @@ export class ToolApprovals {
             const requestEpoch = this.made.epochOf(this.countKey(botId, roomId, person));
             const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid, { heading: action.heading, callId: claim.attemptId });
             // A batch of actions whose tool answered with its own error may have run some of them: not sure, never "nothing was done"
-            const outcome = isBatchTool(action.toolName) && toolErrorMayHaveRun(result) ? 'uncertain' : outcomeOf(result);
+            // (a single action of an App is run through that batch tool underneath: its card names the action, its entry the batch tool)
+            const outcome = (isBatchTool(action.toolName) || entry.appAction !== undefined) && toolErrorMayHaveRun(result) ? 'uncertain' : outcomeOf(result);
             // What this tap let be made counts in the request, so a later step doesn't ask again for the same ones. A call that
             // proved it made nothing counts for nothing.
             if (madeNew && (outcome === 'succeeded' || outcome === 'uncertain')) {
