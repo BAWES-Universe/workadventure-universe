@@ -146,6 +146,11 @@ export interface ToolServerEntry {
     sharedJob?: { inputs: string[] };
     /** Another App's job of the same name that its owner shared, when this entry (the one the owner is offered) is not shared: it is what someone else is offered instead (#2006). */
     sharedAlt?: { tool: McpToolDefinition; entry: ToolServerEntry };
+    /**
+     * One action of a ready-made App, on a card of its own (game "Ask, Do, Ignore" for Bricks): the entry is its App's batch tool's,
+     * and it runs as a batch of one through `batchTool`.
+     */
+    appAction?: { slug: string; batchTool: string };
 }
 
 // ---------------------------------------------------------------------------

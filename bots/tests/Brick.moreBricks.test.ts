@@ -351,7 +351,7 @@ describe('A reply that made a Brick, or suggests one', () => {
     it('tells the AI service before each answer whether this is a first Brick', async () => {
         const { service, noteBrick } = makeReplies(brickConfig);
         await service.reply(BRICK, person, 'hello', [], { roomId: ROOM });
-        expect(noteBrick).toHaveBeenCalledWith(BRICK, { ownerId: 'user-alice', isDefault: true });
+        expect(noteBrick).toHaveBeenCalledWith(BRICK, { ownerId: 'user-alice', isDefault: true }, 'Brick');
     });
 
     it('carries what the turn did about Bricks with the reply, once, and nothing left from a turn before', async () => {

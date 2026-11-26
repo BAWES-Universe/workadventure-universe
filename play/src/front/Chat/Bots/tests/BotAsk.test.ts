@@ -40,6 +40,18 @@ const FIELD = {
 };
 const notice = (field: unknown) => ({ msgtype: "m.notice", body: "Create a Linear issue?", "universe.ask": field });
 
+describe("a card of a ready-made App's action (Ask, Do, Ignore)", () => {
+    it("reads the Brick, its grant of the App and the App's name, and nothing that is not an id", () => {
+        const app = { botId: "b1", serverId: "g1", name: "Gmail" };
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...FIELD, app }), 50_000)?.app).toEqual(app);
+        expect(readBotAsk(BOT_CHAT_ID, notice(FIELD), 50_000)?.app).toBeUndefined();
+        expect(readBotAsk(BOT_CHAT_ID, notice({ ...FIELD, app: { ...app, botId: "../x" } }), 0)?.app).toBeUndefined();
+        expect(
+            readBotAsk(BOT_CHAT_ID, notice({ ...FIELD, app: { botId: "b1", serverId: "g1" } }), 0)?.app
+        ).toBeUndefined();
+    });
+});
+
 describe("readBotAsk", () => {
     it("reads the card a bot's notice carries and counts its time from when this device got it", () => {
         const ask = readBotAsk(BOT_CHAT_ID, notice(FIELD), 50_000);

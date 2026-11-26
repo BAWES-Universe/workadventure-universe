@@ -27,7 +27,10 @@ import { MCPConnector, REQUEST_TIMEOUT, narrowedToInputs, signInRefusalOf, toolT
 import { toolIssueNote, type ToolIssue } from '../mcp/ToolSignIn';
 import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDelivery } from '../mcp/ToolSignInCard';
 import type { ToolSuggester } from '../mcp/ToolCatalog';
-import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision } from '../mcp/ToolGate';
+import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, type JudgedPart } from '../mcp/ToolGate';
+import type { ToolHeading } from '../mcp/ToolCatalog';
+import { APP_BATCH_TOOL, SCRUBBED_LOOKUPS, appActionEntry, batchOf, isBatchTool, isOffRow, offNote, strictestOf, withoutOff } from '../mcp/AppActions';
+import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
 import { alreadyAskedLine, appNotUsedLine, narrowToReturns, SHARED_FAILED_LINE, ownerNoteText, settleOutcomeOf, type AppUseAnswer, type AppUseCheck, type AppUseContext, type AppUseRequest, type AppUseSettle, type OwnerNote, type SettleOutcome } from '../mcp/AppUse';
@@ -337,6 +340,11 @@ export class AIService {
     private ownerNotes?: (botId: string, note: OwnerNote) => Promise<void>;
     /** The replies only one person saw, where other people were (#1993). */
     private readonly privateAnswers = new PrivateAnswers();
+    /** Sorts a ready-made App's actions that nothing else could, a batch at a time (Orbit #1042). */
+    private readonly appActionSorter = new AppActionSorter(() => {
+        const serviceToken = process.env.BOT_SERVICE_TOKEN;
+        return this.adminApiUrl && serviceToken ? { adminApiUrl: this.adminApiUrl, serviceToken } : null;
+    });
 
     constructor(
         conversationMemory: ConversationMemory,
@@ -449,11 +457,17 @@ export class AIService {
     }
 
     /** The tool server entry for a tool of this bot as it is now, or null. Read from the cached list: no model is asked. */
-    async findToolEntry(botId: string, toolName: string): Promise<ToolServerEntry | null> {
+    async findToolEntry(botId: string, toolName: string, serverId?: string): Promise<ToolServerEntry | null> {
         const adminApiToken = this.adminApiService?.['adminApiToken'];
         if (!adminApiToken) return null;
         const found = await MCPConnector.discoverToolsWithMapping(botId, this.adminApiUrl, adminApiToken, process.env.BOT_SERVICE_TOKEN || '');
-        return found.toolServerMap.get(toolName) ?? null;
+        const entry = found.toolServerMap.get(toolName) ?? null;
+        // A card saved before the server was known (or by another App with a tool of the same name) is not this App's
+        if (entry && (!serverId || entry.serverId === serverId)) return entry;
+        // One action of a ready-made App saved on its own card (game "Ask, Do, Ignore" for Bricks): it runs through that App's batch tool
+        const batch = found.toolServerMap.get(APP_BATCH_TOOL);
+        if (serverId && batch?.readyMade && batch.serverId === serverId && !entry) return appActionEntry(batch, toolName);
+        return null;
     }
 
     /** The tools a bot's Apps give, as the model is offered them, and where each lives. Read from the cached list: no model is asked. Throws when they cannot be listed. */
@@ -475,7 +489,9 @@ export class AIService {
         /** The saved action's heading and this attempt's id, for the check on an App on a connection (#2001). */
         use?: Pick<AppUseRequest, 'heading' | 'callId'>
     ): Promise<unknown> {
-        return this.callMcpTool(entry, toolName, args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
+        // One action of a ready-made App runs as its App's batch of one, as the link expects
+        const call = entry.appAction && toolName === entry.appAction.slug ? { name: entry.appAction.batchTool, args: { tools: [{ tool_slug: toolName, arguments: args }] } } : { name: toolName, args };
+        return this.callMcpTool(entry, call.name, call.args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
     }
 
     /** One call to a tool server's tool, and what comes back made ready for the bot: blobs uploaded, errors as results. */
@@ -628,9 +644,11 @@ export class AIService {
     }
 
     /** What the gate needs to know about one tool call or one tool in the list. */
-    private gateCallFor(botId: string, toolName: string, entry: ToolServerEntry, person: BotAccessPerson, botClient?: BotClient): GateCall {
+    private gateCallFor(botId: string, toolName: string, entry: ToolServerEntry, person: BotAccessPerson, botClient?: BotClient, args?: unknown): GateCall {
+        const botName = this.brickNameOf(botId, botClient);
         return {
             botId,
+            ...(botName ? { botName } : {}),
             toolName,
             ...(entry.title ? { toolTitle: entry.title } : {}),
             serverId: entry.serverId,
@@ -638,6 +656,9 @@ export class AIService {
             person,
             // A voice bot speaking in a bubble: servers that were never checked are not used by voice
             voice: !!botClient?.isVoiceBot?.(),
+            // A ready-made App's batch call is judged by each action inside it (game "Ask, Do, Ignore" for Bricks)
+            ...(args !== undefined ? { args } : {}),
+            ...(entry.readyMade && entry.serverName ? { appName: entry.serverName } : {}),
         };
     }
 
@@ -1733,7 +1754,9 @@ export class AIService {
             const nearbyRule = channel === 'world' && botClient && this.approvals && toolServerMap.size > 0 ? NEARBY_ASK_RULE : '';
             // With "Asks which way to go" on Never the bot says its pick and starts (#1661)
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, forOthers || options?.onlyForThem ? '' : toolIssueNote(toolIssues ?? []), visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers, forOthers && tools.some((tool) => !!toolServerMap.get(tool?.function?.name ?? '')?.sharedJob)) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            // What is Off in each of the owner's ready-made Apps, so the Brick says so and offers what it may do instead of asking for it
+            const appsOff = forOthers || options?.onlyForThem || !botId ? '' : await this.appsOffNote(botId, toolServerMap);
+            const systemPrompt = [basePrompt, nearbyRule, neverAsk, forOthers || options?.onlyForThem ? '' : toolIssueNote(toolIssues ?? []), appsOff, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers, forOthers && tools.some((tool) => !!toolServerMap.get(tool?.function?.name ?? '')?.sharedJob)) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -3774,6 +3797,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 for (const [key, value] of mcpResult.toolServerMap) {
                     if (!instantNames.has(key)) toolServerMap.set(key, value);
                 }
+                // A ready-made App came along: its actions that are still waiting to be sorted are sorted now, on this Brick's own provider
+                // as its own tools are, without making the reply wait
+                if ([...mcpResult.toolServerMap.values()].some((entry) => entry.readyMade)) void this.appActionSorter.maybeSort(this.toolSuggesterFor(providerId, botId));
 
                 // Tools this person can't use are not offered to the model (#1656). The call is checked again when it is made.
                 const offered = new Set<string>();
@@ -3974,7 +4000,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private helperBricks = new Set<string>();
 
-    noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean; ownerId?: string } | undefined): void {
+    noteBrick(botId: string, brick: { isDefault: boolean; deleted?: boolean; ownerId?: string } | undefined, name?: string): void {
+        // Its name, for the words of what it may not do with an App ("Delete for good is off for Sam in Gmail.")
+        if (name?.trim()) this.brickNames.set(botId, name.trim());
         if (brick && !brick.deleted) this.knownBricks.add(botId);
         else this.knownBricks.delete(botId);
         if (brick && !brick.deleted && brick.ownerId) this.brickOwners.set(botId, brick.ownerId);
@@ -3987,6 +4015,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
     /** Every Brick that lives in no room and is not deleted: the ones that may have a computer (game #2000) or reminders (#2002). */
     private ownBricks = new Set<string>();
+    /** The names of the bots this server answered for in direct messages. */
+    private brickNames = new Map<string, string>();
+
+    /** A bot's name as its config says: on the map its client's, in a direct message the one last noted. */
+    private brickNameOf(botId: string, botClient?: BotClient): string | undefined {
+        try {
+            return botClient?.getFullConfig?.()?.name?.trim() || this.brickNames.get(botId);
+        } catch {
+            return this.brickNames.get(botId);
+        }
+    }
     private computerOnCache = new Map<string, { on: boolean; at: number; retry?: RetryJob | null }>();
     /** Where the key of a computer job's start waits while its outcome is open, so a restart of this server finds it (see `ComputerStartKeys`). Set by the server when it has a shared store. */
     private computerStartKeys: StartKeyStore | undefined;
@@ -5302,15 +5341,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const found = toolServerMap?.get(toolCall.name);
                         const mcpServerConfig = forOthers ? (found?.sharedJob && found.connectionId ? found : undefined) : found;
                         if (mcpServerConfig) {
-                            // One check right before the call starts (#1656): the model's list is only a convenience
-                            const verdict = botId
-                                ? await this.toolGate.decide(
-                                      this.gateCallFor(botId, toolCall.name, mcpServerConfig, this.gatePerson(botId, playerId, botClient, spaceName), botClient)
-                                  )
-                                : ({ kind: 'refuse', why: 'cannot_check', line: CANNOT_CHECK_TOOL_LINE } as GateDecision);
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
                                 : toolCall.arguments || {};
+                            // A ready-made App's batch call: each action inside it is judged on its own (game "Ask, Do, Ignore" for Bricks). What
+                            // runs right away runs now, what asks first goes on one card, what is off is never sent. Someone else keeps today's rules.
+                            if (botId && !forOthers && mcpServerConfig.readyMade && isBatchTool(toolCall.name)) {
+                                const split = await this.toolGate.split(this.gateCallFor(botId, toolCall.name, mcpServerConfig, this.gatePerson(botId, playerId, botClient, spaceName), botClient, parsedArgs));
+                                if (split.kind === 'refuse') {
+                                    result = this.toolNotRun(split.decision);
+                                    break;
+                                }
+                                if (split.kind === 'parts') {
+                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, entry: mcpServerConfig, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
+                                    break;
+                                }
+                            }
+                            // One check right before the call starts (#1656): the model's list is only a convenience
+                            const verdict = botId
+                                ? await this.toolGate.decide(
+                                      this.gateCallFor(botId, toolCall.name, mcpServerConfig, this.gatePerson(botId, playerId, botClient, spaceName), botClient, parsedArgs)
+                                  )
+                                : ({ kind: 'refuse', why: 'cannot_check', line: CANNOT_CHECK_TOOL_LINE } as GateDecision);
                             if (verdict.kind === 'refuse') {
                                 result = this.toolNotRun(verdict);
                                 break;
@@ -5385,6 +5437,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
+                            // What a ready-made App's own lookups answer (its search, its schemas) never shows the Brick an action that is Off for it
+                            if (!forOthers && botId && mcpServerConfig.readyMade && SCRUBBED_LOOKUPS.has(toolCall.name.trim().toUpperCase())) {
+                                const policy = await this.toolGate.appPolicy(botId, mcpServerConfig.serverId);
+                                if (policy) result = withoutOff(result, (slug) => isOffRow(policy, slug));
+                            }
                         } else {
                             // Log unknown tool for debugging
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -5500,6 +5557,141 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         });
         // In a bubble the line everyone reads is the bot's whole reply (see the follow-up)
         return asked.kind === 'waiting' && asked.line ? { ...asked.result, [SHARED_LINE]: asked.line } : asked.result;
+    }
+
+    /**
+     * One line per ready-made App on this Brick that has something Off (game "Ask, Do, Ignore" for Bricks): "Off in Gmail: Delete for
+     * good." Empty when nothing is off, or when no App's actions could be read (the gate still refuses what is off). Never throws.
+     */
+    private async appsOffNote(botId: string, toolServerMap: ReadonlyMap<string, ToolServerEntry>): Promise<string> {
+        const apps = new Map<string, string>();
+        for (const entry of toolServerMap.values()) if (entry.readyMade && !apps.has(entry.serverId)) apps.set(entry.serverId, entry.serverName || 'this App');
+        if (apps.size === 0) return '';
+        const lines = await Promise.all([...apps].map(async ([serverId, app]) => {
+            const policy = await this.toolGate.appPolicy(botId, serverId);
+            return policy ? offNote(policy, app) : '';
+        }));
+        const said = lines.filter(Boolean);
+        if (said.length === 0) return '';
+        return `**WHAT YOUR OWNER TURNED OFF IN THEIR APPS:** You can't do these, and you don't ask for them. When asked, say in one plain line that it is off for you, and offer what you can do instead.\n${said.join('\n')}`;
+    }
+
+    /**
+     * A ready-made App's batch call, judged per action (game "Ask, Do, Ignore" for Bricks). Off parts are never sent and are named
+     * in the answer; parts that run right away (or that an "allow more" covers) run now, one batch per heading, so a lent App's
+     * check sees every heading that runs; parts that ask first go on ONE card that holds only them (an action alone on its card can
+     * be allowed again, a card of several cannot). The model gets one answer: what ran, what waits for an OK, what is off. A call
+     * where everything runs right away answers exactly as before.
+     */
+    private async runAppBatch(input: {
+        botId: string;
+        callId: string;
+        toolName: string;
+        entry: ToolServerEntry;
+        args: Record<string, unknown>;
+        parts: JudgedPart[];
+        playerId?: number;
+        playerUuid?: string;
+        botClient?: BotClient;
+        spaceName?: string;
+        abortSignal?: AbortSignal;
+        toolTimeoutSeconds?: number | null;
+    }): Promise<unknown> {
+        const { botId, entry, args, playerId, botClient, spaceName } = input;
+        const notDone: string[] = [];
+        const asking: JudgedPart[] = [];
+        let running: JudgedPart[] = [];
+        for (const part of input.parts) {
+            if (part.decision.kind === 'refuse') {
+                if (!notDone.includes(part.decision.line)) notDone.push(part.decision.line);
+            } else if (part.decision.kind === 'ask') asking.push(part);
+            else running.push(part);
+        }
+        const actionEntry = (part: JudgedPart) => appActionEntry(entry, part.slug, part.title);
+        // Several ask first: one that an "allow more" in this chat covers runs now, as it would alone
+        let waiting = asking;
+        if (asking.length > 1 && this.approvals && playerId !== undefined) {
+            const chat = this.chatCallFor(botId, playerId, botClient, spaceName);
+            if (chat?.person.signedIn && chat.person.identifier) {
+                const nearby = chat.chat.kind === 'nearby';
+                const person = { uuid: chat.person.identifier, name: chat.person.name, ...(nearby ? { playerId } : {}) };
+                const covered = await Promise.all(
+                    asking.map((part) =>
+                        this.approvals!.remembered({ botId, roomId: chat.chat.ref, person, toolName: part.slug, entry: actionEntry(part), args: part.args, decision: part.decision as Extract<GateDecision, { kind: 'ask' }> })
+                    )
+                );
+                running = [...running, ...asking.filter((_, at) => covered[at])].sort((a, b) => a.index - b.index);
+                waiting = asking.filter((_, at) => !covered[at]);
+            }
+        }
+        // What waits goes on one card
+        let asked: Record<string, unknown> | undefined;
+        if (waiting.length === 1) {
+            const part = waiting[0];
+            const answer = await this.askForOk(botId, part.slug, actionEntry(part), part.args, part.decision as Extract<GateDecision, { kind: 'ask' }>, playerId, botClient, spaceName);
+            if (answer.kind === 'run') running = [...running, part].sort((a, b) => a.index - b.index);
+            else asked = answer.result as Record<string, unknown>;
+        } else if (waiting.length > 1) {
+            const first = waiting[0].decision as Extract<GateDecision, { kind: 'ask' }>;
+            const decision = { ...first, heading: strictestOf(waiting.map((part) => part.heading)) };
+            const answer = await this.askForOk(botId, input.toolName, entry, batchOf(args, waiting), decision, playerId, botClient, spaceName);
+            if (answer.kind === 'run') running = [...running, ...waiting].sort((a, b) => a.index - b.index);
+            else asked = answer.result as Record<string, unknown>;
+        }
+        // Each action that makes new things counts toward the bot's "Asks before making more than" on its own
+        const releases: Array<() => void> = [];
+        const heldBack: Record<string, unknown>[] = [];
+        for (const part of [...running]) {
+            if (part.heading !== 'makesNew' || part.decision.kind !== 'run') continue;
+            const counted = await this.checkHowMany(botId, part.slug, actionEntry(part), part.args, part.decision, playerId, botClient, spaceName);
+            if (counted.kind === 'result') {
+                running = running.filter((other) => other !== part);
+                heldBack.push(counted.result as Record<string, unknown>);
+            } else if (counted.release) releases.push(counted.release);
+        }
+        // One batch per heading, in the order they were asked
+        const groups = new Map<ToolHeading, JudgedPart[]>();
+        for (const part of running) groups.set(part.heading, [...(groups.get(part.heading) ?? []), part]);
+        const asker = this.gatePerson(botId, playerId, botClient, spaceName);
+        const results = await Promise.all(
+            [...groups].map(async ([heading, group]) => {
+                const answer = await this.callMcpTool(entry, input.toolName, batchOf(args, group), input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
+                    botId,
+                    callId: groups.size > 1 ? `${input.callId}:${heading}` : input.callId,
+                    heading,
+                    ...(asker.signedIn && asker.identifier ? { requesterKey: asker.identifier } : {}),
+                });
+                return { group, answer };
+            })
+        );
+        // A call that proved it made nothing doesn't count toward the limit
+        if (results.length > 0 && results.every(({ answer }) => ['failed', 'notSent'].includes(outcomeOf(answer)))) for (const release of releases) release();
+        if (!asked && heldBack.length === 0 && notDone.length === 0 && results.length === 1) return results[0].answer;
+        // A card that could not be shown is a part not done, never the whole call failing when other parts ran
+        const cardProblem = (value: Record<string, unknown> | undefined) => (value && typeof value.error === 'string' ? value.error : undefined);
+        const askedProblem = cardProblem(asked);
+        const shown = [asked, ...heldBack].filter((value): value is Record<string, unknown> => !!value && !cardProblem(value));
+        const problems = [askedProblem, ...heldBack.map(cardProblem)].filter((line): line is string => !!line);
+        // The first card shown carries what a bubble reads: one line, the bot's whole reply there
+        const card = shown[0];
+        const titles = (parts: readonly JudgedPart[]) => parts.map((part) => part.title).join(', ');
+        const summary = [
+            results.length > 0 ? `Done now: ${titles(results.flatMap(({ group }) => group))}.` : '',
+            asked && !askedProblem ? `Waiting for the person's OK on a card: ${titles(waiting)}. Nothing of it was done yet.` : '',
+            problems.length > 0 ? `Not done, it needs the person's OK: ${problems.join(' ')}` : '',
+            notDone.length > 0 ? `Not done: ${notDone.join(' ')} Do not ask for ${notDone.length === 1 ? 'it' : 'them'} again; offer what you may still do.` : '',
+        ]
+            .filter(Boolean)
+            .join(' ');
+        return {
+            ...(card ?? {}),
+            summary,
+            ...(results.length === 1 ? { done: results[0].answer } : results.length > 1 ? { done: results.map(({ answer }) => answer) } : {}),
+            ...(shown.length > 1 ? { alsoWaiting: shown.slice(1) } : {}),
+            ...(notDone.length > 0 ? { notDone } : {}),
+            // Nothing ran and nothing waits: the call as a whole did not happen
+            ...(results.length === 0 && !card ? { error: summary, outcome: 'not_sent' } : {}),
+        };
     }
 
     /**

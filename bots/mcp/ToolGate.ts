@@ -25,8 +25,9 @@
 import * as Sentry from '@sentry/node';
 import type { AdminApiService, BotAccessPerson } from '../server/AdminApiService';
 import type { BotAccessGate } from '../server/BotAccessGate';
+import { batchParts, isBatchTool, judgeAction, linkToolHeading, offLine, strictestOf, type BatchPart } from './AppActions';
 import { type ToolHeading } from './ToolCatalog';
-import { ToolPolicySource } from './ToolPolicy';
+import { ToolPolicySource, type ServerPolicy } from './ToolPolicy';
 
 export type GateRefusal = 'cannot_check' | 'not_confirmed' | 'changed' | 'off' | 'no_permission' | 'voice_unchecked';
 
@@ -55,7 +56,30 @@ export interface GateCall {
     person: BotAccessPerson;
     /** A voice bot speaking: servers that were never checked are not used. */
     voice: boolean;
+    /**
+     * What the call is asked with. A ready-made App's batch call is judged by each action inside it (game "Ask, Do, Ignore" for
+     * Bricks): without them it is only offered, never judged as itself.
+     */
+    args?: unknown;
+    /** The App's name, for the words of an App action's refusal ("Delete for good is off for Sam in Gmail."). */
+    appName?: string;
 }
+
+/** One action of a ready-made App's batch call, and what the gate says about it on its own. */
+export interface JudgedPart extends BatchPart {
+    title: string;
+    heading: ToolHeading;
+    decision: GateDecision;
+}
+
+/**
+ * What the gate says about a call as a ready-made App's batch: `whole` when it is not one (the call is judged as itself, with
+ * `decide`), `refuse` when it can't run at all, or each action on its own.
+ */
+export type BatchVerdict = { kind: 'whole' } | { kind: 'refuse'; decision: Extract<GateDecision, { kind: 'refuse' }> } | { kind: 'parts'; parts: JudgedPart[]; policyRevision: number };
+
+/** A batch call with nothing in it to run. */
+export const NOTHING_TO_RUN_LINE = 'That asked for no action of the App, so nothing was done.';
 
 /** The permission a heading needs besides ordinary bot access, if any. */
 const PERMISSION_FOR: Partial<Record<ToolHeading, 'change' | 'deleteOrSend'>> = {
@@ -107,6 +131,9 @@ export class ToolGate {
     private async decideNow(call: GateCall): Promise<GateDecision> {
         const policy = await this.policy.read(call.botId, call.serverId);
 
+        // A ready-made App's grant: its rows are the App's actions, each judged on its own
+        if (policy.kind === 'appActions') return this.decideApp(call, policy);
+
         if (policy.state === 'notCheckedYet') {
             if (call.voice) return refusal('voice_unchecked', `${nameOf(call)} can't be used by voice until this bot's tools have been reviewed.`);
             return { kind: 'run' };
@@ -143,6 +170,80 @@ export class ToolGate {
             return { kind: 'ask', heading, notReviewed: false, policyRevision: policy.policyRevision, fingerprint: tool.fingerprint };
         }
         return { kind: 'run', heading, policyRevision: policy.policyRevision, fingerprint: tool.fingerprint };
+    }
+
+    /**
+     * A ready-made App's batch call, split: each action judged on its own (Off refused, Asks first a card, Right away runs). Never
+     * throws. `whole` for anything else, which `decide` judges.
+     */
+    async split(call: GateCall): Promise<BatchVerdict> {
+        if (!isBatchTool(call.toolName)) return { kind: 'whole' };
+        try {
+            const policy = await this.policy.read(call.botId, call.serverId);
+            if (policy.kind !== 'appActions') return { kind: 'whole' };
+            const parts = batchParts(call.args);
+            if (!parts) return { kind: 'refuse', decision: refusal('off', NOTHING_TO_RUN_LINE) as Extract<GateDecision, { kind: 'refuse' }> };
+            const judged: JudgedPart[] = [];
+            for (const part of parts) judged.push(await this.judgePart(call, policy, part));
+            return { kind: 'parts', parts: judged, policyRevision: policy.policyRevision };
+        } catch (error) {
+            this.report(error);
+            return { kind: 'refuse', decision: refusal('cannot_check', CANNOT_CHECK_TOOL_LINE) as Extract<GateDecision, { kind: 'refuse' }> };
+        }
+    }
+
+    /**
+     * A call on a ready-made App's grant. The link's own lookups run as they are; the batch tool is judged by the actions inside it
+     * (offered when there are none to judge, refused when they can't be read); anything else is judged as an action by its name, as
+     * Orbit's link does: an action saved on its own card, and any other tool of the provider (unknown: its name, else Deletes or sends out).
+     */
+    private async decideApp(call: GateCall, policy: ServerPolicy): Promise<GateDecision> {
+        const linkHeading = linkToolHeading(call.toolName);
+        if (linkHeading) return { kind: 'run', heading: linkHeading, policyRevision: policy.policyRevision, ...(call.fingerprint ? { fingerprint: call.fingerprint } : {}) };
+        if (isBatchTool(call.toolName)) {
+            // Only offered: the call itself brings the actions to judge
+            if (call.args === undefined) return { kind: 'run', policyRevision: policy.policyRevision, ...(call.fingerprint ? { fingerprint: call.fingerprint } : {}) };
+            const parts = batchParts(call.args);
+            if (!parts) return refusal('off', NOTHING_TO_RUN_LINE);
+            const judged: JudgedPart[] = [];
+            for (const part of parts) judged.push(await this.judgePart(call, policy, part));
+            // The whole batch, as a card that holds several actions is checked again: any part that may not run stops it
+            const refused = judged.find((part) => part.decision.kind === 'refuse');
+            if (refused) return refused.decision;
+            const heading = strictestOf(judged.map((part) => part.heading));
+            if (judged.some((part) => part.decision.kind === 'ask')) {
+                const asking = strictestOf(judged.filter((part) => part.decision.kind === 'ask').map((part) => part.heading));
+                return { kind: 'ask', heading: asking, notReviewed: false, policyRevision: policy.policyRevision, fingerprint: call.fingerprint ?? '' };
+            }
+            return { kind: 'run', heading, policyRevision: policy.policyRevision, ...(call.fingerprint ? { fingerprint: call.fingerprint } : {}) };
+        }
+        return (await this.judgePart(call, policy, { slug: call.toolName, args: {}, index: 0, raw: {} })).decision;
+    }
+
+    /** One action of a Brick's App on its own: Off is refused, permissions by heading still count, then Asks first or Right away. */
+    private async judgePart(call: GateCall, policy: ServerPolicy, part: BatchPart): Promise<JudgedPart> {
+        const verdict = judgeAction(policy, part.slug, call.appName);
+        const judged = (decision: GateDecision): JudgedPart => ({ ...part, title: verdict.title, heading: verdict.heading, decision });
+        // A batch inside a batch would hide what it runs, and the link's own tools run no action: neither is asked for inside a batch
+        if (isBatchTool(part.slug) || linkToolHeading(part.slug)) {
+            return judged(refusal('off', `${verdict.title} can't be asked for inside another request. Ask for each action on its own.`));
+        }
+        if (verdict.setting === 'off') return judged(refusal('off', offLine([verdict.title], call.botName || 'this Brick', call.appName || 'this App')));
+        const refused = await this.missingPermission(call, verdict.heading);
+        if (refused) return judged(refused);
+        const fingerprint = call.fingerprint ?? '';
+        if (verdict.setting === 'asksFirst') return judged({ kind: 'ask', heading: verdict.heading, notReviewed: false, policyRevision: policy.policyRevision, fingerprint });
+        return judged({ kind: 'run', heading: verdict.heading, policyRevision: policy.policyRevision, ...(fingerprint ? { fingerprint } : {}) });
+    }
+
+    /** A ready-made App grant's policy as the gate reads it, or null for any other server (or when it can't be read). Never throws. */
+    async appPolicy(botId: string, serverId: string): Promise<ServerPolicy | null> {
+        try {
+            const policy = await this.policy.read(botId, serverId);
+            return policy.kind === 'appActions' ? policy : null;
+        } catch {
+            return null;
+        }
     }
 
     /** Null when the person has what the heading needs; otherwise the refusal. */

@@ -51,6 +51,7 @@
         nextAskChange,
         shownAskPosition,
         type BotAsk,
+        type BotAskApp,
         type BotAskTap,
     } from "../../Bots/BotAsk";
     import { chatSheetLayoutStore, chatSheetSnapStore } from "../../ChatSheetStore";
@@ -595,6 +596,12 @@
     $: shownAsk = waitingAsks[shownAskIndex];
     $: queuedSoonIndex = waitingAsks.findIndex((entry, i) => i !== shownAskIndex && closesSoon(entry.ask, askNow));
     $: askCompact = askBarFits($chatSheetLayoutStore, $chatSheetSnapStore);
+    // "What {brick} may do with {app}" on a card of an App action: only on the viewer's own Brick (game "Ask, Do, Ignore")
+    $: ownBrickIds = new Set(($myBricksStore ?? []).map((brick) => brick.id));
+    function appLinkOf(ask: BotAsk, own: Set<string>): ((app: BotAskApp) => void) | undefined {
+        if (!ask.app || !own.has(ask.app.botId)) return undefined;
+        return (app) => openAppsPage({ brick: { botId: app.botId, serverId: app.serverId } });
+    }
     async function tapAsk(ask: BotAsk, tap: BotAskTap): Promise<boolean> {
         if (!room.answerBotAsk) return false;
         try {
@@ -1709,6 +1716,7 @@
                                     botName={entry.message.sender?.username ?? $roomName}
                                     now={askNow}
                                     onTap={tapAsk}
+                                    onOpenApp={appLinkOf(asked, ownBrickIds)}
                                 />
                             {/if}
                         {:else if (shownOffer?.id === entry.message.id || shownApp?.id === entry.message.id) && brickCard}
@@ -1791,6 +1799,7 @@
                         ask={shownAsk.ask}
                         botName={shownAsk.message.sender?.username ?? $roomName}
                         now={askNow}
+                        onOpenApp={appLinkOf(shownAsk.ask, ownBrickIds)}
                         position={{ at: shownAskIndex + 1, total: waitingAsks.length }}
                         queuedClosingSoon={queuedSoonIndex >= 0
                             ? { at: queuedSoonIndex + 1, total: waitingAsks.length }

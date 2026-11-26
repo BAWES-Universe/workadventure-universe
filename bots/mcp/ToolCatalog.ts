@@ -330,6 +330,8 @@ export interface SavedList {
     knowsCut: boolean;
     truncated: boolean;
     totalSeen: number | null;
+    /** A ready-made App's grant whose rows are the App's own actions (Orbit #1042): Orbit keeps those, and a read list is never saved over them. */
+    appActions?: boolean;
 }
 
 /** The list Orbit keeps for one server now. Throws when Orbit can't be asked. */
@@ -356,6 +358,7 @@ export async function readSavedCatalog(orbit: OrbitConnection, botId: string, se
         knowsCut,
         truncated: knowsCut && response.data.truncated === true,
         totalSeen: knowsCut && Number.isInteger(response.data?.totalSeen) ? response.data.totalSeen : null,
+        ...(response.data?.kind === 'appActions' ? { appActions: true } : {}),
     };
 }
 
@@ -422,6 +425,8 @@ export function syncCatalog(args: {
         } catch (error) {
             return { result: 'skipped', reason: `could not read the saved list: ${(error as Error)?.message ?? error}` };
         }
+        // A ready-made App's rows are its actions, made by Orbit from the App's own list: the link's tools are never sorted or saved over them
+        if (known.appActions) return { result: 'skipped', reason: 'the rows are an App’s actions, kept by Orbit' };
         try {
             const catalog = await buildCatalog(args.raw, args.server, { known: known.tools, ask: args.ask });
             // The same tools are not enough: Orbit also has to say what this read says about the list being cut

@@ -3139,8 +3139,25 @@ export class BotApiService {
 
     /** One server's tools with where each sits, who confirmed it, and the choice under each heading (Orbit #738) */
     async getMcpServerTools(botId: string, serverId: string): Promise<ServerTools> {
+        // `actions=1`: a ready-made App's grant on a Brick comes as the App's own actions (kind "appActions") once Orbit has its list
         const response = await this.fetch(
-            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools`
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools?actions=1`
+        );
+        return readServerTools(await response.json());
+    }
+
+    /** An App action's own choice over its heading's (Right away, Asks first or Off); null follows the heading again. */
+    async setMcpToolSetting(
+        botId: string,
+        serverId: string,
+        toolId: string,
+        setting: Setting | null
+    ): Promise<ServerTools> {
+        const response = await this.fetch(
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(
+                serverId
+            )}/tools/${encodeURIComponent(toolId)}`,
+            { method: "PATCH", body: JSON.stringify({ setting }) }
         );
         return readServerTools(await response.json());
     }

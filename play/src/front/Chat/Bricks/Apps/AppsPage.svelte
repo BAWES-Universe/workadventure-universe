@@ -11,7 +11,7 @@
     import AppRow from "./AppRow.svelte";
     import AppSection from "./AppSection.svelte";
     import AppsShell from "./AppsShell.svelte";
-    import { appPageStart, takeAppPageStart } from "./AppLink";
+    import { appBrickStart, appPageStart, takeAppBrickStart, takeAppPageStart, type AppBrickTarget } from "./AppLink";
     import { appsSearchStart } from "./AppsSearch";
     import { loadMyApps, myAppsFailed, myAppsSettled, myAppsStore } from "./AppsStore";
     import { connectApp } from "./ConnectApp";
@@ -72,6 +72,20 @@
     $: if ($appPageStart !== undefined) {
         openAppId = $appPageStart;
         takeAppPageStart();
+    }
+    // "What {brick} may do with {app}" on a card: once the person's Apps are read, the App that Brick uses opens on its screen
+    let startBrick: AppBrickTarget | undefined;
+    $: if ($appBrickStart !== undefined && apps !== undefined) {
+        const wanted = $appBrickStart;
+        const found = apps.find((one) =>
+            one.bricks.some((brick) => brick.botId === wanted.botId && brick.serverId === wanted.serverId)
+        );
+        takeAppBrickStart();
+        if (found) {
+            openUniverseId = undefined;
+            startBrick = wanted;
+            openAppId = found.id;
+        }
     }
     $: mine = apps ?? [];
     $: connectedApps = mine.filter(isConnectedApp);
@@ -185,7 +199,12 @@
 </script>
 
 {#if openAppId}
-    <AppPage appId={openAppId} onBack={() => (openAppId = undefined)} />
+    <AppPage
+        appId={openAppId}
+        {startBrick}
+        onStartBrickTaken={() => (startBrick = undefined)}
+        onBack={() => (openAppId = undefined)}
+    />
 {:else if openUniverse}
     <TeamAppsPage universe={openUniverse} onBack={() => (openUniverseId = undefined)} />
 {:else}

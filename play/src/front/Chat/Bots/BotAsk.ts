@@ -84,11 +84,22 @@ export interface BotAsk {
     checkAt?: { label: string; url: string };
     /** Only the person who asked sees this card: it came to them alone in nearby chat (#1658), not in a direct message. */
     private?: boolean;
+    /**
+     * A ready-made App's action (game "Ask, Do, Ignore" for Bricks): the Brick, its grant of the App and the App's name, for the
+     * link to what the Brick may do with it. Shown only on the viewer's own Brick, while the card waits.
+     */
+    app?: BotAskApp;
     /** When the card closes, on THIS device's clock. */
     expiresAt: number;
     /** How long a card waits, for "No answer in 10 min". */
     waitMinutes: number;
     answer?: BotAskAnswer;
+}
+
+export interface BotAskApp {
+    botId: string;
+    serverId: string;
+    name: string;
 }
 
 const TITLE_MAX = 200;
@@ -183,6 +194,17 @@ function parseCheckAt(value: unknown): BotAsk["checkAt"] {
     }
 }
 
+const ID = /^[\w-]{1,64}$/;
+
+function parseApp(value: unknown): BotAskApp | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const o = value as Record<string, unknown>;
+    const botId = clip(o.botId, 64);
+    const serverId = clip(o.serverId, 64);
+    const name = clip(o.name, 120);
+    return botId && serverId && name && ID.test(botId) && ID.test(serverId) ? { botId, serverId, name } : undefined;
+}
+
 /**
  * The card a bot's notice carries, or undefined when it has none, is not from a bot or is not one we understand.
  * `receivedAt` is when this device got the notice: the bot server's clock can differ from ours, so the card's expiry
@@ -239,6 +261,7 @@ function parseAskField(field: unknown, receivedAt: number): BotAsk | undefined {
         everyTime: everyTime || undefined,
         notReviewed: o.notReviewed === true || undefined,
         checkAt: parseCheckAt(o.checkAt),
+        app: isQuestion ? undefined : parseApp(o.app),
         expiresAt: receivedAt + (o.expiresAt - o.now),
         waitMinutes,
         answer: parseAnswer(o.answer),

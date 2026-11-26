@@ -751,3 +751,62 @@ describe('answerFor', () => {
         expect(answerFor({ status: 'done' } as SavedAction)).toEqual({ option: 'approve' });
     });
 });
+
+describe("a ready-made App's actions on a Brick (Ask, Do, Ignore)", () => {
+    const GMAIL: ToolServerEntry = { serverId: 'g1', serverUrl: 'https://link.example', authType: 'none', fingerprint: 'fp-batch', serverName: 'Gmail', readyMade: true, orbitUrl: 'https://orbit.example' };
+    const LABEL_ENTRY: ToolServerEntry = { ...GMAIL, title: 'Add label to email', appAction: { slug: 'GMAIL_ADD_LABEL_TO_EMAIL', batchTool: 'COMPOSIO_MULTI_EXECUTE_TOOL' } };
+    const LABEL_ARGS = { message_id: 'm1', label: 'Receipts', note: 'from the shop' };
+    const ASK_LABEL: Extract<GateDecision, { kind: 'ask' }> = { kind: 'ask', heading: 'changesThings', notReviewed: false, policyRevision: 9, fingerprint: 'fp-batch' };
+    const labelInput = (over: Partial<ProposeInput> = {}) => input({ toolName: 'GMAIL_ADD_LABEL_TO_EMAIL', toolTitle: 'Add label to email', entry: LABEL_ENTRY, args: LABEL_ARGS, decision: ASK_LABEL, ...over });
+
+    it('saves one action by its own slug, names the card by it, and links to what the Brick may do with the App', async () => {
+        const t = setup({ entry: LABEL_ENTRY, verdict: ASK_LABEL });
+        await t.approvals.propose(labelInput());
+        expect(t.orbit.actions.get('act_1')).toMatchObject({ toolName: 'GMAIL_ADD_LABEL_TO_EMAIL', connectionRef: 'g1', toolFingerprint: 'fp-batch', arguments: LABEL_ARGS });
+        const card = field(t.sent[0].content);
+        expect(card.title).toBe('Add label to email');
+        expect(card.app).toEqual({ botId: 'b1', serverId: 'g1', name: 'Gmail' });
+    });
+
+    it('checks that action again in its own App before it runs', async () => {
+        const t = setup({ entry: LABEL_ENTRY, verdict: ASK_LABEL });
+        await t.approvals.propose(labelInput());
+        await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(t.find).toHaveBeenCalledWith('b1', 'GMAIL_ADD_LABEL_TO_EMAIL', 'g1');
+        expect(t.decide).toHaveBeenCalledWith(expect.objectContaining({ toolName: 'GMAIL_ADD_LABEL_TO_EMAIL', serverId: 'g1', appName: 'Gmail', args: LABEL_ARGS }));
+        expect(t.run).toHaveBeenCalledWith('b1', LABEL_ENTRY, 'GMAIL_ADD_LABEL_TO_EMAIL', LABEL_ARGS, 'uuid-sara', { callId: 'att_act_1', heading: 'changesThings' });
+    });
+
+    it('runs nothing when the action was turned off since the card was shown', async () => {
+        const t = setup({ entry: LABEL_ENTRY, verdict: ASK_LABEL });
+        await t.approvals.propose(labelInput());
+        t.decide.mockResolvedValue({ kind: 'refuse', why: 'off', line: 'Add label to email is off for Sam in Gmail.' });
+        await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(t.run).not.toHaveBeenCalled();
+        expect(field(t.sent.at(-1)!.content).answer?.result).toBe('Add label to email is off for Sam in Gmail.');
+    });
+
+    it('remembers "allow more" for that action, not for the App’s batch tool', async () => {
+        const t = setup({ entry: LABEL_ENTRY, verdict: ASK_LABEL });
+        await t.approvals.propose(labelInput());
+        await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approveAndRemember' }));
+        await settle();
+        expect(t.orbit.grants.map((grant) => grant.toolName)).toEqual(['GMAIL_ADD_LABEL_TO_EMAIL']);
+        expect(await t.approvals.remembered(labelInput({ args: { ...LABEL_ARGS, note: 'another' } }))).toBe(true);
+        expect(await t.approvals.remembered(labelInput({ toolName: 'GMAIL_MOVE_TO_FOLDER' }))).toBe(false);
+        // Sending or deleting is never remembered
+        expect(await t.approvals.remembered(labelInput({ decision: { ...ASK_LABEL, heading: 'deletesOrSends' } }))).toBe(false);
+    });
+
+    it('offers no "allow more" on a card that holds several actions', async () => {
+        const t = setup({ entry: GMAIL });
+        const args = { tools: [{ tool_slug: 'GMAIL_ADD_LABEL_TO_EMAIL', arguments: LABEL_ARGS }, { tool_slug: 'GMAIL_MOVE_TO_FOLDER', arguments: { folder: 'Archive' } }] };
+        await t.approvals.propose(input({ toolName: 'COMPOSIO_MULTI_EXECUTE_TOOL', entry: GMAIL, args, decision: ASK_LABEL, toolTitle: undefined }));
+        const card = field(t.sent[0].content);
+        expect(card.options.map((option) => option.id)).toEqual(['approve', 'decline']);
+        expect(card.title).toBe('Add label to email and move to folder');
+        expect(t.orbit.actions.get('act_1')!.rememberScope).toBeNull();
+    });
+});

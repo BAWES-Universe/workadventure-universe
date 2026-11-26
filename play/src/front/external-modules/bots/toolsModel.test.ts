@@ -15,6 +15,7 @@ import {
 } from "./toolsModel";
 
 const tool = (over: Partial<ServerTool> & { id: string; name: string }): ServerTool => ({
+    setting: null,
     title: null,
     description: null,
     suggestedHeading: null,

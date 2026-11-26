@@ -6,7 +6,7 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
     const { readable } = await import("svelte/store");
     const en = (await import("../../../../../i18n/en-US/chat")).default as unknown as {
         botAsk: Record<string, string>;
-        brick: { closeCard: string };
+        brick: { closeCard: string; apps: { control: { cardLink: string } } };
     };
     const botAsk = Object.fromEntries(
         Object.entries(en.botAsk).map(([key, text]) => [
@@ -15,7 +15,14 @@ vi.mock("../../../../../i18n/i18n-svelte", async () => {
                 text.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name])),
         ])
     );
-    const brick = { closeCard: () => en.brick.closeCard };
+    const fill =
+        (text: string) =>
+        (values: Record<string, string | number> = {}) =>
+            text.replace(/\{(\w+)(?::\w+)?\}/g, (_, name: string) => String(values[name]));
+    const brick = {
+        closeCard: () => en.brick.closeCard,
+        apps: { control: { cardLink: fill(en.brick.apps.control.cardLink) } },
+    };
     return { default: readable({ chat: { botAsk, brick } }), locale: readable("en-US") };
 });
 
@@ -316,273 +323,310 @@ describe("the card a bot shows before it changes something", () => {
         await show(ask({ answer: { typed: true } }));
         expect(text()).toContain("You typed something else, so nothing was done");
     });
-});
+    describe("the link to what a Brick may do with the card's App (Ask, Do, Ignore)", () => {
+        const app = { botId: "b1", serverId: "g1", name: "Gmail" };
+        const reply = (over: Partial<BotAsk> = {}) =>
+            ask({
+                title: "Reply to an email",
+                actsAs: "Gmail",
+                options: [
+                    { id: "approve", label: "Send reply" },
+                    { id: "decline", label: "Don't send" },
+                ],
+                everyTime: true,
+                app,
+                ...over,
+            });
 
-describe("the question card a bot shows before a big job (#1661)", () => {
-    let target: HTMLElement;
-    let shown: { $destroy: () => void; $set: (props: Record<string, unknown>) => void } | undefined;
-    const onTap = vi.fn();
-
-    const question = (over: Partial<BotAsk> = {}, multiple = false): BotAsk => ({
-        id: "q-1",
-        revision: 1,
-        title: "What should the launch party sound like?",
-        lines: [],
-        options: [],
-        question: {
-            multiple,
-            choices: [
-                { id: "c1", label: "Upbeat pop", line: "3 tracks, about 3 minutes each" },
-                { id: "c2", label: "Lo-fi background", line: "One 20-minute mix to talk over" },
-                { id: "c3", label: "Arabic house" },
-            ],
-        },
-        expiresAt: NOW + 600_000,
-        waitMinutes: 10,
-        ...over,
-    });
-
-    beforeEach(() => {
-        target = document.createElement("div");
-        document.body.appendChild(target);
-        vi.clearAllMocks();
-        onTap.mockResolvedValue(true);
-    });
-    afterEach(() => {
-        shown?.$destroy();
-        shown = undefined;
-        target.remove();
-    });
-
-    async function show(value: BotAsk, props: Record<string, unknown> = {}) {
-        shown = new BotAskCard({ target, props: { ask: value, botName: "Melody", now: NOW, onTap, ...props } });
-        await tick();
-    }
-    const text = () => target.textContent?.replace(/\s+/g, " ") ?? "";
-    const byId = (id: string) => target.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-    const choices = () => [...target.querySelectorAll<HTMLButtonElement>('[data-testid="botAskChoice"]')];
-    const click = async (element: HTMLElement | null) => {
-        element?.click();
-        await tick();
-    };
-
-    it("asks the question with equal choices, each with its short line, and none marked", async () => {
-        await show(question(), { docked: true, position: { at: 1, total: 1 } });
-        expect(text()).toContain("Melody needs your answer");
-        expect(text()).toContain("What should the launch party sound like?");
-        expect(choices().map((choice) => choice.textContent?.replace(/\s+/g, " ").trim())).toEqual([
-            "Upbeat pop 3 tracks, about 3 minutes each",
-            "Lo-fi background One 20-minute mix to talk over",
-            "Arabic house",
-        ]);
-        // No approval options, no details box, no marked choice
-        expect(byId("botAskOption")).toBeNull();
-        expect(byId("botAskDetails")).toBeNull();
-        expect(target.querySelector(".main")).toBeNull();
-        expect(byId("botAskContinue")).toBeNull();
-    });
-
-    it("is answered by one tap, which sends only the card and the id of the choice", async () => {
-        await show(question(), { docked: true });
-        await click(choices()[1]);
-        expect(onTap).toHaveBeenCalledTimes(1);
-        expect(onTap.mock.calls[0][0].id).toBe("q-1");
-        expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["c2"] });
-    });
-
-    it("ignores a second tap while the first is on its way", async () => {
-        onTap.mockReturnValue(
-            new Promise<boolean>(() => {
-                // never answers
-            })
-        );
-        await show(question(), { docked: true });
-        await click(choices()[0]);
-        await click(choices()[1]);
-        expect(onTap).toHaveBeenCalledTimes(1);
-    });
-
-    it("ticks choices when more than one is allowed, and Continue with N sends them in the order shown", async () => {
-        await show(question({}, true), { docked: true });
-        const continueButton = byId("botAskContinue") as HTMLButtonElement;
-        expect(continueButton.textContent?.trim()).toBe("Continue with 0");
-        expect(continueButton.disabled).toBe(true);
-        await click(choices()[2]);
-        await click(choices()[0]);
-        expect(onTap).not.toHaveBeenCalled();
-        expect(choices().map((choice) => choice.getAttribute("aria-checked"))).toEqual(["true", "false", "true"]);
-        expect((byId("botAskContinue") as HTMLButtonElement).textContent?.trim()).toBe("Continue with 2");
-        expect((byId("botAskContinue") as HTMLButtonElement).disabled).toBe(false);
-        await click(byId("botAskContinue"));
-        expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["c1", "c3"] });
-    });
-
-    it("unticks a choice tapped twice", async () => {
-        await show(question({}, true), { docked: true });
-        await click(choices()[0]);
-        await click(choices()[0]);
-        expect(choices()[0].getAttribute("aria-checked")).toBe("false");
-        expect((byId("botAskContinue") as HTMLButtonElement).disabled).toBe(true);
-    });
-
-    it("starts with nothing ticked again when the bot server changes the card", async () => {
-        await show(question({}, true), { docked: true });
-        await click(choices()[0]);
-        shown?.$set({ ask: question({ revision: 2 }, true) });
-        await tick();
-        expect(choices().every((choice) => choice.getAttribute("aria-checked") === "false")).toBe(true);
-    });
-
-    it("says which choice was picked once answered, in the chat", async () => {
-        await show(question({ answer: { picked: ["c1"] } }));
-        expect(text()).toContain("What should the launch party sound like?");
-        expect(byId("botAskPicked")?.textContent).toContain("You picked Upbeat pop");
-        expect(choices()).toHaveLength(0);
-    });
-
-    it("lists more than one picked choice in words", async () => {
-        await show(question({ answer: { picked: ["c1", "c3"] } }, true));
-        expect(byId("botAskPicked")?.textContent).toContain("You picked Upbeat pop and Arabic house");
-    });
-
-    it("says when the answer was typed or said out loud", async () => {
-        await show(question({ answer: { typed: true } }));
-        expect(byId("botAskAnswered")?.textContent).toBe("You answered by typing");
-        shown?.$destroy();
-        await show(question({ answer: { spoken: true } }));
-        expect(byId("botAskAnswered")?.textContent).toBe("You answered out loud");
-        // Not the approval card's "nothing was done": a question only picks a direction
-        expect(text()).not.toContain("nothing was done");
-    });
-
-    it("says no answer in time, with a way to ask again", async () => {
-        await show(question({ expiresAt: NOW - 1 }));
-        expect(text()).toContain("No answer in 10 min, so nothing was done");
-        await click(byId("botAskReviewAgain"));
-        expect(onTap.mock.calls[0][1]).toEqual({ action: "reviewAgain" });
-    });
-
-    it("closes with X and offers more time a minute before the end, like every card", async () => {
-        await show(question({ expiresAt: NOW + 45_000 }), { docked: true });
-        expect(text()).toContain("This card closes in 1 min");
-        await click(byId("botAskMoreTime"));
-        expect(onTap.mock.calls[0][1]).toEqual({ action: "moreTime" });
-        shown?.$destroy();
-        await show(question(), { docked: true });
-        await click(byId("botAskClose"));
-        expect(onTap.mock.calls[1][1]).toEqual({ action: "close" });
-    });
-
-    it("is a slim bar with Open on a short chat, with the question on it", async () => {
-        await show(question(), { docked: true, compact: true });
-        expect(byId("botAskBar")?.textContent).toContain("What should the launch party sound like?");
-        expect(choices()).toHaveLength(0);
-    });
-
-    it("tells the person in nearby chat that only they see it, as every nearby card does", async () => {
-        await show(question({ private: true }), { docked: true });
-        expect(byId("botAskPrivate")?.textContent).toContain("Only you see this card");
-    });
-});
-
-describe("a Brick's own suggestions on the question card (#1995)", () => {
-    let target: HTMLElement;
-    let shown: { $destroy: () => void } | undefined;
-    const onTap = vi.fn();
-    loadLocale("en-US");
-    const LL = i18nObject("en-US");
-
-    beforeEach(() => {
-        target = document.createElement("div");
-        document.body.appendChild(target);
-        vi.clearAllMocks();
-        onTap.mockResolvedValue(true);
-    });
-    afterEach(() => {
-        shown?.$destroy();
-        shown = undefined;
-        target.remove();
-    });
-
-    async function show(value: BotAsk, props: Record<string, unknown> = {}) {
-        shown = new BotAskCard({
-            target,
-            props: {
-                ask: value,
-                botName: "Brick",
-                headLine: LL.chat.brick.suggests({ name: "Brick" }),
-                docked: true,
-                // A day later: the game's own card never runs out
-                now: Date.now() + 24 * 3600 * 1000,
-                onTap,
-                ...props,
-            },
+        it("shows one quiet link under the buttons on the owner's waiting card, and opens the Brick's App screen", async () => {
+            const onOpenApp = vi.fn();
+            await show(reply(), { docked: true, botName: "Nudge", onOpenApp });
+            const link = byId("botAskAppLink");
+            expect(link?.textContent).toBe("What Nudge may do with Gmail");
+            expect(link?.classList.contains("ask-option")).toBe(false);
+            await click(link);
+            expect(onOpenApp).toHaveBeenCalledWith(app);
+            expect(onTap).not.toHaveBeenCalled();
         });
-        await tick();
-    }
-    const text = () => target.textContent?.replace(/\s+/g, " ") ?? "";
-    const byId = (id: string) => target.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-    const choices = () => [...target.querySelectorAll<HTMLButtonElement>('[data-testid="botAskChoice"]')];
-    const click = async (element: HTMLElement | null) => {
-        element?.click();
-        await tick();
-    };
 
-    it("offers the ways to start under the hello, as the Brick's suggestion and not as something it needs", async () => {
-        await show(brickStartersCard(LL));
-        expect(text()).toContain("Brick suggests");
-        expect(text()).not.toContain("needs your answer");
-        expect(text()).toContain("Where shall we start?");
-        expect(choices().map((choice) => choice.textContent?.replace(/\s+/g, " ").trim())).toEqual([
-            "See what I can do A few ideas to start with",
-            "Connect my apps Email, calendar, GitHub and more",
-            "Give me a goal I plan it and keep at it while you're away",
-            "Make another Brick One for a single job, like your recipes",
-        ]);
-        // Nothing to approve, and no clock on it
-        expect(byId("botAskOption")).toBeNull();
-        expect(byId("botAskMoreTime")).toBeNull();
-        expect(text()).not.toContain("closes in");
+        it("is not there for a card of someone else's Brick, a card that is not an App's, or an answered card", async () => {
+            await show(reply(), { docked: true, botName: "Nudge" });
+            expect(byId("botAskAppLink")).toBeNull();
+            shown?.$destroy();
+            await show(reply({ app: undefined }), { docked: true, onOpenApp: vi.fn() });
+            expect(byId("botAskAppLink")).toBeNull();
+            shown?.$destroy();
+            await show(reply({ answer: { option: "approve" } }), { onOpenApp: vi.fn() });
+            expect(byId("botAskAppLink")).toBeNull();
+        });
     });
 
-    it("sends only the starter's id on a tap: the chat sends the person's words", async () => {
-        const card = brickStartersCard(LL);
-        await show(card);
-        await click(choices()[0]);
-        expect(onTap).toHaveBeenCalledTimes(1);
-        expect(onTap.mock.calls[0][0]).toBe(card);
-        expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["ideas"] });
+    describe("the question card a bot shows before a big job (#1661)", () => {
+        let target: HTMLElement;
+        let shown: { $destroy: () => void; $set: (props: Record<string, unknown>) => void } | undefined;
+        const onTap = vi.fn();
+
+        const question = (over: Partial<BotAsk> = {}, multiple = false): BotAsk => ({
+            id: "q-1",
+            revision: 1,
+            title: "What should the launch party sound like?",
+            lines: [],
+            options: [],
+            question: {
+                multiple,
+                choices: [
+                    { id: "c1", label: "Upbeat pop", line: "3 tracks, about 3 minutes each" },
+                    { id: "c2", label: "Lo-fi background", line: "One 20-minute mix to talk over" },
+                    { id: "c3", label: "Arabic house" },
+                ],
+            },
+            expiresAt: NOW + 600_000,
+            waitMinutes: 10,
+            ...over,
+        });
+
+        beforeEach(() => {
+            target = document.createElement("div");
+            document.body.appendChild(target);
+            vi.clearAllMocks();
+            onTap.mockResolvedValue(true);
+        });
+        afterEach(() => {
+            shown?.$destroy();
+            shown = undefined;
+            target.remove();
+        });
+
+        async function show(value: BotAsk, props: Record<string, unknown> = {}) {
+            shown = new BotAskCard({ target, props: { ask: value, botName: "Melody", now: NOW, onTap, ...props } });
+            await tick();
+        }
+        const text = () => target.textContent?.replace(/\s+/g, " ") ?? "";
+        const byId = (id: string) => target.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        const choices = () => [...target.querySelectorAll<HTMLButtonElement>('[data-testid="botAskChoice"]')];
+        const click = async (element: HTMLElement | null) => {
+            element?.click();
+            await tick();
+        };
+
+        it("asks the question with equal choices, each with its short line, and none marked", async () => {
+            await show(question(), { docked: true, position: { at: 1, total: 1 } });
+            expect(text()).toContain("Melody needs your answer");
+            expect(text()).toContain("What should the launch party sound like?");
+            expect(choices().map((choice) => choice.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+                "Upbeat pop 3 tracks, about 3 minutes each",
+                "Lo-fi background One 20-minute mix to talk over",
+                "Arabic house",
+            ]);
+            // No approval options, no details box, no marked choice
+            expect(byId("botAskOption")).toBeNull();
+            expect(byId("botAskDetails")).toBeNull();
+            expect(target.querySelector(".main")).toBeNull();
+            expect(byId("botAskContinue")).toBeNull();
+        });
+
+        it("is answered by one tap, which sends only the card and the id of the choice", async () => {
+            await show(question(), { docked: true });
+            await click(choices()[1]);
+            expect(onTap).toHaveBeenCalledTimes(1);
+            expect(onTap.mock.calls[0][0].id).toBe("q-1");
+            expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["c2"] });
+        });
+
+        it("ignores a second tap while the first is on its way", async () => {
+            onTap.mockReturnValue(
+                new Promise<boolean>(() => {
+                    // never answers
+                })
+            );
+            await show(question(), { docked: true });
+            await click(choices()[0]);
+            await click(choices()[1]);
+            expect(onTap).toHaveBeenCalledTimes(1);
+        });
+
+        it("ticks choices when more than one is allowed, and Continue with N sends them in the order shown", async () => {
+            await show(question({}, true), { docked: true });
+            const continueButton = byId("botAskContinue") as HTMLButtonElement;
+            expect(continueButton.textContent?.trim()).toBe("Continue with 0");
+            expect(continueButton.disabled).toBe(true);
+            await click(choices()[2]);
+            await click(choices()[0]);
+            expect(onTap).not.toHaveBeenCalled();
+            expect(choices().map((choice) => choice.getAttribute("aria-checked"))).toEqual(["true", "false", "true"]);
+            expect((byId("botAskContinue") as HTMLButtonElement).textContent?.trim()).toBe("Continue with 2");
+            expect((byId("botAskContinue") as HTMLButtonElement).disabled).toBe(false);
+            await click(byId("botAskContinue"));
+            expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["c1", "c3"] });
+        });
+
+        it("unticks a choice tapped twice", async () => {
+            await show(question({}, true), { docked: true });
+            await click(choices()[0]);
+            await click(choices()[0]);
+            expect(choices()[0].getAttribute("aria-checked")).toBe("false");
+            expect((byId("botAskContinue") as HTMLButtonElement).disabled).toBe(true);
+        });
+
+        it("starts with nothing ticked again when the bot server changes the card", async () => {
+            await show(question({}, true), { docked: true });
+            await click(choices()[0]);
+            shown?.$set({ ask: question({ revision: 2 }, true) });
+            await tick();
+            expect(choices().every((choice) => choice.getAttribute("aria-checked") === "false")).toBe(true);
+        });
+
+        it("says which choice was picked once answered, in the chat", async () => {
+            await show(question({ answer: { picked: ["c1"] } }));
+            expect(text()).toContain("What should the launch party sound like?");
+            expect(byId("botAskPicked")?.textContent).toContain("You picked Upbeat pop");
+            expect(choices()).toHaveLength(0);
+        });
+
+        it("lists more than one picked choice in words", async () => {
+            await show(question({ answer: { picked: ["c1", "c3"] } }, true));
+            expect(byId("botAskPicked")?.textContent).toContain("You picked Upbeat pop and Arabic house");
+        });
+
+        it("says when the answer was typed or said out loud", async () => {
+            await show(question({ answer: { typed: true } }));
+            expect(byId("botAskAnswered")?.textContent).toBe("You answered by typing");
+            shown?.$destroy();
+            await show(question({ answer: { spoken: true } }));
+            expect(byId("botAskAnswered")?.textContent).toBe("You answered out loud");
+            // Not the approval card's "nothing was done": a question only picks a direction
+            expect(text()).not.toContain("nothing was done");
+        });
+
+        it("says no answer in time, with a way to ask again", async () => {
+            await show(question({ expiresAt: NOW - 1 }));
+            expect(text()).toContain("No answer in 10 min, so nothing was done");
+            await click(byId("botAskReviewAgain"));
+            expect(onTap.mock.calls[0][1]).toEqual({ action: "reviewAgain" });
+        });
+
+        it("closes with X and offers more time a minute before the end, like every card", async () => {
+            await show(question({ expiresAt: NOW + 45_000 }), { docked: true });
+            expect(text()).toContain("This card closes in 1 min");
+            await click(byId("botAskMoreTime"));
+            expect(onTap.mock.calls[0][1]).toEqual({ action: "moreTime" });
+            shown?.$destroy();
+            await show(question(), { docked: true });
+            await click(byId("botAskClose"));
+            expect(onTap.mock.calls[1][1]).toEqual({ action: "close" });
+        });
+
+        it("is a slim bar with Open on a short chat, with the question on it", async () => {
+            await show(question(), { docked: true, compact: true });
+            expect(byId("botAskBar")?.textContent).toContain("What should the launch party sound like?");
+            expect(choices()).toHaveLength(0);
+        });
+
+        it("tells the person in nearby chat that only they see it, as every nearby card does", async () => {
+            await show(question({ private: true }), { docked: true });
+            expect(byId("botAskPrivate")?.textContent).toContain("Only you see this card");
+        });
     });
 
-    it("lists the ideas under the Brick's answer, and a tap picks one", async () => {
-        await show(brickIdeasCard(LL));
-        expect(text()).toContain("Brick suggests");
-        expect(text()).toContain("What shall I take on?");
-        expect(choices().map((choice) => choice.dataset.choice)).toEqual([
-            "brief",
-            "watch",
-            "goal",
-            "write",
-            "web",
-            "file",
-            "think",
-        ]);
-        await click(choices()[5]);
-        expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["file"] });
-    });
+    describe("a Brick's own suggestions on the question card (#1995)", () => {
+        let target: HTMLElement;
+        let shown: { $destroy: () => void } | undefined;
+        const onTap = vi.fn();
+        loadLocale("en-US");
+        const LL = i18nObject("en-US");
 
-    it("closes with X, which is named plainly", async () => {
-        await show(brickStartersCard(LL));
-        expect(byId("botAskClose")?.getAttribute("aria-label")).toBe("Close");
-        await click(byId("botAskClose"));
-        expect(onTap.mock.calls[0][1]).toEqual({ action: "close" });
-    });
+        beforeEach(() => {
+            target = document.createElement("div");
+            document.body.appendChild(target);
+            vi.clearAllMocks();
+            onTap.mockResolvedValue(true);
+        });
+        afterEach(() => {
+            shown?.$destroy();
+            shown = undefined;
+            target.remove();
+        });
 
-    it("is a slim bar on a short chat, in the Brick's name, with the question on it", async () => {
-        await show(brickStartersCard(LL), { compact: true });
-        expect(byId("botAskBar")?.textContent).toContain("Where shall we start?");
-        expect(text()).toContain("Brick suggests");
-        expect(text()).not.toContain("needs your answer");
-        expect(choices()).toHaveLength(0);
+        async function show(value: BotAsk, props: Record<string, unknown> = {}) {
+            shown = new BotAskCard({
+                target,
+                props: {
+                    ask: value,
+                    botName: "Brick",
+                    headLine: LL.chat.brick.suggests({ name: "Brick" }),
+                    docked: true,
+                    // A day later: the game's own card never runs out
+                    now: Date.now() + 24 * 3600 * 1000,
+                    onTap,
+                    ...props,
+                },
+            });
+            await tick();
+        }
+        const text = () => target.textContent?.replace(/\s+/g, " ") ?? "";
+        const byId = (id: string) => target.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        const choices = () => [...target.querySelectorAll<HTMLButtonElement>('[data-testid="botAskChoice"]')];
+        const click = async (element: HTMLElement | null) => {
+            element?.click();
+            await tick();
+        };
+
+        it("offers the ways to start under the hello, as the Brick's suggestion and not as something it needs", async () => {
+            await show(brickStartersCard(LL));
+            expect(text()).toContain("Brick suggests");
+            expect(text()).not.toContain("needs your answer");
+            expect(text()).toContain("Where shall we start?");
+            expect(choices().map((choice) => choice.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+                "See what I can do A few ideas to start with",
+                "Connect my apps Email, calendar, GitHub and more",
+                "Give me a goal I plan it and keep at it while you're away",
+                "Make another Brick One for a single job, like your recipes",
+            ]);
+            // Nothing to approve, and no clock on it
+            expect(byId("botAskOption")).toBeNull();
+            expect(byId("botAskMoreTime")).toBeNull();
+            expect(text()).not.toContain("closes in");
+        });
+
+        it("sends only the starter's id on a tap: the chat sends the person's words", async () => {
+            const card = brickStartersCard(LL);
+            await show(card);
+            await click(choices()[0]);
+            expect(onTap).toHaveBeenCalledTimes(1);
+            expect(onTap.mock.calls[0][0]).toBe(card);
+            expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["ideas"] });
+        });
+
+        it("lists the ideas under the Brick's answer, and a tap picks one", async () => {
+            await show(brickIdeasCard(LL));
+            expect(text()).toContain("Brick suggests");
+            expect(text()).toContain("What shall I take on?");
+            expect(choices().map((choice) => choice.dataset.choice)).toEqual([
+                "brief",
+                "watch",
+                "goal",
+                "write",
+                "web",
+                "file",
+                "think",
+            ]);
+            await click(choices()[5]);
+            expect(onTap.mock.calls[0][1]).toEqual({ action: "pick", choices: ["file"] });
+        });
+
+        it("closes with X, which is named plainly", async () => {
+            await show(brickStartersCard(LL));
+            expect(byId("botAskClose")?.getAttribute("aria-label")).toBe("Close");
+            await click(byId("botAskClose"));
+            expect(onTap.mock.calls[0][1]).toEqual({ action: "close" });
+        });
+
+        it("is a slim bar on a short chat, in the Brick's name, with the question on it", async () => {
+            await show(brickStartersCard(LL), { compact: true });
+            expect(byId("botAskBar")?.textContent).toContain("Where shall we start?");
+            expect(text()).toContain("Brick suggests");
+            expect(text()).not.toContain("needs your answer");
+            expect(choices()).toHaveLength(0);
+        });
     });
 });

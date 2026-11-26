@@ -59,7 +59,8 @@ export interface CardSurface {
 
 /** Finding and running the tool a saved action names, the way a reply does. */
 export interface ToolRunner {
-    find(botId: string, toolName: string): Promise<ToolServerEntry | null>;
+    /** `serverId`: the server the saved action was made for, so a ready-made App's action on its own card is found in that App. */
+    find(botId: string, toolName: string, serverId?: string): Promise<ToolServerEntry | null>;
     /** `use` says which attempt this is and what heading the saved action was under, for the check an App on a connection gets (#2001). */
     run(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string, use: { heading: ToolHeading; callId: string }): Promise<unknown>;
 }
@@ -252,6 +253,31 @@ export class ToolApprovals {
         return run;
     }
 
+    /**
+     * Whether an "allow more" this person gave in this chat covers this call now, without showing any card. For a ready-made App's
+     * batch that holds several actions that ask first: each is looked up on its own. Never throws: not knowing is a no.
+     */
+    async remembered(input: Pick<ProposeInput, 'botId' | 'roomId' | 'person' | 'toolName' | 'entry' | 'args' | 'decision'>): Promise<boolean> {
+        const { decision } = input;
+        if (decision.notReviewed || decision.heading === 'deletesOrSends') return false;
+        try {
+            const nearby = input.person.playerId !== undefined;
+            const grant = await this.deps.orbit.findGrant(input.botId, {
+                requesterKey: input.person.uuid,
+                conversationKey: conversationKeyOf(input.roomId, nearby),
+                connectionRef: input.entry.serverId,
+                toolName: input.toolName,
+                heading: decision.heading,
+                toolFingerprint: decision.fingerprint,
+                policyRevision: decision.policyRevision,
+                arguments: input.args,
+            });
+            return !!grant;
+        } catch {
+            return false;
+        }
+    }
+
     private async proposeNow(input: ProposeInput): Promise<Proposed> {
         const { botId, roomId, person, entry, toolName, args, decision } = input;
         const task = input.task;
@@ -310,6 +336,7 @@ export class ToolApprovals {
                 notReviewed: decision.notReviewed,
                 waitMinutes: wait,
                 ...(words ? { buttons: { approve: words.approve, decline: words.decline } } : said.buttons ? { buttons: said.buttons } : {}),
+                ...appOf(entry, botId),
             };
             const card: Card = { botId, roomId, person, facts, waiting: true, nearby, ...(input.batch ? { batch: input.batch, lineTitle: cardTitle(toolName, input.toolTitle) } : {}) };
             if (nearby) {
@@ -491,13 +518,13 @@ export class ToolApprovals {
             if (!theirs) return null;
         }
         const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
-        const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
+        const entry = await this.deps.tools.find(botId, action.toolName, action.connectionRef ?? undefined).catch(() => null);
         // Whether the tool was never checked is not saved with the action: ask the gate again for a card that still waits,
         // so its warning survives a restart. Whatever it can't tell, the card shows without the warning (as before).
         const notReviewed =
             action.status === 'waiting' && entry && entry.fingerprint === action.toolFingerprint
                 ? await this.deps.gate
-                      .decide(gateCall(botId, action.toolName, entry, person))
+                      .decide(gateCall(botId, action.toolName, entry, person, action.arguments))
                       .then((verdict) => verdict.kind === 'ask' && verdict.notReviewed)
                       .catch(() => false)
                 : false;
@@ -511,6 +538,7 @@ export class ToolApprovals {
             offer: action.rememberScope ? { scope: action.rememberScope, phrase: '' } : null,
             notReviewed,
             waitMinutes: wait,
+            ...(entry ? appOf(entry, botId) : {}),
         };
         const card: Card = { botId, roomId, person, facts, waiting: action.status === 'waiting', nearby };
         this.keep(id, card);
@@ -627,9 +655,9 @@ export class ToolApprovals {
         const { botId, roomId, person } = card;
         const action = await this.deps.orbit.read(botId, id);
         if (!action || action.requesterKey !== person.uuid || action.status !== 'closed' || action.closedReason === 'declined') return;
-        const entry = await this.deps.tools.find(botId, action.toolName);
+        const entry = await this.deps.tools.find(botId, action.toolName, action.connectionRef ?? undefined);
         const stale = !entry || entry.fingerprint !== action.toolFingerprint;
-        const checked = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person));
+        const checked = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person, action.arguments));
         // A card before making more than the limit comes from a tool that runs right away: it asks again as it did
         // A goal's card for a step that makes, sends or deletes asks again too: its run never does those by itself
         const taskCard = !!taskItemOf(action.conversationKey);
@@ -698,8 +726,8 @@ export class ToolApprovals {
             };
 
             // The checks that count are the ones right before the call: the tool, the person and the settings as they are now
-            const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
-            const verdict = entry && entry.fingerprint === action.toolFingerprint ? await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person)) : null;
+            const entry = await this.deps.tools.find(botId, action.toolName, action.connectionRef ?? undefined).catch(() => null);
+            const verdict = entry && entry.fingerprint === action.toolFingerprint ? await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person, action.arguments)) : null;
             if (!entry || !verdict) return void (await finish('notSent', { result: 'The tool changed since, so nothing was done.' }, 'failed'));
             if (verdict.kind === 'refuse') return void (await finish('notSent', { result: verdict.line }, 'failed'));
             // A card before making more than the limit comes from a tool that runs right away, so its verdict is a run
@@ -1056,8 +1084,12 @@ function errorLine(result: unknown): string {
     return typeof text === 'string' && text ? text.slice(0, 300) : 'It did not work, so nothing was done.';
 }
 
+/** A ready-made App's card links to what the Brick may do with that App (game "Ask, Do, Ignore" for Bricks). */
+const appOf = (entry: ToolServerEntry, botId: string): { app?: { botId: string; serverId: string; name: string } } =>
+    entry.readyMade && entry.serverName ? { app: { botId, serverId: entry.serverId, name: entry.serverName } } : {};
+
 /** The gate's question for a saved call: the same person, in a direct message, with the tool as it is now. */
-function gateCall(botId: string, toolName: string, entry: ToolServerEntry, person: Asker): GateCall {
+function gateCall(botId: string, toolName: string, entry: ToolServerEntry, person: Asker, args?: Record<string, unknown>): GateCall {
     return {
         botId,
         toolName,
@@ -1066,6 +1098,9 @@ function gateCall(botId: string, toolName: string, entry: ToolServerEntry, perso
         ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {}),
         person: { signedIn: true, identifier: person.uuid },
         voice: false,
+        // A card that holds several actions of a ready-made App is judged again by each of them (game "Ask, Do, Ignore" for Bricks)
+        ...(args !== undefined ? { args } : {}),
+        ...(entry.readyMade && entry.serverName ? { appName: entry.serverName } : {}),
     };
 }
 

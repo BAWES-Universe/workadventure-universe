@@ -5,6 +5,7 @@
         closesSoon,
         looksLikeData,
         type BotAsk,
+        type BotAskApp,
         type BotAskDecision,
         type BotAskTap,
     } from "../../Bots/BotAsk";
@@ -47,6 +48,11 @@
     export let onNext: () => void = () => undefined;
     export let onShowQueued: () => void = () => undefined;
     export let onOpen: () => void = () => undefined;
+    /**
+     * Opens what the Brick may do with the card's App (game "Ask, Do, Ignore" for Bricks). Given only for a card of the viewer's
+     * own Brick; the quiet link under the buttons shows while the card waits.
+     */
+    export let onOpenApp: ((app: BotAskApp) => void) | undefined = undefined;
 
     // A new card, or the same card after the bot server changed it, starts folded and ready for a tap
     let showAll = false;
@@ -292,6 +298,17 @@
                         </button>
                     {/each}
                 </div>
+            {/if}
+            {#if !question && shown.app && onOpenApp}
+                {@const cardApp = shown.app}
+                <button
+                    type="button"
+                    class="ask-app"
+                    dir="auto"
+                    data-testid="botAskAppLink"
+                    on:click={() => onOpenApp?.(cardApp)}
+                    >{$LL.chat.brick.apps.control.cardLink({ brick: botName, app: cardApp.name })}</button
+                >
             {/if}
             {#if queuedClosingSoon}
                 <div class="ask-row">
@@ -648,6 +665,25 @@
         align-items: center;
         justify-content: space-between;
         gap: 8px;
+    }
+    /* What the Brick may do with the card's App: a quiet link under the buttons, never one of them */
+    .ask-app {
+        align-self: center;
+        min-height: 44px;
+        margin: 0;
+        padding: 0 8px;
+        border: 0;
+        background: transparent;
+        font: inherit;
+        font-size: 13.5px;
+        color: #c9b8ff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        cursor: pointer;
+    }
+    .ask-app:focus-visible {
+        outline: 2px solid #a78bfa;
+        outline-offset: 2px;
     }
     .ask-small {
         align-self: flex-start;

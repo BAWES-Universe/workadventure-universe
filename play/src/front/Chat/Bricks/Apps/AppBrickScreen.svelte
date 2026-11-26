@@ -5,7 +5,7 @@
     import BotToolsServerScreen from "../../../external-modules/bots/components/BotToolsServerScreen.svelte";
     import PageNote from "../../../external-modules/bots/components/page/PageNote.svelte";
     import { botApiService } from "../../../external-modules/bots/services/BotApiService";
-    import { beginBot, setServers } from "../../../external-modules/bots/stores/BotToolsStore";
+    import { beginBot, botToolsStore, setServers } from "../../../external-modules/bots/stores/BotToolsStore";
     import type { BotData } from "../../../external-modules/bots/types";
     import type { Heading } from "../../../external-modules/bots/toolsModel";
     import AppsShell from "./AppsShell.svelte";
@@ -13,7 +13,9 @@
     /**
      * What one of the person's Bricks may do with one app (game #2001): today's screen for an app on a bot, right away, asks
      * first or off for each of the four things, and its tools under each. Opened from the arrow on the Brick's row on the app's
-     * page; back goes to that page. The screens are the bot page's own, so a change here is the same change there.
+     * page; back goes to that page. The screens are the bot page's own, so a change here is the same change there. A ready-made
+     * App's own actions (game "Ask, Do, Ignore") open them in App mode: "{app} for {brick}", each heading by its name, and a
+     * choice per action.
      */
     export let botId: string;
     export let botName: string;
@@ -27,6 +29,11 @@
     let heading: Heading | "unsorted" | undefined;
 
     $: bot = { id: botId, name: botName } as BotData;
+    $: held = $botToolsStore && $botToolsStore.botId === botId ? $botToolsStore : undefined;
+    $: actions = held?.tools[serverId]?.kind === "appActions";
+    $: control = $LL.chat.brick.apps.control;
+    $: brickTitle = actions ? control.title({ app: appName, brick: botName }) : botName;
+    $: headingTitle = heading ? $LL.mapEditor.edit.bots.page.tools.headings[heading].title() : "";
 
     onMount(() => {
         // Claim the tools store for this Brick before asking, so another page's slow answer never takes it back
@@ -45,16 +52,16 @@
 </script>
 
 <AppsShell
-    title={heading ? appName : botName}
-    backLabel={heading ? botName : appName}
+    title={heading ? (actions ? headingTitle : appName) : brickTitle}
+    backLabel={heading ? brickTitle : appName}
     onBack={heading ? () => (heading = undefined) : onBack}
     testId="appBrickScreen"
 >
     {#if ready}
         {#if heading}
-            <BotToolsHeadingScreen {bot} {serverId} {heading} />
+            <BotToolsHeadingScreen {bot} {serverId} {heading} appMode />
         {:else}
-            <BotToolsServerScreen {bot} {serverId} onOpenHeading={(next) => (heading = next)} onGone={onBack} />
+            <BotToolsServerScreen {bot} {serverId} appMode onOpenHeading={(next) => (heading = next)} onGone={onBack} />
         {/if}
     {:else if failed}
         <PageNote>{text.loadFailed()}</PageNote>

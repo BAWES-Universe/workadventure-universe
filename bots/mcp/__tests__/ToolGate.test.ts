@@ -16,9 +16,9 @@ const SETTINGS: Record<ToolHeading, ToolSetting> = { looksUp: 'rightAway', makes
 function policy(overrides: Partial<Omit<ServerPolicy, 'tools'>> & { tools?: Array<[string, Partial<PolicyTool>]> } = {}): ServerPolicy {
     const { tools: given = [], ...rest } = overrides;
     const tools = new Map<string, PolicyTool>(
-        given.map(([name, tool]) => [name, { name, fingerprint: 'fp', heading: 'looksUp', suggestedHeading: null, confirmed: true, ...tool }])
+        given.map(([name, tool]) => [name, { name, fingerprint: 'fp', heading: 'looksUp', suggestedHeading: null, confirmed: true, setting: null, ...tool }])
     );
-    return { serverId: 's1', state: 'confirmed', policyRevision: 7, settings: SETTINGS, ...rest, tools };
+    return { serverId: 's1', kind: 'tools', state: 'confirmed', policyRevision: 7, settings: SETTINGS, ...rest, tools };
 }
 
 const MEMBER = { signedIn: true, identifier: 'mishari' };
@@ -235,5 +235,116 @@ describe('offers', () => {
         expect(await gate.offers(call({ toolName: 'look' }))).toBe(true);
         expect(await gate.offers(call({ toolName: 'edit' }))).toBe(true);
         expect(await gate.offers(call({ toolName: 'make' }))).toBe(false);
+    });
+});
+
+describe("a ready-made App's actions on a Brick (Ask, Do, Ignore)", () => {
+    const APP_SETTINGS: Record<ToolHeading, ToolSetting> = { looksUp: 'rightAway', makesNew: 'rightAway', changesThings: 'asksFirst', deletesOrSends: 'asksFirst' };
+    const gmail = (tools: Array<[string, Partial<PolicyTool>]> = [], settings = APP_SETTINGS) =>
+        policy({
+            kind: 'appActions',
+            settings,
+            tools: [
+                ['GMAIL_FETCH_EMAILS', { heading: 'looksUp', title: 'Fetch emails', fingerprint: 'row-1' }],
+                ['GMAIL_CREATE_EMAIL_DRAFT', { heading: 'makesNew', title: 'Create email draft', fingerprint: 'row-2' }],
+                ['GMAIL_ADD_LABEL_TO_EMAIL', { heading: 'changesThings', title: 'Add label to email', fingerprint: 'row-3' }],
+                ['GMAIL_REPLY_TO_THREAD', { heading: 'deletesOrSends', title: 'Reply to thread', fingerprint: 'row-4' }],
+                ['GMAIL_DELETE_MESSAGE', { heading: 'deletesOrSends', title: 'Delete message', fingerprint: 'row-5' }],
+                ...tools,
+            ],
+        });
+    const batch = (...slugs: string[]) => ({ tools: slugs.map((slug) => ({ tool_slug: slug, arguments: { id: slug } })), thought: 'x' });
+    const appCall = (overrides: Partial<GateCall> = {}) => call({ toolName: 'COMPOSIO_MULTI_EXECUTE_TOOL', fingerprint: 'fp-batch', botName: 'Sam', appName: 'Gmail', ...overrides });
+
+    it('offers the batch tool and runs the link’s own lookups, never asking for a review', async () => {
+        const { gate, check } = gateFor(gmail());
+        expect(await gate.decide(appCall())).toMatchObject({ kind: 'run' });
+        expect(await gate.decide(appCall({ toolName: 'COMPOSIO_SEARCH_TOOLS' }))).toMatchObject({ kind: 'run', heading: 'looksUp' });
+        expect(await gate.decide(appCall({ toolName: 'UNIVERSE_CODE_JOB_START' }))).toMatchObject({ kind: 'run', heading: 'looksUp' });
+        expect(await gate.decide(appCall({ toolName: 'COMPOSIO_MANAGE_CONNECTIONS' }))).toMatchObject({ kind: 'run', heading: 'changesThings' });
+        expect(check).not.toHaveBeenCalled();
+    });
+
+    it('judges any other tool of the provider on the link as an unknown action: its name, else Deletes or sends out', async () => {
+        const { gate } = gateFor(gmail());
+        expect(await gate.decide(appCall({ toolName: 'COMPOSIO_REMOTE_WORKBENCH' }))).toMatchObject({ kind: 'ask', heading: 'deletesOrSends' });
+        const off = gateFor(gmail([], { ...APP_SETTINGS, deletesOrSends: 'off' }));
+        expect(await off.gate.decide(appCall({ toolName: 'COMPOSIO_REMOTE_WORKBENCH' }))).toMatchObject({ kind: 'refuse', why: 'off' });
+    });
+
+    it('splits a batch: reads run, what asks first asks, what is Off is refused with its words', async () => {
+        const off = gmail([], { ...APP_SETTINGS, deletesOrSends: 'asksFirst' });
+        off.tools.get('GMAIL_DELETE_MESSAGE')!.setting = 'off';
+        const { gate } = gateFor(off);
+        const split = await gate.split(appCall({ args: batch('GMAIL_FETCH_EMAILS', 'GMAIL_REPLY_TO_THREAD', 'GMAIL_DELETE_MESSAGE') }));
+        expect(split.kind).toBe('parts');
+        const parts = (split as Extract<typeof split, { kind: 'parts' }>).parts;
+        expect(parts.map((part) => [part.slug, part.decision.kind])).toEqual([
+            ['GMAIL_FETCH_EMAILS', 'run'],
+            ['GMAIL_REPLY_TO_THREAD', 'ask'],
+            ['GMAIL_DELETE_MESSAGE', 'refuse'],
+        ]);
+        expect((parts[2].decision as { line: string }).line).toBe('Delete message is off for Sam in Gmail.');
+        expect(parts[1].decision).toMatchObject({ heading: 'deletesOrSends', notReviewed: false, policyRevision: 7, fingerprint: 'fp-batch' });
+    });
+
+    it('takes an action’s own choice over its heading’s, both ways', async () => {
+        const served = gmail();
+        served.tools.get('GMAIL_REPLY_TO_THREAD')!.setting = 'rightAway';
+        served.tools.get('GMAIL_FETCH_EMAILS')!.setting = 'asksFirst';
+        const { gate } = gateFor(served);
+        const split = (await gate.split(appCall({ args: batch('GMAIL_FETCH_EMAILS', 'GMAIL_REPLY_TO_THREAD') }))) as Extract<Awaited<ReturnType<ToolGate['split']>>, { kind: 'parts' }>;
+        expect(split.parts.map((part) => part.decision.kind)).toEqual(['ask', 'run']);
+    });
+
+    it('judges an action with no row by its name, else as Deletes or sends out', async () => {
+        const { gate } = gateFor(gmail([], { ...APP_SETTINGS, deletesOrSends: 'off' }));
+        const split = (await gate.split(appCall({ args: batch('GMAIL_SEND_EMAIL', 'GMAIL_SOMETHING_NEW') }))) as Extract<Awaited<ReturnType<ToolGate['split']>>, { kind: 'parts' }>;
+        expect(split.parts.map((part) => [part.heading, part.decision.kind])).toEqual([
+            ['deletesOrSends', 'refuse'],
+            ['deletesOrSends', 'refuse'],
+        ]);
+    });
+
+    it('still needs the permission an action’s heading needs, whatever its setting', async () => {
+        const served = gmail();
+        served.tools.get('GMAIL_REPLY_TO_THREAD')!.setting = 'rightAway';
+        const { gate } = gateFor(served, { allowed: (action) => action !== 'deleteOrSend' });
+        const split = (await gate.split(appCall({ args: batch('GMAIL_FETCH_EMAILS', 'GMAIL_REPLY_TO_THREAD') }))) as Extract<Awaited<ReturnType<ToolGate['split']>>, { kind: 'parts' }>;
+        expect(split.parts.map((part) => part.decision.kind)).toEqual(['run', 'refuse']);
+        expect((split.parts[1].decision as { why: string }).why).toBe('no_permission');
+    });
+
+    it('never judges a batch inside a batch as an action', async () => {
+        const { gate } = gateFor(gmail());
+        const split = (await gate.split(appCall({ args: batch('COMPOSIO_MULTI_EXECUTE_TOOL') }))) as Extract<Awaited<ReturnType<ToolGate['split']>>, { kind: 'parts' }>;
+        expect(split.parts[0].decision.kind).toBe('refuse');
+    });
+
+    it('refuses a batch with nothing in it, and leaves any other call whole', async () => {
+        const { gate } = gateFor(gmail());
+        expect(await gate.split(appCall({ args: { tools: [] } }))).toMatchObject({ kind: 'refuse' });
+        expect(await gate.split(appCall({ toolName: 'COMPOSIO_SEARCH_TOOLS', args: {} }))).toEqual({ kind: 'whole' });
+        const own = gateFor(policy());
+        expect(await own.gate.split(appCall({ args: batch('GMAIL_FETCH_EMAILS') }))).toEqual({ kind: 'whole' });
+    });
+
+    it('judges a card of several actions again as a whole: any part that may not run now stops it', async () => {
+        const served = gmail();
+        const { gate } = gateFor(served);
+        expect(await gate.decide(appCall({ args: batch('GMAIL_REPLY_TO_THREAD', 'GMAIL_ADD_LABEL_TO_EMAIL') }))).toMatchObject({ kind: 'ask', heading: 'deletesOrSends' });
+        served.tools.get('GMAIL_ADD_LABEL_TO_EMAIL')!.setting = 'off';
+        expect(await gate.decide(appCall({ args: batch('GMAIL_REPLY_TO_THREAD', 'GMAIL_ADD_LABEL_TO_EMAIL') }))).toMatchObject({ kind: 'refuse', why: 'off' });
+    });
+
+    it('judges one action saved on its own card by its slug', async () => {
+        const { gate } = gateFor(gmail());
+        expect(await gate.decide(appCall({ toolName: 'GMAIL_ADD_LABEL_TO_EMAIL' }))).toMatchObject({ kind: 'ask', heading: 'changesThings', fingerprint: 'fp-batch' });
+        expect(await gate.decide(appCall({ toolName: 'GMAIL_FETCH_EMAILS' }))).toMatchObject({ kind: 'run', heading: 'looksUp' });
+    });
+
+    it('lets nothing through when Orbit can’t be asked', async () => {
+        const { gate } = gateFor(new ToolPolicyUnavailable());
+        expect(await gate.split(appCall({ args: batch('GMAIL_FETCH_EMAILS') }))).toMatchObject({ kind: 'refuse', decision: { why: 'cannot_check' } });
     });
 });
