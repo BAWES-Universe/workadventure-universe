@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { onDestroy } from "svelte";
     import { fly } from "svelte/transition";
     import { closeModal } from "svelte-modals";
     import LL from "../../../i18n/i18n-svelte";
@@ -26,6 +27,8 @@
     export let messageAt: number | null = null;
 
     let busy = false;
+    let gone = false;
+    onDestroy(() => (gone = true));
     let problem: "failed" | "too_late" | null = null;
     let sendingWords = false;
     let wordsProblem: "failed" | "too_late" | null = null;
@@ -56,8 +59,10 @@
         problem = null;
         takeBackReport(report.id, report.key)
             .then((outcome) => {
-                if (outcome === "taken") closeModal();
-                else problem = outcome;
+                // Closed only while this sheet is the one open: one closed meanwhile (another opened since) never closes that other
+                if (outcome === "taken") {
+                    if (!gone && isOpen) closeModal();
+                } else problem = outcome;
             })
             .catch(() => (problem = "failed"))
             .finally(() => (busy = false));

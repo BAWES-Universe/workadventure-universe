@@ -142,6 +142,42 @@ describe('The send_to_universe_team tool', () => {
         }
     });
 
+    it('an App that writes its failure as text, with no error flag, failed; text that worked did not', () => {
+        expect(failureOf([{ type: 'text', text: 'Error: the sheet was not found' }])).toBe('failed');
+        expect(failureOf({ content: [{ type: 'text', text: 'Error: Unauthorized, sign in again' }] })).toBe('signed_out');
+        expect(failureOf([{ type: 'text', text: 'Here are your three rows' }])).toBeNull();
+        expect(failureOf({ content: [{ type: 'text', text: 'Done' }] })).toBeNull();
+    });
+
+    it('the note names the App that ran the call, not the first one listed under its tool name', () => {
+        const other = '6e2d3c4b-2222-4333-8444-a55566667777';
+        const turn = newReportTurn('$event-1');
+        const sources = { apps: new Map([['Blue_Plover_binder_open', { connectionId: CONNECTION }]]), offered: new Set(['Blue_Plover_binder_open']) };
+        noteWhatRan(turn, [{ name: 'Blue_Plover_binder_open', result: { error: 'boom' }, ranOn: other }], sources);
+        noteWhatRan(turn, [{ name: 'Blue_Plover_binder_open', result: { error: 'boom' }, ranOn: null }], sources);
+        noteWhatRan(turn, [{ name: 'Blue_Plover_binder_open', result: { error: 'boom' } }], sources);
+        expect(turn.steps.map((step) => step.appConnectionId)).toEqual([other, undefined, CONNECTION]);
+    });
+
+    it('a note that did not go is never sent again in the same reply, and counts toward the reply\'s notes', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const lost = context();
+        lost.admin.sendBrickReport.mockRejectedValue(new Error('socket hang up'));
+        const first = await runReportTool(args, lost);
+        expect(first).toMatchObject({ sent: false, uncertain: true });
+        expect(await runReportTool(args, lost)).toEqual(first);
+        expect(lost.admin.sendBrickReport).toHaveBeenCalledTimes(2);
+        const refused = context();
+        refused.admin.sendBrickReport.mockResolvedValue({ sent: false, reason: 'refused' });
+        await runReportTool(args, refused);
+        await runReportTool(args, refused);
+        expect(refused.admin.sendBrickReport).toHaveBeenCalledTimes(1);
+        // Two notes that did not go fill the reply: a third is not sent
+        await runReportTool({ kind: 'idea', area: 'chat', effect: 'idea' }, refused);
+        expect(await runReportTool({ kind: 'cant_do', area: 'voice', effect: 'stopped' }, refused)).toMatchObject({ note: expect.stringContaining('Enough notes') });
+        expect(refused.admin.sendBrickReport).toHaveBeenCalledTimes(2);
+    });
+
     it('reads how a step ended from its answer, never from its content', () => {
         expect(failureOf({ text: 'Your meeting with Dr. Smith was not allowed to move' })).toBeNull();
         expect(failureOf('All good')).toBeNull();
@@ -518,6 +554,22 @@ describe('A note in a Brick\'s direct message', () => {
         await failed.bridge.onEvent(invite());
         await failed.bridge.onEvent(message('Draft an issue'));
         expect(notTold).not.toHaveBeenCalled();
+    });
+
+    it('a third person who joined while the reply was made never gets the note\'s key or draft words, and it is not confirmed', async () => {
+        const { bridge, client, deps } = makeBridge();
+        const reportsDelivered = vi.fn(async () => undefined);
+        const BOB = '@bob:matrix.test';
+        deps.reply.mockImplementation(async () => {
+            await bridge.onEvent({ type: 'm.room.member', room_id: ROOM, sender: BOB, event_id: '$join-bob', state_key: BOB, content: { membership: 'join' } } as MatrixEvent);
+            return { text: 'Sent to the Universe team: Failed: read_page.', media: [], bricks: [note], reportsDelivered };
+        });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('Draft an issue'));
+        const sent = JSON.stringify([...client.sendMessage.mock.calls, ...client.sendText.mock.calls]);
+        expect(sent).not.toContain('key-1');
+        expect(sent).not.toContain('Links inside pages do not open');
+        expect(reportsDelivered).not.toHaveBeenCalled();
     });
 
     it('an answer with no note sends plain words, as before', async () => {

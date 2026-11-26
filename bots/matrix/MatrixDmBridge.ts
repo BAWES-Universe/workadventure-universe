@@ -2201,7 +2201,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
             let wordsEvent: string | undefined;
             // The notes this reply sent to the Universe team ride on its words, whichever card the words carry too
             const reports = reply.bricks?.flatMap((note) => (note.kind === 'report' ? [{ id: note.id, key: note.key, kind: note.noteKind, area: note.area, title: note.title, failure: note.failure, retried: note.retried, ...(note.wordsDraft ? { wordsDraft: note.wordsDraft } : {}), sentAt: note.sentAt }] : [])) ?? [];
-            const reportField = reports.length > 0 ? { [BRICK_REPORTS_KEY]: reports } : {};
+            // Checked right before the words go (no wait between): a third person who joined while the reply was made must never get a note's
+            // take-back key or the person's draft words. Then the notes go without them and are not confirmed, so Orbit withdraws them
+            const reportsHere = reports.length > 0 && this.stillTheirs(event.room_id, botUserId, person.matrixUserId) ? reports : [];
+            const reportField = reportsHere.length > 0 ? { [BRICK_REPORTS_KEY]: reportsHere } : {};
             if (reply.roomLink && reply.text) {
                 // A reply that names the bot's room carries it, so the game shows a card to go there.
                 wordsEvent = await out.sendMessage(botUserId, event.room_id, {
@@ -2217,7 +2220,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 // The Bricks this reply made: the game shows a line for each, one tap from its chat (#1996)
                 const made = reply.bricks.flatMap((note) => (note.kind === 'made' ? [{ id: note.id, name: note.name, line: note.line, look: note.look, made: note.made }] : []));
                 wordsEvent = await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_MADE_KEY]: made, ...reportField });
-            } else if (reply.text && reports.length > 0) {
+            } else if (reply.text && reportsHere.length > 0) {
                 wordsEvent = await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, ...reportField });
             } else if (reply.text) {
                 wordsEvent = await out.sendText(botUserId, event.room_id, reply.text);
@@ -2231,7 +2234,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             if (wordsEvent) await hooks?.answered?.(wordsEvent);
             // The receipts of this reply's notes to the Universe team rode on that event: Orbit is told once, so it keeps them (a note whose
             // receipt never got out, the send suppressed or failed, is withdrawn by Orbit after 15 minutes, like Take it back)
-            if (wordsEvent && reports.length > 0) void reply.reportsDelivered?.();
+            if (wordsEvent && reportsHere.length > 0) void reply.reportsDelivered?.();
             // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
             // the card goes out: once per person and topic on every device, so a second device racing it sends none.
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;

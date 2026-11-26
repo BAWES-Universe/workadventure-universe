@@ -89,3 +89,33 @@ describe("the person's words and what became of a note", () => {
         expect(await new BotApiService().brickReportStatus("note-1", "key-1234567890abcdef")).toBeNull();
     });
 });
+
+/** An answer whose body never ends still fails in time: the body is read within the deadline (CodeRabbit). */
+describe("an answer from Orbit that never finishes", () => {
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    it("takes back, sends words and reads a note's status as failed once the deadline passes", async () => {
+        vi.useFakeTimers();
+        const stalled = () =>
+            ({
+                ok: true,
+                json: () =>
+                    new Promise<never>(() => {
+                        // never ends
+                    }),
+            } as unknown as Response);
+        vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(stalled()));
+        const api = new BotApiService();
+        api.initialize(GUEST, ORBIT, "room-1", "https://bots.test");
+        const takeBack = api.takeBackBrickReport("note-1", "key-1234567890abcdef");
+        const words = api.addBrickReportWords("note-1", "key-1234567890abcdef", "Links do nothing");
+        const status = api.brickReportStatus("note-1", "key-1234567890abcdef");
+        await vi.advanceTimersByTimeAsync(20_001);
+        expect(await takeBack).toBe("failed");
+        expect(await words).toEqual({ outcome: "failed" });
+        expect(await status).toBeNull();
+    });
+});

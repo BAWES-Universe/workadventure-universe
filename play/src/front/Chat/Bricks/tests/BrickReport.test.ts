@@ -269,6 +269,30 @@ describe("the line under the answer and what was sent", () => {
         line.remove();
     });
 
+    it("a take-back that ends after its sheet was closed, and another opened, never closes that other sheet", async () => {
+        let finish: (outcome: "taken") => void = () => undefined;
+        game.takeBack.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        const first = new BrickReportSheet({ target, props: { isOpen: true, report, messageAt: NOW }, intro: false });
+        await settle();
+        byId("brickReportTakeBack")?.click();
+        // Sheet A is closed while Orbit is still asked, and sheet B opens
+        first.$destroy();
+        part = new BrickReportSheet({
+            target,
+            props: { isOpen: true, report: { ...report, id: "note-other" }, messageAt: NOW },
+            intro: false,
+        });
+        finish("taken");
+        await settle();
+        expect(game.closeModal).not.toHaveBeenCalled();
+        expect(byId("brickReportSheet")).not.toBeNull();
+    });
+
     it("says when taking it back did not work, and when it is too late", async () => {
         game.takeBack.mockResolvedValueOnce("failed").mockResolvedValueOnce("too_late");
         part = new BrickReportSheet({ target, props: { isOpen: true, report, messageAt: NOW }, intro: false });

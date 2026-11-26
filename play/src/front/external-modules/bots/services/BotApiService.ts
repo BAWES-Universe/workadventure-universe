@@ -712,16 +712,21 @@ export class BotApiService {
         const adminUrl = this.adminUrl;
         if (!adminUrl) return "failed";
         try {
-            const response = await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, (signal) =>
-                fetch(`${adminUrl}/api/me/brick-reports/take-back`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    credentials: "omit",
-                    body: JSON.stringify({ id, key }),
-                    signal,
-                })
+            // The answer's body is read within the deadline too: headers that come with a body that never ends still fail in time
+            const data = await this.withDeadline(
+                "Orbit did not answer in time",
+                BRICK_WRITE_TIMEOUT_MS,
+                async (signal) => {
+                    const response = await fetch(`${adminUrl}/api/me/brick-reports/take-back`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "omit",
+                        body: JSON.stringify({ id, key }),
+                        signal,
+                    });
+                    return (await response.json()) as { takenBack?: unknown; reason?: unknown };
+                }
             );
-            const data = (await response.json()) as { takenBack?: unknown; reason?: unknown };
             if (data.takenBack === true) return "taken";
             return data.reason === "too_late" ? "too_late" : "failed";
         } catch {
@@ -764,17 +769,18 @@ export class BotApiService {
         const adminUrl = this.adminUrl;
         if (!adminUrl) return null;
         try {
-            const response = await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, (signal) =>
-                fetch(`${adminUrl}/api/me/brick-reports/${route}`, {
+            // The answer's body is read within the deadline too: headers that come with a body that never ends still fail in time
+            return await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, async (signal) => {
+                const response = await fetch(`${adminUrl}/api/me/brick-reports/${route}`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     credentials: "omit",
                     body: JSON.stringify(body),
                     signal,
-                })
-            );
-            if (!response.ok) return null;
-            return (await response.json()) as T;
+                });
+                if (!response.ok) return null;
+                return (await response.json()) as T;
+            });
         } catch {
             return null;
         }

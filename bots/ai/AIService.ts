@@ -5091,6 +5091,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // A note to the Universe team can be about a step of this same round: it waits until the round's other calls ended and were recorded
         let othersRecorded: () => void = () => undefined;
         const othersRan = new Promise<void>((resolve) => (othersRecorded = resolve));
+        // Which App ran each call (its connection), by call: the note names that App, not the first one listed under the tool's name
+        const ranOn = new Map<string, string | null>();
 
         // Execute all tool calls in parallel for better performance
         const toolPromises = validToolCalls.map(async (toolCall) => {
@@ -5535,6 +5537,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const mcpServerConfig = shareable && botId && !forOthers
                             ? await this.appForLinkTool(botId, toolCall.name, shareable, this.gatePerson(botId, playerId, botClient, spaceName), botClient, parsedArgs)
                             : shareable;
+                        if (mcpServerConfig) ranOn.set(toolCall.id, mcpServerConfig.connectionId ?? null);
                         if (mcpServerConfig) {
                             // A ready-made App's batch call: each action inside it is judged on its own (game "Ask, Do, Ignore" for Bricks). What
                             // runs right away runs now, what asks first goes on one card, what is off is never sent. Someone else keeps today's rules.
@@ -5545,6 +5548,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 if (split.kind === 'parts') {
+                                    // The Apps that ran a part: one, or none named when parts ran on more than one
+                                    const ran = new Set(split.parts.filter((part) => part.decision.kind !== 'refuse').map((part) => part.entry.connectionId ?? null));
+                                    ranOn.set(toolCall.id, ran.size === 1 ? [...ran][0] : null);
                                     result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
                                     break;
                                 }
@@ -5662,7 +5668,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Each step this round ran (never a note itself), kept for a note later in this round or this reply
         const recorded = Promise.all(toolPromises.filter((_, index) => validToolCalls[index].name !== REPORT_TOOL))
             .then((results) => {
-                if (reportTurn && reportSources) noteWhatRan(reportTurn, results, reportSources);
+                if (reportTurn && reportSources) noteWhatRan(reportTurn, results.map((ran) => (ranOn.has(ran.id) ? { ...ran, ranOn: ranOn.get(ran.id) } : ran)), reportSources);
             })
             .finally(othersRecorded);
 

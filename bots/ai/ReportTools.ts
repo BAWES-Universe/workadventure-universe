@@ -117,12 +117,24 @@ export interface StepSources {
 /** The words a tool's answer gives for why it did not work, if it did not; never its content. */
 function failureWords(result: unknown): string | null {
     if (typeof result === 'string') return /^\s*(error|failed)\b/i.test(result) ? result.slice(0, 400) : null;
-    if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+    // An App's answer as content (its text items): a failure it writes as text, with no isError, is still a failure
+    if (Array.isArray(result)) return contentFailure(result);
+    if (!result || typeof result !== 'object') return null;
     const r = result as Record<string, unknown>;
     const failed = r.error !== undefined && r.error !== null && r.error !== false ? true : r.success === false || r.ok === false || r.isError === true;
-    if (!failed) return null;
+    if (!failed) return Array.isArray(r.content) ? contentFailure(r.content) : null;
     const why = [r.error, r.message, r.note, r.code, r.status].filter((part) => typeof part === 'string' || typeof part === 'number').join(' ');
     return why || 'failed';
+}
+
+/** The first text item of an App's content that says it failed (the same rule as a plain text answer); null when none does. */
+function contentFailure(content: unknown[]): string | null {
+    for (const item of content) {
+        const text = item && typeof item === 'object' && (item as { type?: unknown }).type === 'text' ? (item as { text?: unknown }).text : undefined;
+        const why = typeof text === 'string' ? failureWords(text) : null;
+        if (why) return why;
+    }
+    return null;
 }
 
 /** How a step ended, from its answer: null when it worked. Only the kind of failure is kept, never what it said. */
@@ -138,10 +150,16 @@ export function failureOf(result: unknown): ReportFailure | null {
 }
 
 /** Keeps what one round's tools were and how they ended (never what they gave back), for notes later in this reply. */
-export function noteWhatRan(turn: ReportTurn, results: Array<{ name: string; result: unknown }>, sources: StepSources): void {
-    for (const { name, result } of results) {
+export function noteWhatRan(
+    turn: ReportTurn,
+    results: Array<{ name: string; result: unknown; ranOn?: string | null }>,
+    sources: StepSources
+): void {
+    for (const { name, result, ranOn } of results) {
         if (!name || isReportTool(name)) continue;
-        const app = sources.apps.get(name);
+        const listed = sources.apps.get(name);
+        // The App that ran the call when the bot server knows it (several Apps can share a tool name; null: more than one ran a part), else the one listed
+        const app = listed && ranOn !== undefined ? { connectionId: ranOn ?? undefined } : listed;
         let operation: string;
         let appConnectionId: string | undefined;
         // An Instant App is an App too: its tool name carries its maker's name and an id, never a note's words
@@ -186,6 +204,9 @@ export interface ReportToolContext {
 
 /** Per reply (its list of notes), the notes being sent this moment, by reference, each with what the Brick is told once Orbit answers. */
 const sending = new WeakMap<BrickNote[], Map<string, Promise<Record<string, unknown>>>>();
+
+/** Per reply, the notes that did not go (refused, taken back, not confirmed), by reference, with what the Brick was told: never sent again in that reply. */
+const notSent = new WeakMap<BrickNote[], Map<string, Record<string, unknown>>>();
 
 const NOT_CONFIRMED =
     'Could not confirm the note reached the Universe team. Do not send it again in this reply and never say it was sent; if the person asked you to report it, say in one short sentence that you could not confirm it went.';
@@ -236,14 +257,23 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
         const first = sentAlready().find((note) => note.ref === ref);
         return first && draftWords && !first.wordsDraft ? addDraftWords(first, report, context) : ALREADY_SENT;
     }
-    if (sentAlready().length + flying.size >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
+    // A note that did not go is not sent again in this reply, as the Brick was told; it still counts toward the reply's notes
+    const failed = context.notes ? (notSent.get(context.notes) ?? new Map<string, Record<string, unknown>>()) : new Map<string, Record<string, unknown>>();
+    const toldBefore = failed.get(ref);
+    if (toldBefore) return toldBefore;
+    if (sentAlready().length + flying.size + failed.size >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
 
     // Held before Orbit is asked, so a call beside this one sees it and waits for what it is told; let go once the answer is in
     const answer = sendNew(report, context);
     flying.set(ref, answer);
     if (context.notes) sending.set(context.notes, flying);
     try {
-        return await answer;
+        const told = await answer;
+        if (told.sent !== true && context.notes) {
+            failed.set(ref, told);
+            notSent.set(context.notes, failed);
+        }
+        return told;
     } finally {
         flying.delete(ref);
     }
