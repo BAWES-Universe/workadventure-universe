@@ -176,6 +176,9 @@ jobs:
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
           NO_FLAKY: false
+          # These are the production images: built with the legacy browser plugin, which polyfills
+          # structuredClone (see tests/tests/browser_not_supported.spec.ts).
+          UNIVERSE_LEGACY_BROWSER_BUILD: true
 
       - name: Display docker compose logs on failure
         if: failure()

@@ -6,6 +6,14 @@ import { isMobile } from './utils/isMobile';
 test.describe('Browser Not Supported Page', () => {
     test.beforeEach(async ({ page }) => {
         test.skip(isMobile(page), 'Skip on mobile devices');
+        // The Universe production client is built with the legacy browser plugin on
+        // (play/vite.config.mts: polyfills web.structured-clone, for Safari < 15.4). The bundle puts
+        // structuredClone back, so a missing structuredClone never reaches the "not supported" page.
+        // Fast builds (dev and PR images) have no polyfill, and keep running this test.
+        test.skip(
+            process.env.UNIVERSE_LEGACY_BROWSER_BUILD === 'true',
+            'The Universe production build polyfills structuredClone on purpose'
+        );
     });
 
     test('should display browser not supported page when structuredClone is not available', async ({
