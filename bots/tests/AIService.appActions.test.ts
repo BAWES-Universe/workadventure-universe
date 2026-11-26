@@ -480,3 +480,16 @@ describe('reading each action’s outcome from a batch answer', () => {
         expect(batchOutcomes(text({ successful: false, error: 'partial' }), slugs, 'succeeded')).toEqual(['uncertain', 'uncertain']);
     });
 });
+
+describe('an action not sorted yet that its owner turned Off', () => {
+    it('is named in the Off note and taken out of lookups, as the gate refuses it', async () => {
+        const { offNote, isOffRow, judgeAction } = await import('../mcp/AppActions');
+        const policy = gmailPolicy();
+        policy.tools.set('GMAIL_ARCHIVE_THREAD', { name: 'GMAIL_ARCHIVE_THREAD', title: 'Archive thread', heading: null, fingerprint: 'row-a', suggestedHeading: null, confirmed: false, setting: 'off' } as never);
+        expect(judgeAction(policy, 'GMAIL_ARCHIVE_THREAD').setting).toBe('off');
+        expect(isOffRow(policy, 'gmail_archive_thread')).toBe(true);
+        expect(offNote(policy, 'Gmail')).toContain('Archive thread');
+        // One left to its heading still follows it
+        expect(isOffRow(policy, 'GMAIL_FETCH_EMAILS')).toBe(false);
+    });
+});

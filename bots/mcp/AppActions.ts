@@ -149,10 +149,8 @@ const HEADING_WORDS: Record<ToolHeading, string> = {
  */
 export function offNote(policy: Pick<ServerPolicy, 'tools' | 'settings'>, app: string): string {
     const off: string[] = [];
-    for (const tool of policy.tools.values()) {
-        if (!tool.heading) continue;
-        if ((tool.setting ?? policy.settings[tool.heading]) === 'off') off.push(tool.title || actionName(tool.name, app));
-    }
+    // The same verdict the gate gives: a row's own choice, else its heading's (an unsorted row's by its name)
+    for (const tool of policy.tools.values()) if (judgeAction(policy, tool.name, app).setting === 'off') off.push(tool.title || actionName(tool.name, app));
     const wholeHeadings = (Object.keys(HEADING_WORDS) as ToolHeading[]).filter((heading) => policy.settings[heading] === 'off');
     if (off.length === 0 && wholeHeadings.length === 0) return '';
     const names = off.slice(0, OFF_NAMES_MAX);
@@ -170,10 +168,8 @@ export const SCRUBBED_LOOKUPS: ReadonlySet<string> = new Set(['COMPOSIO_SEARCH_T
 /** Whether a slug is one of the grant's own actions and is Off for it (only a known action is ever taken out of an answer). */
 export function isOffRow(policy: Pick<ServerPolicy, 'tools' | 'settings'>, slug: string): boolean {
     const key = slugKey(slug);
-    for (const tool of policy.tools.values()) {
-        if (slugKey(tool.name) !== key || !tool.heading) continue;
-        return (tool.setting ?? policy.settings[tool.heading]) === 'off';
-    }
+    // Judged as the gate judges it, so what is refused at the call is never offered in a lookup either
+    for (const tool of policy.tools.values()) if (slugKey(tool.name) === key) return judgeAction(policy, tool.name).setting === 'off';
     return false;
 }
 
