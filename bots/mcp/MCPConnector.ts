@@ -1001,7 +1001,9 @@ export class MCPConnector {
             // The name is taken by another App. The owner keeps the first, as always; but a job another App's owner shared under this name is kept
             // aside, so someone else asking is still offered it and does not lose it to an App that shares nothing (#2006)
             const first = toolServerMap.get(tool.function.name);
-            if (first?.readyMade && server.readyMade === true && server.orbitUrl && first.serverId !== server.id && !first.otherApps?.some((other) => other.serverId === server.id)) {
+            // Each ready-made App is kept beside the first, whichever server answered first (they answer in no fixed order): its actions
+            // still go through it
+            if (first && server.readyMade === true && server.orbitUrl && first.serverId !== server.id && !first.otherApps?.some((other) => other.serverId === server.id)) {
                 (first.otherApps ??= []).push(entryFor(tool, server, title, raw));
             }
             const shared = server.connectionId ? entryFor(tool, server, title, raw) : undefined;
@@ -1073,7 +1075,7 @@ export class MCPConnector {
                 }
                 void MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest, read.cut).then((outcome) => {
                     // Orbit did not get the list: forget it here too, so the next read tries to save it again (not in an hour)
-                    if (outcome.result === 'skipped' && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
+                    if (outcome.result === 'skipped' && !outcome.ownedByOrbit && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
                 });
             } else {
                 console.warn(
@@ -1168,7 +1170,7 @@ export class MCPConnector {
         cut?: ToolListCut | null
     ): Promise<SyncResult> {
         return syncCatalog({ orbit, botId, serverId: server.id, server, raw, cut, ask }).then((outcome) => {
-            if (outcome.result === 'skipped') console.warn(`[MCPConnector] Tool list of ${server.name} (${server.id}) not saved: ${outcome.reason}`);
+            if (outcome.result === 'skipped' && !outcome.ownedByOrbit) console.warn(`[MCPConnector] Tool list of ${server.name} (${server.id}) not saved: ${outcome.reason}`);
             else if (outcome.result === 'saved' && outcome.saved.changed.length > 0) {
                 console.log(`[MCPConnector] ${outcome.saved.changed.length} tool(s) of ${server.name} changed and wait to be confirmed again`);
             }
@@ -1221,7 +1223,7 @@ export class MCPConnector {
         });
         const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest, read.cut);
         // Orbit did not get it: the next read tries to save it again
-        if (saved.result === 'skipped' && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
+        if (saved.result === 'skipped' && !saved.ownedByOrbit && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
         return { read: true, tools: raw.length, saved };
     }
 

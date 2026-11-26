@@ -255,6 +255,16 @@ describe('saving the list to Orbit', () => {
         expect(await syncCatalog({ orbit: ORBIT, botId: 'bot1', serverId: 'srv1', server: SERVER, raw })).toMatchObject({ result: 'skipped' });
     });
 
+    it('saves nothing over an App’s actions, and says Orbit keeps them rather than that the save failed', async () => {
+        http.get.mockResolvedValue({ data: { kind: 'appActions', tools: [] } });
+        const outcome = await syncCatalog({ orbit: ORBIT, botId: 'bot1', serverId: 'app1', server: SERVER, raw });
+        expect(outcome).toMatchObject({ result: 'skipped', ownedByOrbit: true });
+        expect(http.put).not.toHaveBeenCalled();
+        // A save that failed is never taken for that
+        http.get.mockRejectedValue(new Error('down'));
+        expect(await syncCatalog({ orbit: ORBIT, botId: 'bot1', serverId: 'app1', server: SERVER, raw })).not.toHaveProperty('ownedByOrbit');
+    });
+
     it('shares one run between saves of the same server at once', async () => {
         http.get.mockResolvedValue({ data: { tools: [] } });
         http.put.mockResolvedValue(saved());

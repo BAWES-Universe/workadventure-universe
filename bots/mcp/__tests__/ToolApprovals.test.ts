@@ -369,6 +369,18 @@ describe('Create (approve)', () => {
         expect(s.orbit.actions.size).toBe(2);
     });
 
+    it('shows a card for each App grant when two grants ask the same action with the same inputs', async () => {
+        const other = { ...ENTRY, serverId: 's2' };
+        await s.approvals.propose(input());
+        await s.approvals.propose(input({ entry: other }));
+        expect(s.orbit.actions.size).toBe(2);
+        expect(s.sent).toHaveLength(2);
+        // At the very same moment too: one question per grant
+        const [a, b] = await Promise.all([s.approvals.propose(input({ args: { team: 'WEB', title: 'y' } })), s.approvals.propose(input({ args: { team: 'WEB', title: 'y' }, entry: other }))]);
+        expect([a.kind, b.kind]).toEqual(['waiting', 'waiting']);
+        expect(s.orbit.actions.size).toBe(4);
+    });
+
     it('shows one card for the same call asked twice at the very same moment', async () => {
         const [a, b] = await Promise.all([s.approvals.propose(input()), s.approvals.propose(input())]);
         expect(a.kind).toBe('waiting');

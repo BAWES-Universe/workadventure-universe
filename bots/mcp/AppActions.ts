@@ -260,3 +260,67 @@ export function withoutOff(result: unknown, isOff: (slug: string) => boolean): u
     }
     return result;
 }
+
+/** What happened to one action of a batch call, in the words of `outcomeOf`. */
+export type PartOutcome = 'succeeded' | 'failed' | 'notSent' | 'uncertain';
+
+/** The batch answer as data: an object, the JSON text of one, or the MCP text parts that carry it. */
+function answerData(answer: unknown): Record<string, unknown> | undefined {
+    if (isObject(answer)) {
+        if (Array.isArray(answer.content)) return answerData(answer.content);
+        return answer;
+    }
+    if (typeof answer === 'string') {
+        const text = answer.trim();
+        if (!text.startsWith('{')) return undefined;
+        try {
+            const value: unknown = JSON.parse(text);
+            return isObject(value) ? value : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+    if (Array.isArray(answer)) {
+        for (const part of answer) {
+            const found = isObject(part) && part.type === 'text' ? answerData(part.text) : undefined;
+            if (found) return found;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Each action's own outcome in a batch call that answered (the provider's documented shape: `{ successful, error?, data: {
+ * results: [{ index, tool_slug, response?, error? }] } }`, results in the order they were sent). An action whose result carries an
+ * error, or that has no result in a list that has some, is not known to be done. An answer whose shape can't be read keeps the
+ * call's own outcome for every action, as before. `slugs` are the actions as sent, in order.
+ */
+export function batchOutcomes(answer: unknown, slugs: readonly string[], whole: PartOutcome): PartOutcome[] {
+    if (whole !== 'succeeded') return slugs.map(() => whole);
+    const data = answerData(answer);
+    const inner = data && isObject(data.data) ? data.data : data;
+    const results = inner?.results;
+    if (!Array.isArray(results)) {
+        // No list to read: an answer that says it was not successful is not known to be done
+        return slugs.map(() => (data?.successful === false ? 'uncertain' : 'succeeded'));
+    }
+    const outcomes: PartOutcome[] = slugs.map(() => 'uncertain');
+    const taken = new Set<number>();
+    results.forEach((item, position) => {
+        if (!isObject(item)) return;
+        const slug = typeof item.tool_slug === 'string' ? slugKey(item.tool_slug) : undefined;
+        const at =
+            typeof item.index === 'number' && Number.isInteger(item.index) && item.index >= 0 && item.index < slugs.length && (!slug || slugKey(slugs[item.index]) === slug)
+                ? item.index
+                : slug
+                ? slugs.findIndex((one, i) => !taken.has(i) && slugKey(one) === slug)
+                : position < slugs.length && !taken.has(position)
+                ? position
+                : -1;
+        if (at < 0 || taken.has(at)) return;
+        taken.add(at);
+        const failed = (typeof item.error === 'string' && item.error.trim() !== '') || item.successful === false;
+        outcomes[at] = failed ? 'uncertain' : 'succeeded';
+    });
+    return outcomes;
+}
