@@ -165,6 +165,9 @@ const ABOUT_THE_BOT = /(?<![\p{L}\p{N}])(?:you|your|yours|you['’]re|you['’]v
 const CONTACT = /@|https?:\/\/|www\.|\d{5,}/u;
 
 /** The thing itself out of what follows "like": cut where another clause starts, and without the words that only add to it. */
+/** Two words or more, each with a capital ("No Doubt", "One Piece", "It Follows"): a name of something, even when it starts with a word that alone is no thing ("no", "one", "it"). */
+const ATITLE = /^\p{Lu}[\p{L}\p{N}'’-]*(?:\s+\p{Lu}[\p{L}\p{N}'’-]*)+$/u;
+
 function thingOf(rest: string): string | null {
     let phrase = rest
         .split(/\s*(?:[;:()]|,\s*(?:thanks|thank you|thx|please|pls|lol|haha|honestly|though|ok|okay|really|btw)\b|\s[-–—]\s|\b(?:but|because|since|so|though|although|except|unless|when|whenever|if|which|that|and then)\b)/iu)[0]
@@ -172,7 +175,7 @@ function thingOf(rest: string): string | null {
         .trim()
         .replace(/[\s,.!?…"'`“”]+$/u, '');
     if (!phrase || phrase.length > MAX_PHRASE_CHARS || phrase.split(/\s+/u).length > MAX_PHRASE_WORDS) return null;
-    if (NOT_A_THING.test(phrase) || ABOUT_THE_BOT.test(phrase) || CONTACT.test(phrase)) return null;
+    if ((NOT_A_THING.test(phrase) && !ATITLE.test(phrase)) || ABOUT_THE_BOT.test(phrase) || CONTACT.test(phrase)) return null;
     // A word or two with a letter in it
     if (!/\p{L}/u.test(phrase)) return null;
     return phrase;
