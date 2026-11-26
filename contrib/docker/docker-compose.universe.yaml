@@ -11,6 +11,13 @@ services:
     image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/play-universe:${VERSION}
   back:
     image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/back-universe:${VERSION}
+    # back/Dockerfile.universe health-checks http://localhost:80/ping (and EXPOSEs 80), while the app's own
+    # default is 8080. Without this the container runs fine but is reported unhealthy and
+    # `docker compose up` aborts with "dependency failed to start: container docker-back-1 is unhealthy".
+    environment:
+      - HTTP_PORT=80
+    labels:
+      traefik.http.services.back.loadbalancer.server.port: "80"
   uploader:
     image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/uploader-universe:${VERSION}
   map-storage:
