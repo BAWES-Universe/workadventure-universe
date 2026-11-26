@@ -31,7 +31,7 @@ import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, typ
 import type { ToolHeading } from '../mcp/ToolCatalog';
 import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
-import { isJoinedLookup, joinLookupAnswers, lookupRequests } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, sessionRefused, withoutSession } from '../mcp/AppLookups';
 import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
@@ -522,6 +522,28 @@ export class AIService {
         return this.callMcpTool(entry, call.name, call.args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
     }
 
+    /**
+     * One call to an App's link tool, tried once more without the session it carried when its link refused that session. With several Apps
+     * the model carries the session id one App's link gave (a joined search keeps the oldest App's) to another App's link, which may not
+     * know it. Only a refusal that names the session is tried again, and only without the session: what was asked, and what the person
+     * approved, is the same call. The retry is its own try (its own call id).
+     */
+    private async callWithSessionFallback(
+        entry: ToolServerEntry,
+        toolName: string,
+        args: Record<string, unknown>,
+        playerUuid: string | undefined,
+        abortSignal: AbortSignal | undefined,
+        toolTimeoutSeconds: number | null | undefined,
+        use: AppUseRequest & { botId: string; forOthers?: boolean }
+    ): Promise<any> {
+        const answer = await this.callMcpTool(entry, toolName, args, playerUuid, abortSignal, toolTimeoutSeconds, use);
+        if (!sessionRefused(answer)) return answer;
+        const bare = withoutSession(args);
+        if (!bare) return answer;
+        return this.callMcpTool(entry, toolName, bare, playerUuid, abortSignal, toolTimeoutSeconds, { ...use, callId: `${use.callId}:no-session` });
+    }
+
     /** One call to a tool server's tool, and what comes back made ready for the bot: blobs uploaded, errors as results. */
     private async callMcpTool(
         entry: ToolServerEntry,
@@ -744,7 +766,7 @@ export class AIService {
         const answers = await Promise.all(
             usable.map(async ({ app, args, verdict }) => ({
                 app: app.serverName ?? '',
-                answer: await this.callMcpTool(app, toolName, args, input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
+                answer: await this.callWithSessionFallback(app, toolName, args, input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
                     botId,
                     // Each App's call is its own try
                     callId: requests.length === 1 ? input.callId : `${input.callId}:${app.serverId}`,
@@ -5976,7 +5998,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const results: Array<{ group: AppPart[]; answer: Awaited<ReturnType<AIService['callMcpTool']>>; outcomes: PartOutcome[] }> = [];
         for (const group of groups.values()) {
             const { entry, heading } = group[0];
-            const answer = await this.callMcpTool(entry, input.toolName, batchOf(args, group), input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
+            const answer = await this.callWithSessionFallback(entry, input.toolName, batchOf(args, group), input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
                 botId,
                 callId: groups.size === 1 ? input.callId : oneApp ? `${input.callId}:${heading}` : `${input.callId}:${entry.serverId}:${heading}`,
                 heading,

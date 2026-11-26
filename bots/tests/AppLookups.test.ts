@@ -1,6 +1,6 @@
 /** The link's search and schemas answers of several Apps joined into one (bots/mcp/AppLookups.ts). Pure. */
 import { describe, expect, it } from 'vitest';
-import { isJoinedLookup, joinLookupAnswers } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, sessionRefused, withoutSession } from '../mcp/AppLookups';
 
 const text = (value: unknown) => [{ type: 'text', text: JSON.stringify(value) }];
 const read = (answer: unknown) => JSON.parse(((answer as Array<{ text: string }>)[0]).text);
@@ -61,5 +61,22 @@ describe('joining the answers of several Apps', () => {
 
     it('gives the first failure when every App failed', () => {
         expect(joinLookupAnswers([{ app: 'Gmail', answer: { error: 'one' } }, { app: 'Calendar', answer: { error: 'two' } }])).toEqual({ error: 'one' });
+    });
+});
+
+describe('a session the App’s link refused', () => {
+    it('is told from a failure that names the session, never from another failure or a good answer', () => {
+        expect(sessionRefused({ error: 'Invalid session id sess-1' })).toBe(true);
+        expect(sessionRefused(text({ successful: false, error: 'Session not found' }))).toBe(true);
+        expect(sessionRefused({ error: 'The link is not answering.' })).toBe(false);
+        expect(sessionRefused(text({ successful: true, data: { note: 'a session started' } }))).toBe(false);
+    });
+
+    it('drops only the session from the inputs, and says when there was none', () => {
+        expect(withoutSession({ tools: [1], thought: 't', session_id: 's' })).toEqual({ tools: [1], thought: 't' });
+        expect(withoutSession({ queries: [], session: { id: 's', generate_id: false } })).toEqual({ queries: [], session: { generate_id: false } });
+        expect(withoutSession({ queries: [], session: { id: 's' } })).toEqual({ queries: [] });
+        expect(withoutSession({ queries: [], session: { generate_id: true } })).toBeUndefined();
+        expect(withoutSession({ tools: [] })).toBeUndefined();
     });
 });

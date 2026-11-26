@@ -40,7 +40,7 @@ export function lookupRequests(name: string, args: Record<string, unknown>, apps
  * Why an answer is a failure, or undefined when it is not: the tool server's own error, or an answer that says so itself (the link's
  * `{ successful: false, error }`, as an object, as JSON text or as the one text part of an MCP answer), not something the App found.
  */
-function failureOf(answer: unknown): string | undefined {
+export function failureOf(answer: unknown): string | undefined {
     const data = dataOf(answer);
     if (!isObject(data)) return undefined;
     if (typeof data.error === 'string' && data.error.trim() !== '') return data.error;
@@ -137,4 +137,27 @@ export function joinLookupAnswers(answers: ReadonlyArray<{ app: string; answer: 
               ? answer.map((part) => (isObject(part) && typeof part.text === 'string' ? part.text : JSON.stringify(part))).join('\n')
               : JSON.stringify(answer);
     return [...good.map(({ app, answer }) => ({ type: 'text', text: `${app ? `${app}:\n` : ''}${textOf(answer)}` })), ...notes.map((text) => ({ type: 'text', text }))];
+}
+
+/**
+ * Whether a call failed because the App's link refused the session it was given: the model carries the session id one App's link gave
+ * (the joined search keeps the oldest App's), and another App's link may not know it. Only a failure that names the session counts.
+ */
+export const sessionRefused = (answer: unknown): boolean => /session/i.test(failureOf(answer) ?? '');
+
+/** The same inputs without the session they carried (`session_id`, and the `id` of `session`), or undefined when they carried none. */
+export function withoutSession(args: Record<string, unknown>): Record<string, unknown> | undefined {
+    const bare: Record<string, unknown> = { ...args };
+    let carried = false;
+    if ('session_id' in bare) {
+        delete bare.session_id;
+        carried = true;
+    }
+    if (isObject(bare.session) && 'id' in bare.session) {
+        const { id: _sessionId, ...others } = bare.session;
+        if (Object.keys(others).length > 0) bare.session = others;
+        else delete bare.session;
+        carried = true;
+    }
+    return carried ? bare : undefined;
 }
