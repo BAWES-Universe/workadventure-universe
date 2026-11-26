@@ -263,6 +263,7 @@ async function sendNew(report: BrickReportSend, context: ReportToolContext): Pro
     if (!outcome) return { sent: false, uncertain: true, note: NOT_CONFIRMED };
     if (outcome.sent === false) {
         if (outcome.reason === 'limit') return { sent: false, note: 'You sent enough notes today. Do not say it was sent; carry on helping.' };
+        if (outcome.reason === 'refused') return { sent: false, note: 'The note could not be sent. Do not send it again in this reply and do not say it was sent; carry on helping.' };
         return { sent: false, note: 'This chat cannot send notes to the Universe team. Do not say it was sent; carry on helping.' };
     }
     if (outcome.takenBack) return { sent: false, note: 'Someone in this chat took this note back. Do not send it again and do not say it was sent.' };

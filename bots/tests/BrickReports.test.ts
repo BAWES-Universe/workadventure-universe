@@ -392,6 +392,26 @@ describe('What the bot server asks Orbit', () => {
         await expect(service.sendBrickReport(send)).rejects.toThrow();
     });
 
+    it('a request Orbit turned down is "not sent", never asked again; one that may have been kept is asked again', async () => {
+        const service = new AdminApiService('http://orbit.test', 'admin-token');
+        const send = { botId: BRICK, ref: 'a'.repeat(64), kind: 'problem' as const, area: 'pages' as const, operation: 'read_page', failure: 'failed' as const, retried: false, effect: 'stopped' as const };
+        for (const status of [400, 401, 403, 404]) {
+            request.mockRejectedValueOnce({ isAxiosError: true, response: { status } });
+            expect(await service.sendBrickReport(send)).toEqual({ sent: false, reason: 'refused' });
+        }
+        for (const status of [408, 429, 500, 502]) {
+            request.mockRejectedValueOnce({ isAxiosError: true, response: { status } });
+            await expect(service.sendBrickReport(send)).rejects.toBeTruthy();
+        }
+        request.mockRejectedValueOnce({ isAxiosError: true, code: 'ECONNABORTED' });
+        await expect(service.sendBrickReport(send)).rejects.toBeTruthy();
+        // The Brick is told it did not go, and is not asked to say "could not confirm"
+        const ctx = context();
+        ctx.admin.sendBrickReport.mockResolvedValue({ sent: false, reason: 'refused' });
+        expect(await runReportTool(args, ctx)).toMatchObject({ sent: false, note: expect.stringContaining('could not be sent') });
+        expect(ctx.admin.sendBrickReport).toHaveBeenCalledTimes(1);
+    });
+
     it('tells Orbit the receipts went out, with its own token', async () => {
         request.mockResolvedValue({ status: 200, data: { confirmed: 2 } });
         const service = new AdminApiService('http://orbit.test', 'admin-token');

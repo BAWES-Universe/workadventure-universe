@@ -197,7 +197,7 @@ export type BrickReportKept = Pick<BrickReportSend, 'kind' | 'area' | 'failure' 
 
 export type BrickReportOutcome =
     | { sent: true; id: string; takeBackKey: string; note: BrickReportKept; again?: boolean; takenBack?: boolean; wordsPreview?: string }
-    | { sent: false; reason: 'limit' | 'unknown_brick' };
+    | { sent: false; reason: 'limit' | 'unknown_brick' | 'refused' };
 
 /** Orbit said no, or could not be asked. `code` is Orbit's (edit_not_found, change_not_allowed, ...) or orbit_unavailable. */
 export class ArtifactCallError extends Error {
@@ -1534,7 +1534,16 @@ export class AdminApiService {
      * an answer, not an error. Throws when Orbit cannot be reached or says anything else: the caller may ask again with the same `ref`.
      */
     async sendBrickReport(report: BrickReportSend): Promise<BrickReportOutcome> {
-        const response = await this.brickCall<Record<string, unknown>>('post', 'api/bricks/reports', report);
+        let response: AxiosResponse<Record<string, unknown>>;
+        try {
+            response = await this.brickCall<Record<string, unknown>>('post', 'api/bricks/reports', report);
+        } catch (error) {
+            // Orbit turned the request down (not its kind of note, or not this bot's to send): nothing was kept, so asking again changes nothing.
+            // A timeout, "too many", a server error or no answer at all may still be a note Orbit kept: that throws, and is asked again.
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) return { sent: false, reason: 'refused' };
+            throw error;
+        }
         const data = response.data ?? {};
         if (data.sent === true && typeof data.id === 'string' && typeof data.takeBackKey === 'string' && data.note && typeof data.note === 'object') {
             const note = data.note as Record<string, unknown>;
