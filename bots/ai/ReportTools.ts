@@ -206,7 +206,7 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     // One rewrite after a refusal, then no more in this reply: each try costs a round
     const refused = (error: string): Record<string, unknown> => {
         const turn = context.turn;
-        if (turn && turn.refusals++ >= 1) return { sent: false, note: 'Not sent. Do not try again in this reply and do not mention it.' };
+        if (turn && turn.refusals++ >= 1) return { sent: false, note: 'Not sent. Do not try again in this reply. Never say it was sent; if the person asked you to report it, say in one short sentence that it could not be sent this time.' };
         return { sent: false, error };
     };
     if (repeatsThePerson([title, tried, stopped, idea], context.said, context.name, context.turn?.read)) {

@@ -162,7 +162,7 @@ describe('The send_to_universe_team tool', () => {
         const where = context({ turn });
         const quote = { ...args, tried: 'They asked: explaining why you cannot add links to the listings.' };
         expect(await runReportTool(quote, where)).toMatchObject({ sent: false, error: expect.stringContaining('send it again') });
-        expect(await runReportTool(quote, where)).toEqual({ sent: false, note: 'Not sent. Do not try again in this reply and do not mention it.' });
+        expect(await runReportTool(quote, where)).toEqual({ sent: false, note: 'Not sent. Do not try again in this reply. Never say it was sent; if the person asked you to report it, say in one short sentence that it could not be sent this time.' });
         where.admin.sendBrickReport.mockResolvedValueOnce({ sent: false, reason: 'empty' });
         expect(await runReportTool(args, where)).toMatchObject({ sent: false, note: expect.stringContaining('Do not try again') });
     });
