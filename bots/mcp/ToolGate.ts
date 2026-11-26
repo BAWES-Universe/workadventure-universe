@@ -234,9 +234,9 @@ export class ToolGate {
             const refused = judged.find((part) => part.decision.kind === 'refuse');
             if (refused) return refused.decision;
             const heading = strictestOf(judged.map((part) => part.heading));
+            // A card shows every action of the call, so it is under the strictest heading of them all
             if (judged.some((part) => part.decision.kind === 'ask')) {
-                const asking = strictestOf(judged.filter((part) => part.decision.kind === 'ask').map((part) => part.heading));
-                return { kind: 'ask', heading: asking, notReviewed: false, policyRevision: policy.policyRevision, fingerprint: call.fingerprint ?? '' };
+                return { kind: 'ask', heading, notReviewed: false, policyRevision: policy.policyRevision, fingerprint: call.fingerprint ?? '' };
             }
             return { kind: 'run', heading, policyRevision: policy.policyRevision, ...(call.fingerprint ? { fingerprint: call.fingerprint } : {}) };
         }

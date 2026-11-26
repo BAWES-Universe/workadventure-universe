@@ -14,7 +14,8 @@
  * Pure of the AI and of the chat: the tools, the gate, the cards and the call are somebody else's (injected).
  */
 import { createHash } from 'crypto';
-import { SCRUBBED_LOOKUPS, isBatchTool, isOffRow, withoutOff } from '../mcp/AppActions';
+import { SCRUBBED_LOOKUPS, batchOf, batchParts, isBatchTool, isOffRow, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
+import { actionName } from '../mcp/AppBatch';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
 import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
@@ -85,7 +86,9 @@ export class TaskApps {
                 const entry = found.servers.get(name);
                 if (!entry) return;
                 const verdict = await this.deps.gate.decide(this.gateCall(run, name, entry));
-                if (this.refusal(verdict, name) === null) {
+                // A ready-made App's batch tool is offered as it is: each call brings its actions, judged one by one when it is made
+                const offeredBatch = isBatchTool(name) && verdict.kind === 'run' && !verdict.heading;
+                if (offeredBatch || this.refusal(verdict, name) === null) {
                     offered.push(tool);
                     servers.set(name, entry);
                 }
@@ -117,8 +120,8 @@ export class TaskApps {
         return {
             botId: run.brickId,
             toolName,
-            // What the call asks for, where it changes the verdict (reconnecting an App asks first). A batch is never judged by it here
-            ...(args !== undefined && !isBatchTool(toolName) ? { args } : {}),
+            // What the call asks for, where it changes the verdict: a batch's actions, reconnecting an App
+            ...(args !== undefined ? { args } : {}),
             ...(entry.title ? { toolTitle: entry.title } : {}),
             serverId: entry.serverId,
             ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {}),
@@ -140,6 +143,12 @@ export class TaskApps {
     private async call(run: DueRun, name: string, args: Record<string, unknown>, entry: ToolServerEntry | undefined, state: { waiting: boolean }): Promise<string> {
         if (!entry) return JSON.stringify({ error: 'That is not something a check can do.' });
         try {
+            // A batch goes through the one App its actions belong to, holding them as they were read
+            if (isBatchTool(name)) {
+                const routed = await this.batchApp(run, entry, args);
+                if ('line' in routed) return refused(routed.line);
+                ({ app: entry, args } = routed);
+            }
             // The check right before the call: the tool, the person and the settings as they are now
             const verdict = await this.deps.gate.decide(this.gateCall(run, name, entry, args));
             const why = this.refusal(verdict, name);
@@ -163,6 +172,30 @@ export class TaskApps {
             console.warn(`[TaskApps] A step of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
             return JSON.stringify({ error: 'That did not work just now.' });
         }
+    }
+
+    /**
+     * The App a batch step goes through, with only its actions as they were read. A step holds one App's actions: an action no App
+     * clearly owns, or actions of several Apps in one step, are refused (the model asks again, one App per step). Inputs that are not a
+     * batch go on as they are, for the gate to refuse.
+     */
+    private async batchApp(run: DueRun, first: ToolServerEntry, args: Record<string, unknown>): Promise<{ app: ToolServerEntry; args: Record<string, unknown> } | { line: string }> {
+        const parts = batchParts(args);
+        if (!parts) return { app: first, args };
+        const apps = [first, ...(first.otherApps ?? [])];
+        if (apps.length === 1) return { app: first, args: batchOf(args, parts) };
+        const appPolicy = this.deps.gate.appPolicy?.bind(this.deps.gate);
+        const policies = appPolicy ? await Promise.all(apps.map((app) => appPolicy(run.brickId, app.serverId))) : apps.map(() => null);
+        const owners = new Map<string, ToolServerEntry>();
+        for (const part of parts) {
+            const owner = ownerOfAction(part.slug, apps, policies);
+            // With the owner's own server first under this name, an action no ready-made App lists or is named by goes to that server
+            const app = owner === 'none' ? (first.readyMade ? undefined : first) : owner === 'unclear' ? undefined : owner;
+            if (!app) return { line: whichAppLine(actionName(part.slug)) };
+            owners.set(app.serverId, app);
+        }
+        if (owners.size > 1) return { line: `That asked for actions of ${[...owners.values()].map((app) => app.serverName || 'an App').join(' and ')} at once. Ask for each App's actions in a step of its own.` };
+        return { app: [...owners.values()][0], args: batchOf(args, parts) };
     }
 
     /** The card for this step, in the person's own chat: it waits there, and the run only ends. */

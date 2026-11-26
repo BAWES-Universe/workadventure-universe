@@ -5,7 +5,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
-import type { GateDecision } from '../mcp/ToolGate';
+import { ToolGate, type GateDecision } from '../mcp/ToolGate';
+import type { ToolHeading } from '../mcp/ToolCatalog';
+import type { PolicyTool, ServerPolicy, ToolSetting } from '../mcp/ToolPolicy';
 import type { DueRun } from '../server/BrickRunner';
 import { TaskApps, type TaskAppsDeps } from '../server/BrickTaskApps';
 import { ModelTaskRunner } from '../server/BrickTaskModel';
@@ -284,5 +286,73 @@ describe('a ready-made App’s lookups in a goal or task', () => {
         expect(answer).toContain('GMAIL_FETCH_EMAILS');
         expect(answer).not.toContain('GMAIL_DELETE_MESSAGE');
         expect(answer).not.toContain('GOOGLECALENDAR_DELETE_EVENT');
+    });
+});
+
+describe('a ready-made App’s batch of actions in a run', () => {
+    const BATCH = 'COMPOSIO_MULTI_EXECUTE_TOOL';
+    const gmail: ToolServerEntry = { serverId: 'g1', serverUrl: 'https://link.example', authType: 'none', serverName: 'Gmail', readyMade: true, orbitUrl: 'https://orbit.example', fingerprint: 'fp-batch', title: 'Run actions' };
+    const calendar: ToolServerEntry = { ...gmail, serverId: 'cal1', serverName: 'Google Calendar', fingerprint: 'fp-cal' };
+    type Row = [string, ToolHeading, ToolSetting | null];
+    const policyOf = (serverId: string, rows: Row[]): ServerPolicy => ({
+        serverId,
+        kind: 'appActions',
+        state: 'confirmed',
+        policyRevision: 4,
+        settings: { looksUp: 'rightAway', makesNew: 'rightAway', changesThings: 'asksFirst', deletesOrSends: 'asksFirst' },
+        tools: new Map<string, PolicyTool>(rows.map(([name, heading, setting]) => [name, { name, title: name, heading, fingerprint: `row-${name}`, suggestedHeading: heading, confirmed: true, setting }])),
+    });
+    const GMAIL_ROWS: Row[] = [
+        ['GMAIL_FETCH_EMAILS', 'looksUp', null],
+        ['GMAIL_CREATE_EMAIL_DRAFT', 'makesNew', null],
+        ['GMAIL_SEND_EMAIL', 'deletesOrSends', null],
+        ['GMAIL_DELETE_MESSAGE', 'deletesOrSends', 'off'],
+    ];
+    const CALENDAR_ROWS: Row[] = [['GOOGLECALENDAR_FIND_EVENT', 'looksUp', null]];
+    const actions = (...slugs: string[]) => ({ tools: slugs.map((slug) => ({ tool_slug: slug, arguments: JSON.stringify({ id: slug.toLowerCase() }) })), thought: 'x' });
+
+    function withGate(entry: ToolServerEntry) {
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const made = setUp({}, { discover: async () => ({ tools: [tool(BATCH)], servers: new Map([[BATCH, entry]]) }), gate });
+        return made;
+    }
+
+    it('is offered, and a batch of lookups runs once through its App with only the actions as they were read', async () => {
+        const { apps, call, propose } = withGate(gmail);
+        const session = (await apps.open(run()))!;
+        expect(session.definitions.map((definition) => definition.function.name)).toEqual([BATCH]);
+        expect(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS'))).toContain('Found 3 issues');
+        expect(call).toHaveBeenCalledWith('brick-1', expect.objectContaining({ serverId: 'g1' }), BATCH, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { id: 'gmail_fetch_emails' } }], thought: 'x' }, 'sara-uuid', { heading: 'looksUp', callId: expect.any(String) });
+        expect(propose).not.toHaveBeenCalled();
+    });
+
+    it('never sends a batch with an action that is Off, and asks on a card for one that makes, sends or deletes', async () => {
+        const { apps, call, propose } = withGate(gmail);
+        const session = (await apps.open(run()))!;
+        expect(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS', 'GMAIL_DELETE_MESSAGE'))).toContain('off for');
+        expect(call).not.toHaveBeenCalled();
+        await session.call(BATCH, actions('GMAIL_FETCH_EMAILS', 'GMAIL_SEND_EMAIL'));
+        expect(call).not.toHaveBeenCalled();
+        expect(propose).toHaveBeenCalledWith(expect.objectContaining({ toolName: BATCH, entry: expect.objectContaining({ serverId: 'g1' }), decision: expect.objectContaining({ kind: 'ask', heading: 'deletesOrSends' }), task: { itemId: run().itemId } }));
+    });
+
+    it('asks on a card for a batch that makes something new, even when that is set to right away', async () => {
+        const { apps, call, propose } = withGate(gmail);
+        const session = (await apps.open(run()))!;
+        await session.call(BATCH, actions('GMAIL_CREATE_EMAIL_DRAFT'));
+        expect(call).not.toHaveBeenCalled();
+        expect(propose).toHaveBeenCalledWith(expect.objectContaining({ decision: expect.objectContaining({ kind: 'ask', heading: 'makesNew' }) }));
+    });
+
+    it('sends a batch through the App its actions belong to, and refuses one that mixes Apps or names none clearly', async () => {
+        const { apps, call } = withGate({ ...gmail, otherApps: [calendar] });
+        const session = (await apps.open(run()))!;
+        await session.call(BATCH, actions('GOOGLECALENDAR_FIND_EVENT'));
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
+        expect(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_FIND_EVENT'))).toContain('in a step of its own');
+        expect(await session.call(BATCH, actions('SLACK_SEND_MESSAGE'))).toContain("isn't clear which of your Apps");
+        expect(call).toHaveBeenCalledTimes(1);
     });
 });

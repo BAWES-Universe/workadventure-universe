@@ -29,7 +29,7 @@ import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDe
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, type JudgedPart } from '../mcp/ToolGate';
 import type { ToolHeading } from '../mcp/ToolCatalog';
-import { APP_BATCH_TOOL, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, slugKey, strictestOf, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
+import { APP_BATCH_TOOL, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
 import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
@@ -314,8 +314,6 @@ const appsOf = (entry: ToolServerEntry): ToolServerEntry[] => [entry, ...(entry.
  */
 type AppPart = JudgedPart & { entry: ToolServerEntry; whole?: true };
 
-/** The line for an action no App of the Brick's says is its own, when it has several: it is never guessed. */
-const whichAppLine = (title: string) => `${title} wasn't done: it isn't clear which of your Apps it belongs to. Ask for it again, naming the App.`;
 
 export class AIService {
     private adminApiService: AdminApiService;
@@ -5650,22 +5648,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             return split.kind === 'parts' ? { kind: 'parts', parts: split.parts.map((part) => ({ ...part, entry: first })) } : split;
         }
         const policies = await Promise.all(apps.map((app) => this.toolGate.appPolicy(botId, app.serverId)));
-        // The App an action belongs to; 'unclear' when several Apps could own it, 'none' when no App lists it or is named by it
-        const ownerOf = (slug: string): ToolServerEntry | 'unclear' | 'none' => {
-            const key = slugKey(slug);
-            const listed = apps.filter((_, at) => [...(policies[at]?.tools.values() ?? [])].some((tool) => slugKey(tool.name) === key));
-            if (listed.length === 1) return listed[0];
-            if (listed.length > 1) return 'unclear';
-            const named = apps.filter((app) => !!app.serverName && actionName(slug, app.serverName) !== actionName(slug));
-            if (named.length === 1) return named[0];
-            return named.length > 1 ? 'unclear' : 'none';
-        };
         const byApp = new Map<string, { app: ToolServerEntry; parts: BatchPart[] }>();
         const judged: AppPart[] = [];
         for (const part of parts) {
             // With the owner's own server first under this name, an action no ready-made App lists or is named by goes to that server, as it
             // did. One that several Apps could own is never sent anywhere on a guess: an Off in either must hold
-            const owner = ownerOf(part.slug);
+            const owner = ownerOfAction(part.slug, apps, policies);
             const app = owner === 'none' ? (first.readyMade ? undefined : first) : owner === 'unclear' ? undefined : owner;
             if (!app) {
                 const title = actionName(part.slug);

@@ -104,6 +104,23 @@ export function offLine(titles: readonly string[], brick: string, app: string): 
     return `${listed} ${titles.length <= 1 ? 'is' : 'are'} off for ${brick} in ${app}.`;
 }
 
+/** The line for an action no App of the Brick's says is its own, when it has several: it is never guessed. */
+export const whichAppLine = (title: string) => `${title} wasn't done: it isn't clear which of your Apps it belongs to. Ask for it again, naming the App.`;
+
+/**
+ * Which of a Brick's Apps under one tool name an action belongs to: the one whose action list has it, else the one its name names.
+ * 'unclear' when several could own it, 'none' when no App lists it or is named by it. `policies` are the Apps' own, in the same order.
+ */
+export function ownerOfAction(slug: string, apps: readonly ToolServerEntry[], policies: readonly (ServerPolicy | null)[]): ToolServerEntry | 'unclear' | 'none' {
+    const key = slugKey(slug);
+    const listed = apps.filter((_, at) => [...(policies[at]?.tools.values() ?? [])].some((tool) => slugKey(tool.name) === key));
+    if (listed.length === 1) return listed[0];
+    if (listed.length > 1) return 'unclear';
+    const named = apps.filter((app) => !!app.serverName && actionName(slug, app.serverName) !== actionName(slug));
+    if (named.length === 1) return named[0];
+    return named.length > 1 ? 'unclear' : 'none';
+}
+
 /** One action of a batch as the model asked for it: where it was in the list, and the entry exactly as it was written. */
 export interface BatchPart extends BatchCall {
     index: number;
