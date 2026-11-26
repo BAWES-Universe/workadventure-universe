@@ -144,11 +144,15 @@
     // Whether the page in the frame on show has loaded: a frame has a window before its page is there, and a payment result
     // sent in that time reaches nobody. Cleared each time the frame is drawn again (a new element, or another address).
     let frameLoaded = false;
+    // The version whose page has loaded in the frame: what the page asking for a checkout shows. Set only when that page has
+    // loaded, so a tap on the page that was there before another version's page comes in never says the newer version.
+    let frameVersion: number | undefined;
     let frameDrawn: { element: HTMLIFrameElement | null | undefined; url: string | null | undefined } | undefined;
     function watchFrame(element: HTMLIFrameElement | null | undefined, url: string | null | undefined) {
         if (frameDrawn && frameDrawn.element === element && frameDrawn.url === url) return;
         frameDrawn = { element, url };
         frameLoaded = false;
+        frameVersion = undefined;
     }
     $: watchFrame(frameElement, opened?.version.url);
     const payments = pagePayments({
@@ -164,8 +168,9 @@
         // a Public one only once something is published, and not when that version is gone
         pageUrl: () =>
             openScope === "link" || (openScope === "public" && published && !publishedGone) ? link : undefined,
-        // The version on screen: Orbit never charges terms set on a newer one on it
-        shownVersion: () => opened?.version.number,
+        // The version on screen, once its page has loaded: Orbit never charges terms set on a newer one on it, and makes no new
+        // order for a page that does not say which version it shows
+        shownVersion: () => (frameLoaded ? frameVersion : undefined),
     });
     const payLine = payments.line;
     // The line under the page: what it says and what can be pressed (the approved mock M1)
@@ -186,6 +191,12 @@
         if (action.kind === "check") payments.checkPayment();
         else if (action.kind === "restore") payments.restorePurchase();
         else if (action.kind === "copy") copyReceipt();
+        else if (action.kind === "latest") openLatest();
+    }
+    /** The page was updated since it was opened: open what this person is shown now, fresh from Orbit, and clear the line. */
+    function openLatest() {
+        payments.dismiss();
+        void load(undefined);
     }
     function copyReceipt() {
         const receipt = payments.receiptLink();
@@ -506,6 +517,8 @@
     function onFrameLoad() {
         // From an address that has stopped it shows nothing: it is not a page that can hear anything
         frameLoaded = !addressStopped();
+        // The page that loaded is the one at the address on show now (a new address clears this first, in watchFrame)
+        frameVersion = frameLoaded && frameDrawn?.url === opened?.version.url ? opened?.version.number : undefined;
         if (frameLoaded) payments.frameReady();
         redrawIfStopped();
     }

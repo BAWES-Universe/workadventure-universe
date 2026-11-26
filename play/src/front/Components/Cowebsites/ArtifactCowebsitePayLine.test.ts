@@ -124,7 +124,7 @@ describe("the line under a paying page in the artifact window (the approved mock
             (target.querySelector(`[data-testid="artifactPay-${kind}"]`) as HTMLButtonElement).click();
             await settle();
         };
-        return { target, view, say, line, text, press, heard };
+        return { target, view, say, line, text, press, heard, cowebsite, frame };
     }
 
     it("g5: asks for the purchase back when the page loads, and says it is back with the day it was bought; the page hears paid", async () => {
@@ -405,6 +405,44 @@ describe("the line under a paying page in the artifact window (the approved mock
         expect(text()).toBe(
             "Paid. Thank you. It's kept in this browser, so it comes back whenever you open this page here."
         );
+        view.$destroy();
+    });
+
+    it("says the version whose page has loaded, and none while another version's page is still on its way in (CodeRabbit, 26 Nov)", async () => {
+        api.payOnArtifact.mockReturnValue(new Promise<never>(() => {}));
+        vi.spyOn(window, "open").mockReturnValue(null);
+        const { say, view } = await mount();
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        expect(api.payOnArtifact.mock.calls[0][2]).toMatchObject({ start: true, shownVersion: 3 });
+        view.$destroy();
+
+        // Another version is asked for: the window has it, but its page has not loaded in the frame yet
+        const next = await mount();
+        const four = opened(false, "link");
+        api.fetchArtifact.mockResolvedValue({
+            ...four,
+            version: { ...four.version, number: 4, url: "https://files.test/4" },
+        });
+        next.cowebsite.version.set(4);
+        await settle();
+        api.payOnArtifact.mockClear();
+        await next.say({ universe: "use-app", app: "examplepay", request: "r2", session: "s2" });
+        expect(api.payOnArtifact.mock.calls[0][2]).toMatchObject({ start: true });
+        expect(api.payOnArtifact.mock.calls[0][2]).not.toHaveProperty("shownVersion");
+        next.view.$destroy();
+    });
+
+    it("offers the latest version on a page that was updated since it was opened, and opens it fresh with one tap (CodeRabbit, 26 Nov)", async () => {
+        const { ArtifactRequestError } = await import("../../Artifacts/ArtifactApi");
+        api.payOnArtifact.mockRejectedValueOnce(new ArtifactRequestError(409, "page_changed"));
+        vi.spyOn(window, "open").mockReturnValue(null);
+        const { say, text, press, line, view } = await mount();
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        expect(text()).toBe("This page was updated. Open the latest version to see it before you pay. Back to latest");
+        api.fetchArtifact.mockClear();
+        await press("latest");
+        expect(api.fetchArtifact).toHaveBeenCalledWith("a1", undefined, undefined);
+        expect(line()).toBeNull();
         view.$destroy();
     });
 });

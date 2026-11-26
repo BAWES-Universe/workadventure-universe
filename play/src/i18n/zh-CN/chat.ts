@@ -141,7 +141,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         payUnavailable: "无法使用付款功能",
         payNotTakingSub: "此页面目前不接受付款。请稍后再试。",
         payPageChanged: "此页面已更新。",
-        payPageChangedSub: "请关闭后重新打开，在付款前查看最新版本。",
+        payPageChangedSub: "请先打开最新版本查看，再付款。",
         payLimit: "目前尝试次数过多。",
         payLimitSub: "请稍后再试。",
         payBoughtBefore: "以前买过吗？",

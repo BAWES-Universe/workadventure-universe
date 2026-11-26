@@ -6,7 +6,8 @@ export type PayAction =
     | { kind: "check"; label: string; style: "primary" | "secondary" }
     | { kind: "restore"; label: string; style: "primary" | "secondary" }
     | { kind: "copy"; label: string; style: "primary" | "secondary"; disabled?: boolean }
-    | { kind: "resume"; label: string; url: string; style: "primary" | "secondary" };
+    | { kind: "resume"; label: string; url: string; style: "primary" | "secondary" }
+    | { kind: "latest"; label: string; style: "primary" | "secondary" };
 
 export interface PayView {
     title: string;
@@ -122,9 +123,14 @@ export function describePayLine(
     if (line.problem === "not_published") {
         return { title: LL.payUnavailable(), sub: LL.payNotTakingSub(), actions: restoreToo, closable: false };
     }
-    // The version on screen is older than the one the payment was set on: opening it again shows the latest
+    // The version on screen is older than the one the payment was set on: one tap opens the latest this person is shown
     if (line.problem === "page_changed") {
-        return { title: LL.payPageChanged(), sub: LL.payPageChangedSub(), actions: restoreToo, closable: false };
+        return {
+            title: LL.payPageChanged(),
+            sub: LL.payPageChangedSub(),
+            actions: [{ kind: "latest", label: LL.backToLatest(), style: "primary" }, ...restoreToo],
+            closable: false,
+        };
     }
     if (line.problem === "limit") {
         // An answer that may have made an order (an uncertain refusal) can be checked
