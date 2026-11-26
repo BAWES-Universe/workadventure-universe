@@ -361,11 +361,17 @@ export class AIService {
     private ownerNotes?: (botId: string, note: OwnerNote) => Promise<void>;
     /** The replies only one person saw, where other people were (#1993). */
     private readonly privateAnswers = new PrivateAnswers();
-    /** Sorts a ready-made App's actions that nothing else could, a batch at a time (Orbit #1042). */
-    private readonly appActionSorter = new AppActionSorter(() => {
-        const serviceToken = process.env.BOT_SERVICE_TOKEN;
-        return this.adminApiUrl && serviceToken ? { adminApiUrl: this.adminApiUrl, serviceToken } : null;
-    });
+    /**
+     * Sorts a ready-made App's actions that nothing else could, a batch at a time (Orbit #1042). The list is Universe's, so it is
+     * always sorted on Universe AI's own Default, asked for by that name alone: never by a Brick, so never on a person's own key.
+     */
+    private readonly appActionSorter = new AppActionSorter(
+        () => {
+            const serviceToken = process.env.BOT_SERVICE_TOKEN;
+            return this.adminApiUrl && serviceToken ? { adminApiUrl: this.adminApiUrl, serviceToken } : null;
+        },
+        (system, user) => this.quickGenerate(UNIVERSE_AI_REF, system, user, undefined, TOOL_SUGGEST_TIMEOUT_MS)
+    );
 
     constructor(
         conversationMemory: ConversationMemory,
@@ -3892,9 +3898,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 for (const [key, value] of mcpResult.toolServerMap) {
                     if (!instantNames.has(key)) toolServerMap.set(key, value);
                 }
-                // A ready-made App came along: its actions that are still waiting to be sorted are sorted now, on this Brick's own provider
-                // as its own tools are, without making the reply wait
-                if ([...mcpResult.toolServerMap.values()].some((entry) => appsOf(entry).some((app) => app.readyMade))) void this.appActionSorter.maybeSort(this.toolSuggesterFor(providerId, botId));
+                // A ready-made App came along: its actions that are still waiting to be sorted are sorted now, on Universe AI (never this
+                // Brick's provider or key: the list is everyone's), without making the reply wait
+                if ([...mcpResult.toolServerMap.values()].some((entry) => appsOf(entry).some((app) => app.readyMade))) void this.appActionSorter.maybeSort();
 
                 // Tools this person can't use are not offered to the model (#1656). The call is checked again when it is made.
                 const offered = new Set<string>();

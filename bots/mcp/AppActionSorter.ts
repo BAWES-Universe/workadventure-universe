@@ -4,9 +4,11 @@
  * sends out", so it asks first.
  *
  * Orbit hands out up to 60 waiting actions at a time (GET /api/app-actions/unsorted) and moves them to the back of its line, so
- * they are asked for only when the model can answer now, and the picks go back at once (PUT). The model is the same sorter and the
- * same prompt as a bot's own tools (suggestFromDescriptions), on the provider of the Brick whose reply brought an App along, the
- * way its own tools are sorted. At most one batch every few minutes on this bot server; a failure waits for the next turn.
+ * they are asked for only when the model can answer now, and the picks go back at once (PUT). The prompt is the same as for a bot's
+ * own tools (suggestFromDescriptions), but the model is always Universe AI's own: the list is Universe's, so its housekeeping never
+ * runs on, or is billed to, the Brick whose reply happened to bring an App along (and never on a person's own key). The model is
+ * fixed when the sorter is made, so no caller can hand it a Brick's. At most one batch every few minutes on this bot server; a
+ * failure waits for the next turn.
  *
  * Nothing in an action's name or words is trusted as an instruction: they go to the model as data, and Orbit takes "Makes new
  * things" only for an action it knows stays private, and never a looser heading than the action's name says.
@@ -41,18 +43,20 @@ export class AppActionSorter {
     private lastAt = Number.NEGATIVE_INFINITY;
     private running: Promise<number> | null = null;
 
+    /** `ask` is Universe AI's own small model, never a Brick's (see above). */
     constructor(
         private readonly orbit: () => SorterOrbit | null,
+        private readonly ask: ToolSuggester,
         private readonly now: () => number = Date.now
     ) {}
 
     /** Sorts one batch when it is time to. Never throws, and never makes the reply wait: answers how many it sent back. */
-    maybeSort(ask: ToolSuggester | undefined): Promise<number> {
-        if (!ask || this.running || this.now() - this.lastAt < SORT_EVERY_MS) return Promise.resolve(0);
+    maybeSort(): Promise<number> {
+        if (this.running || this.now() - this.lastAt < SORT_EVERY_MS) return Promise.resolve(0);
         const orbit = this.orbit();
         if (!orbit) return Promise.resolve(0);
         this.lastAt = this.now();
-        this.running = this.sortOnce(orbit, ask)
+        this.running = this.sortOnce(orbit, this.ask)
             .catch((error) => {
                 console.warn('[AppActionSorter] Could not sort App actions:', error instanceof Error ? error.message : error);
                 return 0;
