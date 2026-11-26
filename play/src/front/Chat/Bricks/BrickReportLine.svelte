@@ -1,18 +1,26 @@
 <script lang="ts">
+    import { onMount } from "svelte";
     import { openModal } from "svelte-modals";
     import LL from "../../../i18n/i18n-svelte";
-    import type { BrickReport } from "./BrickReport";
-    import { takenBackReports } from "./BrickReportStore";
+    import { canTakeBack, type BrickReport } from "./BrickReport";
+    import { readReportStatusOnce, takenBackReports } from "./BrickReportStore";
     import BrickReportSheet from "./BrickReportSheet.svelte";
     import { IconCheck } from "@wa-icons";
 
     /**
      * Under a Brick's answer that sent a note to the Universe team (mock "Brick reports inbox", screen 6): "Sent to the Universe team ·
-     * See what was sent", one line per note. Taken back, it says so.
+     * See what was sent", one line per note. Taken back, here or on another device, it says so: a note still within its 24 hours is read
+     * from Orbit once when its line is drawn.
      */
     export let reports: BrickReport[];
     /** When the answer was sent (ms), for a note that does not say. */
     export let messageAt: number | null;
+
+    onMount(() => {
+        for (const report of reports) {
+            if (canTakeBack(report, messageAt, Date.now())) void readReportStatusOnce(report.id, report.key);
+        }
+    });
 
     function open(report: BrickReport) {
         openModal(BrickReportSheet, { report, messageAt });

@@ -144,6 +144,26 @@ describe("the line under the answer and what was sent", () => {
         expect(game.openModal).toHaveBeenCalledWith(BrickReportSheet, { report, messageAt: NOW });
     });
 
+    it("shows Taken back from another device without opening the note, asking Orbit once", async () => {
+        const fresh = { ...report, id: "note-other-device" };
+        game.status.mockResolvedValue({ state: "taken_back", words: "" });
+        part = new BrickReportLine({ target, props: { reports: [fresh], messageAt: NOW } });
+        await settle();
+        expect(game.status).toHaveBeenCalledWith("note-other-device", "key-1234567890abcdef");
+        expect(byId("brickReportTakenBack")?.textContent).toBe("Taken back");
+        part.$destroy();
+        part = new BrickReportLine({ target, props: { reports: [fresh], messageAt: NOW } });
+        await settle();
+        expect(game.status).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks Orbit nothing for a line older than 24 hours", async () => {
+        vi.setSystemTime(NOW + TAKE_BACK_MS + 1);
+        part = new BrickReportLine({ target, props: { reports: [{ ...report, id: "note-old" }], messageAt: NOW } });
+        await settle();
+        expect(game.status).not.toHaveBeenCalled();
+    });
+
     it("shows the note as kept, what is never sent, and the person's words as they would go, not sent yet", async () => {
         part = new BrickReportSheet({ target, props: { isOpen: true, report, messageAt: NOW }, intro: false });
         await settle();

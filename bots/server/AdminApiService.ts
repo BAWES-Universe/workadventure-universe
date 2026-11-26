@@ -1562,6 +1562,15 @@ export class AdminApiService {
         throw new Error('Orbit answered the note in a way it does not know');
     }
 
+    /**
+     * Tells Orbit the chat message carrying these notes' receipts went out (mock "Brick reports inbox"). A note never confirmed is withdrawn
+     * after 15 minutes. Throws when Orbit cannot be reached; asking again is harmless.
+     */
+    async confirmBrickReports(botId: string, ids: string[]): Promise<number> {
+        const response = await this.brickCall<{ confirmed?: unknown }>('post', 'api/bricks/reports/delivered', { botId, ids: ids.slice(0, 4) });
+        return typeof response.data?.confirmed === 'number' ? response.data.confirmed : 0;
+    }
+
     /** May the suggestion for this topic be shown now? Orbit says yes once per person and topic, on every device (#1996). */
     async claimBrickOffer(viaBotId: string, userId: string, topic: string): Promise<{ show: boolean; topic: string }> {
         const response = await this.brickCall<{ show?: unknown; topic?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });

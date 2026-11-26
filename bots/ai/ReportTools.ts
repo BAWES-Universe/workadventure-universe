@@ -16,10 +16,15 @@
  * Each note has a reference made from the chat's message and what the note is about: sent again (a lost answer, a retried reply), Orbit
  * answers the same receipt and keeps nothing new. When Orbit cannot be reached it is asked once more with the same reference; if it still
  * does not answer, the Brick says only that it could not confirm the note went, never that it was sent.
+ *
+ * The receipt (id, take-back key) is the bot server's, never the model's: it rides on the reply's words event, or on the fixed line
+ * "Sent to the Universe team: ..." when the model said nothing. Once Matrix takes that event, Orbit is told once (DmReply.reportsDelivered).
+ * A note whose receipt never got out (the send failed or was suppressed) is withdrawn by Orbit after 15 minutes, exactly like Take it back.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { AdminApiService, BrickReportSend } from '../server/AdminApiService';
 import type { BrickNote, ReportSentNote } from './BrickTools';
+import { isInstantTool } from './InstantTools';
 
 export const REPORT_TOOL = 'send_to_universe_team';
 
@@ -139,7 +144,9 @@ export function noteWhatRan(turn: ReportTurn, results: Array<{ name: string; res
         const app = sources.apps.get(name);
         let operation: string;
         let appConnectionId: string | undefined;
-        if (app) {
+        // An Instant App is an App too: its tool name carries its maker's name and an id, never a note's words
+        if (isInstantTool(name)) operation = 'app';
+        else if (app) {
             operation = 'app';
             if (app.connectionId && UUID.test(app.connectionId)) appConnectionId = app.connectionId;
         } else if (sources.offered.has(name) && OWN_TOOL.test(name)) operation = name;

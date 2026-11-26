@@ -37,3 +37,13 @@ export async function readReportStatus(id: string, key: string): Promise<void> {
     if (status?.state === "taken_back") markTakenBack(id);
     else if (status?.state === "live" && status.words) markWords(id, status.words);
 }
+
+/** Notes already read in this session from the line under an answer: a line drawn again (scrolling, a new message) asks Orbit no more. */
+const readOnce = new Set<string>();
+
+/** Reads what became of a note once per session, for the line under the answer: "Taken back" on another device shows without a tap. */
+export function readReportStatusOnce(id: string, key: string): Promise<void> {
+    if (readOnce.has(id)) return Promise.resolve();
+    readOnce.add(id);
+    return readReportStatus(id, key).catch(() => undefined);
+}

@@ -171,6 +171,12 @@ export interface DmReply {
     /** What this turn did about Bricks (#1996): Bricks it made go with the text, a suggestion goes out as a card after it. */
     bricks?: BrickNote[];
     /**
+     * For a reply with notes to the Universe team: tells Orbit, once, that the message carrying their receipts (and Take it back) went out.
+     * Call it only once Matrix took that message. A note never confirmed is withdrawn by Orbit after 15 minutes, so none stays that the
+     * chat cannot see or take back. Never throws.
+     */
+    reportsDelivered?: () => Promise<void>;
+    /**
      * Orbit refused to carry a job on and a new job is a sensible next step (GPT's sixth answer, finding 6): a card with one "Start a new job" button goes out after the text, for
      * the job of this title. Nothing was started; the tap is an ordinary new start.
      */
@@ -838,6 +844,7 @@ export class DmReplyService extends BaseBehavior {
         const claimApp = this.appClaim(bricks, botId, person.uuid);
         const releaseOffer = this.offerRelease(bricks, botId, person.uuid);
         const releaseApp = this.appRelease(bricks, botId, person.uuid);
+        const reportsDelivered = this.reportReceipts(bricks, botId);
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
@@ -868,8 +875,28 @@ export class DmReplyService extends BaseBehavior {
             ...(claimApp ? { claimApp } : {}),
             ...(releaseOffer ? { releaseOffer } : {}),
             ...(releaseApp ? { releaseApp } : {}),
+            ...(reportsDelivered ? { reportsDelivered } : {}),
             ...(toolSignIn ? { toolSignIn, ...(toolSignInDelivery ? { toolSignInDelivery } : {}) } : {}),
         };
+    }
+
+    /**
+     * Tells Orbit that the receipts of this reply's notes to the Universe team reached the chat (mock "Brick reports inbox"): once, asked a
+     * second time if the first try is lost. Without it Orbit withdraws them after 15 minutes; the chat reading a note proves it as well.
+     */
+    private reportReceipts(bricks: BrickNote[], botId: string): (() => Promise<void>) | undefined {
+        const ids = bricks.filter((note): note is ReportSentNote => note.kind === 'report').map((note) => note.id);
+        const admin = this.adminApiService;
+        if (ids.length === 0 || !admin) return undefined;
+        let told: Promise<void> | undefined;
+        return () =>
+            (told ??= admin
+                .confirmBrickReports(botId, ids)
+                .catch(() => admin.confirmBrickReports(botId, ids))
+                .then(
+                    () => undefined,
+                    (error) => console.warn('[DmReplyService] Could not confirm note receipts to Orbit:', error instanceof Error ? error.message : error)
+                ));
     }
 
     /**

@@ -2229,6 +2229,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // The proof that the person was answered (GPT's seventh note G2): the link from this event to the reply Matrix took, kept on the durable entry. A server that takes the event over
             // after paid work began closes it quietly only with this link; without it (the answer never got out, or the link was not kept) the person is told once that it was not answered
             if (wordsEvent) await hooks?.answered?.(wordsEvent);
+            // The receipts of this reply's notes to the Universe team rode on that event: Orbit is told once, so it keeps them (a note whose
+            // receipt never got out, the send suppressed or failed, is withdrawn by Orbit after 15 minutes, like Take it back)
+            if (wordsEvent && reports.length > 0) void reply.reportsDelivered?.();
             // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
             // the card goes out: once per person and topic on every device, so a second device racing it sends none.
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;

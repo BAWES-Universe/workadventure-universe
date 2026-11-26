@@ -117,6 +117,23 @@ describe('The send_to_universe_team tool', () => {
         expect(sentOf(ctx)).toMatchObject({ operation: 'none', failure: 'failed' });
     });
 
+    it('an Instant App is "app" too: its tool name (maker and id) never goes', async () => {
+        const turn = newReportTurn('$e');
+        noteWhatRan(turn, [{ name: 'instant_app_exa_search_1a2b3c4d', result: { error: 'Request timed out' } }], { apps: new Map(), offered: new Set(['instant_app_exa_search_1a2b3c4d']) });
+        expect(turn.steps).toEqual([{ name: 'instant_app_exa_search_1a2b3c4d', operation: 'app', failure: 'timed_out' }]);
+        const ctx = context({ turn });
+        await runReportTool({ kind: 'problem', area: 'apps', effect: 'stopped' }, ctx);
+        expect(sentOf(ctx)).toMatchObject({ operation: 'app', failure: 'timed_out' });
+        expect(JSON.stringify(sentOf(ctx))).not.toMatch(/exa|1a2b/);
+    });
+
+    it('a short exact phrase from the chat never reaches Orbit, in any field the model fills (GPT G1)', async () => {
+        const phrase = 'meet Sam at noon';
+        const ctx = context();
+        await runReportTool({ kind: 'problem', area: 'chat', effect: 'slowed', title: phrase, tried: phrase, stopped: phrase, idea: phrase, step: phrase }, ctx);
+        expect(JSON.stringify(sentOf(ctx))).not.toContain('Sam');
+    });
+
     it('with no step, how it failed comes from the kind', async () => {
         for (const [kind, failure] of [['cant_do', 'missing_ability'], ['friction', 'corrected'], ['idea', 'idea']] as const) {
             const ctx = context();
@@ -267,6 +284,15 @@ describe('What the bot server asks Orbit', () => {
         request.mockResolvedValue({ status: 200, data: { ok: true } });
         await expect(service.sendBrickReport(send)).rejects.toThrow();
     });
+
+    it('tells Orbit the receipts went out, with its own token', async () => {
+        request.mockResolvedValue({ status: 200, data: { confirmed: 2 } });
+        const service = new AdminApiService('http://orbit.test', 'admin-token');
+        expect(await service.confirmBrickReports(BRICK, ['n1', 'n2'])).toBe(2);
+        expect(request).toHaveBeenCalledWith(
+            expect.objectContaining({ method: 'post', url: expect.stringContaining('api/bricks/reports/delivered'), data: { botId: BRICK, ids: ['n1', 'n2'] }, headers: expect.objectContaining({ Authorization: 'Bearer service-token' }) })
+        );
+    });
 });
 
 function makeClient(): any {
@@ -337,6 +363,34 @@ describe('A note in a Brick\'s direct message', () => {
         await bridge.onEvent(invite());
         await bridge.onEvent(message('Make a recipe Brick'));
         expect(client.sendMessage.mock.calls[0][2]).toMatchObject({ body: 'Done, and I told the team.', [BRICK_REPORTS_KEY]: field });
+    });
+
+    it('tells Orbit once that the receipt got out, only after Matrix took the event', async () => {
+        const { bridge, client, deps } = makeBridge();
+        const reportsDelivered = vi.fn(async () => undefined);
+        deps.reply.mockResolvedValue({ text: 'Sent to the Universe team: Failed: read_page.', media: [], bricks: [note], reportsDelivered });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('Draft an issue about what is blocking you'));
+        expect(client.sendMessage).toHaveBeenCalledTimes(1);
+        expect(reportsDelivered).toHaveBeenCalledTimes(1);
+    });
+
+    it('a receipt that did not get out is never confirmed, so Orbit withdraws the note', async () => {
+        const { bridge, client, deps } = makeBridge();
+        const reportsDelivered = vi.fn(async () => undefined);
+        // Matrix gave no event id: the person was told nothing
+        client.sendMessage.mockResolvedValue(undefined);
+        deps.reply.mockResolvedValue({ text: 'Sent to the Universe team: Failed: read_page.', media: [], bricks: [note], reportsDelivered });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(message('Draft an issue'));
+        expect(reportsDelivered).not.toHaveBeenCalled();
+        // A failed reply never carries it either
+        const failed = makeBridge();
+        const notTold = vi.fn(async () => undefined);
+        failed.deps.reply.mockResolvedValue({ text: '', media: [], failed: true, bricks: [note], reportsDelivered: notTold });
+        await failed.bridge.onEvent(invite());
+        await failed.bridge.onEvent(message('Draft an issue'));
+        expect(notTold).not.toHaveBeenCalled();
     });
 
     it('an answer with no note sends plain words, as before', async () => {
