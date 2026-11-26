@@ -184,8 +184,8 @@ export interface ReportToolContext {
     context?: BrickReportSend['context'];
 }
 
-/** Per reply (its list of notes), the titles of notes being sent this moment. */
-const sending = new WeakMap<BrickNote[], Set<string>>();
+/** Per reply (its list of notes), the notes being sent this moment, by title, each with whether it went once Orbit answers. */
+const sending = new WeakMap<BrickNote[], Map<string, Promise<boolean>>>();
 
 /** Runs send_to_universe_team. Never throws: the Brick is told in plain words what happened. */
 export async function runReportTool(args: Record<string, unknown>, context: ReportToolContext): Promise<Record<string, unknown>> {
@@ -199,9 +199,16 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     if (!kind || !title) return { sent: false, error: 'Say what kind of note it is and give it a short title in general words.' };
     // The notes this reply already sent, and the ones being sent right now (tool calls of one round run side by side)
     const already = (context.notes ?? []).filter((note): note is ReportSentNote => note.kind === 'report');
-    const flying = context.notes ? (sending.get(context.notes) ?? new Set<string>()) : new Set<string>();
+    const flying = context.notes ? (sending.get(context.notes) ?? new Map<string, Promise<boolean>>()) : new Map<string, Promise<boolean>>();
     const same = title.toLowerCase();
-    if (already.some((note) => note.title.toLowerCase() === same) || flying.has(same)) return { sent: true, note: 'Already sent in this reply. Do not send it again.' };
+    if (already.some((note) => note.title.toLowerCase() === same)) return { sent: true, note: 'Already sent in this reply. Do not send it again.' };
+    // The same note is being sent beside this call: say what that one says, never "sent" before it is
+    const twin = flying.get(same);
+    if (twin) {
+        return (await twin)
+            ? { sent: true, note: 'Already sent in this reply. Do not send it again.' }
+            : { sent: false, note: 'The same note did not go just now. Do not send it again in this reply and do not say it was sent.' };
+    }
     if (already.length + flying.size >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
     // One rewrite after a refusal, then no more in this reply: each try costs a round
     const refused = (error: string): Record<string, unknown> => {
@@ -212,9 +219,11 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     if (repeatsThePerson([title, tried, stopped, idea], context.said, context.name, context.turn?.read)) {
         return refused('Not sent: the note repeats the person\'s own words or name, or words from what Apps or files gave back. Write it again in general words about Universe, with no quotes and no names, and send it again.');
     }
-    let outcome: Awaited<ReturnType<AdminApiService['sendBrickReport']>>;
-    // Held before Orbit is asked, so a call beside this one sees it; let go once the answer is in
-    if (context.notes) sending.set(context.notes, flying.add(same));
+    let outcome: Awaited<ReturnType<AdminApiService['sendBrickReport']>> | undefined;
+    // Held before Orbit is asked, so a call beside this one sees it (and waits for whether it went); let go once the answer is in
+    let went: (sent: boolean) => void = () => undefined;
+    flying.set(same, new Promise<boolean>((resolve) => (went = resolve)));
+    if (context.notes) sending.set(context.notes, flying);
     try {
         outcome = await context.admin.sendBrickReport({
             botId: context.botId,
@@ -234,6 +243,7 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
         return { sent: false, note: 'The note could not be sent right now. Do not send it again in this reply. Do not say it was sent; carry on helping.' };
     } finally {
         flying.delete(same);
+        went(outcome?.sent === true);
     }
     if (outcome.sent === false) {
         if (outcome.reason === 'limit') return { sent: false, note: 'You sent enough notes today. Do not say it was sent; carry on helping.' };

@@ -141,13 +141,29 @@ describe('The send_to_universe_team tool', () => {
             (note: { title: string }) => new Promise((resolve) => waiting.push(() => resolve(kept({ id: note.title, note: { ...kept().note, title: note.title } }))))
         );
         const first = runReportTool(args, where);
-        expect(await runReportTool(args, where)).toMatchObject({ note: expect.stringContaining('Already sent') });
+        const twin = runReportTool(args, where);
         const second = runReportTool({ ...args, title: 'Voice cuts out', area: 'voice' }, where);
         expect(await runReportTool({ ...args, title: 'Something else' }, where)).toMatchObject({ sent: false, note: expect.stringContaining('Enough notes') });
         expect(where.admin.sendBrickReport).toHaveBeenCalledTimes(2);
         waiting.forEach((resolve) => resolve());
-        expect(await Promise.all([first, second])).toMatchObject([{ sent: true }, { sent: true }]);
+        expect(await Promise.all([first, twin, second])).toMatchObject([{ sent: true }, { sent: true, note: expect.stringContaining('Already sent') }, { sent: true }]);
         expect(where.notes).toHaveLength(2);
+    });
+
+    it('a call beside one sending the same note says what that one says: never sent while it did not go', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const where = context();
+        let fail: (error: Error) => void = () => undefined;
+        where.admin.sendBrickReport.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+        const first = runReportTool(args, where);
+        const twin = runReportTool(args, where);
+        fail(new Error('down'));
+        expect(await first).toMatchObject({ sent: false });
+        expect(await twin).toMatchObject({ sent: false, note: expect.stringContaining('did not go') });
+        const ok = context();
+        const sentFirst = runReportTool(args, ok);
+        expect(await runReportTool(args, ok)).toMatchObject({ sent: true, note: expect.stringContaining('Already sent') });
+        await sentFirst;
     });
 
     it('never asks for the note again when Orbit\'s answer is unknown: it may have been kept', async () => {
