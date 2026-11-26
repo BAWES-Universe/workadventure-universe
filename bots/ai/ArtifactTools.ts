@@ -127,7 +127,9 @@ export function artifactToolDefinitions(
                     'It shows in the chat as a card they tap to open, and they can ask you to change it afterwards. Do NOT paste the code ' +
                     'into the chat. For an app or a page, send ONE complete HTML file with its style and script inside it. It runs in a ' +
                     'locked box with no network except common libraries (cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, fonts.googleapis.com); ' +
-                    'it cannot use the camera, microphone or location, open pop-ups, or reach the game. Make it work on a phone too. ' +
+                    'it cannot use the camera, microphone or location, or reach the game. A link to another site opens in a new tab when ' +
+                    'tapped: write it as <a href="https://..." target="_blank" rel="noopener">, so a "View booking" button really opens ' +
+                    'that booking. Make it work on a phone too. ' +
                     MEDIA_HELP +
                     artifactLinkHelp(findWith === FIND_FILES_TOOL) +
                     'Call this tool silently, then say in one short line what you made.',

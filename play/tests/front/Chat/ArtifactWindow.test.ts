@@ -118,7 +118,8 @@ describe("the artifact window", () => {
         await vi.waitFor(() => expect(byTestId("artifactFrame")).not.toBeNull());
 
         const frame = byTestId("artifactFrame") as HTMLIFrameElement;
-        expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-forms");
+        // A tapped link opens in a new tab as the other site itself; the frame never gets the game's origin or its tab
+        expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox");
         expect(frame.getAttribute("src")).toBe("https://artifacts.test/v3.html");
         expect(byTestId("artifactOldNote")).toBeNull();
         expect(api.fetchArtifact).toHaveBeenCalledTimes(1);

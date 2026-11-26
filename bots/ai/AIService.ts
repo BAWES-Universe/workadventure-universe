@@ -10,7 +10,7 @@
 
 import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer, InstantListing } from '../server/AdminApiService';
+import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer, BotVisionPlan, InstantListing } from '../server/AdminApiService';
 import { KEY_NOT_LENT_LINE, reachFor } from '../server/AdminApiService';
 import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
@@ -139,11 +139,13 @@ import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefin
 import type { StartKeyStore } from '../server/ComputerStartKeys';
 import { CANCEL_JOB_TOOL, COMPUTER_JOBS_TOOL, JOB_FIRST_TOOL, PAUSE_JOB_TOOL, RESUME_JOB_TOOL, STOP_COMPUTER_TOOL, TELL_JOB_TOOL, computerControlToolDefinitions, newControlState, runComputerControlTool, startControlTurn } from './ComputerControlTools';
 import { asksToTryAgain, offersTryAgain, tryAgainNote, type RetryJob } from './ComputerTryAgain';
+import { NO_COMPUTER_NOTE, computerJobsNote, type ComputerJobsNow } from './ComputerJobsNow';
 import { COMPUTER_TOOL, ConfirmationQueue, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, offerableApps, runAppTool, type AppsForBrick } from './AppTools';
+import { REPORT_TOOL, type ReportTurn, type StepSources, newReportTurn, noteWhatRan, reportToolDefinition, runReportTool } from './ReportTools';
 import {
     InstantOffers,
     endInstantTask,
@@ -234,8 +236,11 @@ function sentOnlyTo(options: TurnOptions | undefined, playerId: number | undefin
 type UsageTalker = { channel: 'dm' | 'nearby' | 'task'; userId?: string; isGuest?: boolean; greeting?: boolean; runId?: string; eventId?: string };
 
 type ResolvedProvider =
-    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key'; forOthers?: boolean }
+    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key'; forOthers?: boolean; vision?: ResolvedVision }
     | { resting: true; line: string };
+
+/** Where this bot's images go, when Orbit says (the Vision row): its own model, Universe AI, or a Vision model on the maker's key. */
+type ResolvedVision = { choice: 'this' } | { choice: 'universe-ai' } | { choice: 'another'; config: AIProviderConfig };
 
 /** Refs that only Orbit can resolve for a bot: Universe AI (follows the Default) and a person's own key (`key-…`). */
 /**
@@ -893,7 +898,25 @@ export class AIService {
             // Orbit always says; if it ever didn't, the safe reading is that the person typed the address
             config.ownKey = { addressTyped: answer.keyAddressTyped !== false };
         }
-        return { resting: false, config, source: answer.source, ...(answer.forOthers ? { forOthers: true } : {}) };
+        return { resting: false, config, source: answer.source, ...(answer.forOthers ? { forOthers: true } : {}), vision: this.visionFromAnswer(answer.vision) };
+    }
+
+    /**
+     * Orbit's plan for the bot's images. A key picked for images that can't be read here is never swapped for Universe AI: the
+     * images are left to the bot's own model, as when Orbit itself says the key can't be used.
+     */
+    private visionFromAnswer(plan: BotVisionPlan | undefined): ResolvedVision | undefined {
+        if (!plan) return undefined;
+        if (plan.choice !== 'another') return { choice: plan.choice };
+        try {
+            // The model picked is the one that looks: no declared visionModel may stand in for it, and Orbit has checked it sees
+            const config = { ...this.buildProviderConfig(plan.credentials), visionModel: null, supportsVision: true };
+            config.ownKey = { addressTyped: plan.credentials.keyAddressTyped !== false };
+            return { choice: 'another', config };
+        } catch (error) {
+            console.error('[AIService] The key picked for images could not be read; leaving images to the bot\'s own model:', error);
+            return { choice: 'this' };
+        }
     }
 
     private buildProviderConfig(credentialsData: AIProviderCredentials): AIProviderConfig {
@@ -970,7 +993,20 @@ export class AIService {
                 console.warn('[AIService] No default vision provider configured; sending image URLs as text');
                 return '';
             }
+            return await this.describeImages(defaultConfig, images, abortSignal);
+        } catch (error) {
+            console.error('[AIService] Vision describe failed:', error);
+            return '';
+        }
+    }
 
+    /** Describe images with a given provider (fails soft, '' on any error), shared by Universe AI's default and a key picked for images. */
+    private async describeImages(
+        defaultConfig: AIProviderConfig,
+        images: string[],
+        abortSignal?: AbortSignal
+    ): Promise<string> {
+        try {
             // Use the provider's declared vision model when set (e.g.
             // deepseek-v4-flash-vision-exp on the DeepSeek entry). A declared
             // visionModel IS a capability assertion, so also force
@@ -1514,6 +1550,8 @@ export class AIService {
             }
 
             let config = resolved.config;
+            // Where this bot's images go, read here where `resolved` is known to be a provider and not a resting bot
+            const visionPlan = (resolved as Extract<ResolvedProvider, { resting: false }>).vision;
             if (turn) turn.guard = (config.limits ?? BOT_LIMIT_DEFAULTS).guard;
             // Usage is recorded against the provider that really answered (Universe AI is its Default, a key is the key)
             usageProviderId = config.providerId;
@@ -1536,13 +1574,28 @@ export class AIService {
                 // The configured main model is the bot's brain and must always
                 // be the one answering (persona, chat instructions, tools).
                 const visionCapable = this.providerRegistry.supportsVision(config);
-                if (!visionCapable) {
-                    // A person's own key without Vision never has its images described by Universe AI: the image would
-                    // leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
+                // Who looks: when Orbit says (the Vision row), what the owner picked or the shown default; otherwise as it always
+                // was. A person's own key without Vision never has its images described by Universe AI unless the owner picked it:
+                // the image would leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
+                const plan = visionPlan;
+                const lookWith: 'self' | 'link' | 'universe-ai' | 'another' = plan
+                    ? plan.choice === 'this'
+                        ? visionCapable
+                            ? 'self'
+                            : 'link'
+                        : plan.choice
+                    : visionCapable
+                      ? 'self'
+                      : resolved.source === 'own-key'
+                        ? 'link'
+                        : 'universe-ai';
+                if (lookWith !== 'self') {
                     const description =
-                        resolved.source === 'own-key'
-                            ? ''
-                            : await this.describeImagesViaDefaultVision(visionImages, abortSignal);
+                        lookWith === 'another' && plan?.choice === 'another'
+                            ? await this.describeImages(plan.config, visionImages, abortSignal)
+                            : lookWith === 'universe-ai'
+                              ? await this.describeImagesViaDefaultVision(visionImages, abortSignal)
+                              : '';
                     if (description) {
                         message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
                         // Persist the description into conversation history so
@@ -1560,6 +1613,11 @@ export class AIService {
                         } catch (memoryError) {
                             console.error('[AIService] Failed to persist vision description to memory:', memoryError);
                         }
+                    }
+                    else {
+                        // Nothing looked at it (the pick is "this model" and it can't see, or the one picked failed just now): say so
+                        // to the model, so it tells the person plainly instead of asking them to describe what they sent
+                        message = `${message}\n[The image could not be looked at, so what is in it is not known. Say so in one short line. Do not ask the person to describe it or to do anything else for it.]`;
                     }
                     // Images are NOT passed to a text-only main model (it would 400 on
                     // image_url blocks). The URL/description stays in the message text.
@@ -1698,7 +1756,7 @@ export class AIService {
             }
 
             // A Brick's own computer, in its owner's direct messages and only while it is on for them (game #2000)
-            const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService) : false;
+            const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService, true) : false;
             // The owner, in their own Brick's direct messages (#2002): Orbit says whether this person may ask it to keep reminders
             const taskSettings = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.taskSettingsOf(botId, playerId, botClient, adminApiService) : null;
 
@@ -1734,6 +1792,8 @@ export class AIService {
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
+                    // What is on its computer right now, and what ended lately, read fresh with this message: it never claims a job that is not there (the Brick chat audit, 26 Nov)
+                    channel === 'dm' && !forOthers && !options?.onlyForThem && botId && playerId !== undefined ? this.computerJobsNoteFor(botId, playerId) : '',
                     // "Try again" carries on the job that failed as ours or that we ended, only when the person asks for it (piece 8)
                     computerOn && !forOthers && !options?.onlyForThem && botId && playerId !== undefined ? await this.tryAgainNoteFor(botId, playerId, adminApiService) : '',
                     instantListing ? instantToolsNote() : '',
@@ -2294,6 +2354,9 @@ export class AIService {
                         const appStepCounts = new Map<string, number>();
                         // The Apps a review said the computer could do better for the rest: a use_computer that names one is Orbit's to weigh
                         const reviewedApps = new Set<string>();
+                        // Notes to the Universe team in this reply: the steps it ran (what they were and how they ended, never what they gave back),
+                        // and the chat's message it answers, which with what a note is about is the note's reference (sent again, the same note)
+                        const reportTurn: ReportTurn = newReportTurn(channel === 'dm' && botId && playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId)?.dmEventId : undefined);
                         // What the model said, and its reasoning, in the call that asked for this round's tools
                         let roundContent = firstCallContent || '';
                         let roundReasoning = chunk.reasoning;
@@ -2328,7 +2391,11 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel, (resolved as { vision?: ResolvedVision }).vision, reportTurn, {
+                                // A note to the Universe team says which of these steps it is about and how it ended (recorded as the round ends)
+                                apps: toolServerMap,
+                                offered: new Set((tools as Array<{ function?: { name?: string } }>).map((tool) => tool.function?.name ?? '').filter(Boolean)),
+                            });
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) {
                                 readForTheGroup = true;
@@ -3832,6 +3899,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: lead the owner to add a key for a service, and make a page take a payment (game #2044). The same Bricks, in the same chats.
         if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...keyToolDefinitions());
 
+        // Tool: a note to the Universe team where the Brick hit a wall (mock "Brick reports inbox"). Every Brick, on by default, in its direct
+        // messages: only there can the chat see what was sent and take it back (the map and voice come back when their bubble can carry that)
+        if (this.reportToolOn(channel, botId, adminApiService)) tools.push(reportToolDefinition());
+
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
@@ -4096,7 +4167,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             return this.brickNames.get(botId);
         }
     }
-    private computerOnCache = new Map<string, { on: boolean; at: number; retry?: RetryJob | null }>();
+    private computerOnCache = new Map<string, { on: boolean; at: number; retry?: RetryJob | null; available?: boolean; jobs?: ComputerJobsNow | null; read?: boolean }>();
     /** Where the key of a computer job's start waits while its outcome is open, so a restart of this server finds it (see `ComputerStartKeys`). Set by the server when it has a shared store. */
     private computerStartKeys: StartKeyStore | undefined;
     setComputerStartKeys(store: StartKeyStore | undefined): void {
@@ -4107,17 +4178,41 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * Whether this Brick's computer is on for the person in this direct message. Orbit answers; the answer is kept a short while so
      * chat stays fast, and a failure means off. Never wakes anything.
      */
-    private async computerOnFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<boolean> {
+    private async computerOnFor(botId: string, playerId: number, adminApiService?: AdminApiService, fresh = false): Promise<boolean> {
         const admin = adminApiService ?? this.adminApiService;
         const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
         if (!this.ownBricks.has(botId) || !admin?.isConfigured?.() || !userId) return false;
         const key = `${botId}|${userId}`;
         const known = this.computerOnCache.get(key);
-        if (known && Date.now() - known.at < 30_000) return known.on;
-        // The same one read also names the job "try again" would carry on (piece 8); an admin without that read says only whether it is on
-        const state = admin.computerState ? await admin.computerState(botId, userId).catch(() => ({ on: false, retry: null })) : { on: await admin.computerIsOn(botId, userId).catch(() => false), retry: undefined };
-        this.computerOnCache.set(key, { on: state.on, at: Date.now(), ...(state.retry !== undefined ? { retry: state.retry } : {}) });
+        // A new message reads it fresh (`fresh`): a computer given a moment ago is on for it, and its jobs are as they are now (the Brick chat audit, 26 Nov)
+        if (!fresh && known && Date.now() - known.at < 30_000) return known.on;
+        // The same one read also names the job "try again" would carry on (piece 8) and the person's jobs; an admin without that read says only whether it is on
+        const state: { on: boolean; retry?: RetryJob | null; available?: boolean; jobs?: ComputerJobsNow | null; read?: boolean } = admin.computerState
+            ? await admin.computerState(botId, userId).catch(() => ({ on: false, retry: null, read: false }))
+            : { on: await admin.computerIsOn(botId, userId).catch(() => false) };
+        this.computerOnCache.set(key, {
+            on: state.on,
+            at: Date.now(),
+            ...(state.retry !== undefined ? { retry: state.retry } : {}),
+            ...(state.available !== undefined ? { available: state.available } : {}),
+            ...(state.jobs !== undefined ? { jobs: state.jobs } : {}),
+            ...(state.read !== undefined ? { read: state.read } : {}),
+        });
         return state.on;
+    }
+
+    /**
+     * What a person's own Brick is told about its computer with this message (the Brick chat audit, 26 Nov), from the read this message's `computerOnFor` just made: its jobs working, waiting
+     * or in line and the ones that ended lately, or, when the computer could be given but is not on, that it has none right now. Nothing when Orbit could not be read, sent no jobs (an older
+     * Orbit), or there is no computer to give.
+     */
+    private computerJobsNoteFor(botId: string, playerId: number): string {
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (!userId || !this.ownBricks.has(botId)) return '';
+        const known = this.computerOnCache.get(`${botId}|${userId}`);
+        if (!known || known.read !== true) return '';
+        if (known.on) return known.jobs ? computerJobsNote(known.jobs) : '';
+        return known.available === true ? NO_COMPUTER_NOTE : '';
     }
 
     /**
@@ -4338,6 +4433,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             ...(memory.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
             // The message this control was asked in: every control of it goes to Orbit under an id made from that message, so one sent again is done once
             ...(memory.dmEventId ? { inbound: { eventId: memory.dmEventId } } : {}),
+            // The jobs that ended lately, so the jobs list never reads a finished job as "no job" (the Brick chat audit, 26 Nov)
+            ...(admin.computerState ? { endedLately: async () => (await admin.computerState(where.botId!, userId)).jobs?.ended ?? null } : {}),
         });
         // What the bar says has changed: read it fresh next time
         this.computerOnCache.delete(`${where.botId}|${userId}`);
@@ -4601,6 +4698,41 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return runKeyTool(name, args, { where: side, botId: where.botId, userId: memory.userUuid, apps });
     }
 
+    /** Whether this chat offers send_to_universe_team: a Brick (never a room bot), in a direct message, with Orbit set up. */
+    private reportToolOn(channel: 'world' | 'dm', botId: string | undefined, adminApiService?: AdminApiService): boolean {
+        const admin = adminApiService ?? this.adminApiService;
+        return channel === 'dm' && !!botId && !!admin?.isConfigured?.() && (!!this.knownBricks?.has(botId) || !!this.roomBricks?.has(botId));
+    }
+
+    /**
+     * Runs send_to_universe_team (mock "Brick reports inbox") in a Brick's direct message. The note waits with the reply, so the game shows
+     * "Sent to the Universe team" under it with Take it back. The note is product-only, filled from this reply's steps; the person is passed
+     * only for Orbit's one-way count.
+     */
+    private async runReportToolCall(
+        args: Record<string, unknown>,
+        where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; channel: 'world' | 'dm'; source?: string; turn?: ReportTurn }
+    ): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        // Only a Brick, in its direct messages, whatever the model asks for
+        if (!admin || !where.botId || !memory || !this.reportToolOn(where.channel, where.botId, admin)) return { error: "That can't be done in this chat right now." };
+        let personKey: string | undefined;
+        const uuid = memory.userUuid;
+        if (uuid && !uuid.startsWith('temp-')) personKey = `${memory.isGuest === false ? 'person' : 'guest'}:${uuid}`;
+        if (personKey && !/^(person|guest):[A-Za-z0-9_.:-]{1,255}$/.test(personKey)) personKey = undefined;
+        const release = process.env.RELEASE_VERSION?.trim();
+        return runReportTool(args, {
+            admin,
+            botId: where.botId,
+            ...(personKey ? { personKey } : {}),
+            ...(where.turn ? { turn: where.turn } : {}),
+            // The line under the answer, with what was sent and the key to take it back
+            notes: (memory.pendingBricks ??= []),
+            context: { ownKey: where.source === 'own-key', ...(release ? { gameVersion: release.slice(0, 40) } : {}) },
+        });
+    }
+
     /** Runs offer_app for the person in this direct message. What the game shows for it waits with the reply. */
     private async runAppToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
@@ -4620,6 +4752,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * How an image a file tool opens is looked at, the same way as one people send (see the Vision row): the owner's pick when Orbit
+     * says, otherwise Universe AI's default vision, except for a bot on a person's own key. "This model" never sends it elsewhere.
+     */
+    private lookAtOpened(
+        vision: ResolvedVision | undefined,
+        source: string | undefined,
+        abortSignal?: AbortSignal
+    ): { look?: (url: string) => Promise<string> } {
+        if (vision) {
+            if (vision.choice === 'another') return { look: (url: string) => this.describeImages(vision.config, [url], abortSignal) };
+            if (vision.choice === 'universe-ai') return { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
+            return {};
+        }
+        return source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
+    }
+
+    /**
      * Run one file tool (#1508) for the person talking to the bot, in their chat. A file sent again goes out as it was:
      * in a bubble as a line of nearby chat, in a direct message with the reply. Never throws.
      */
@@ -4634,11 +4783,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             playerId?: number;
             abortSignal?: AbortSignal;
             source?: string;
+            /** Where this bot's images go, when Orbit says (the Vision row). */
+            vision?: ResolvedVision;
             /** Set when other people read the reply (#1993): everyone else who is there. */
             present?: readonly string[];
         }
     ): Promise<Record<string, unknown>> {
-        const { botClient, spaceName, botId, playerId, abortSignal, source, present } = where;
+        const { botClient, spaceName, botId, playerId, abortSignal, source, vision, present } = where;
         const admin = where.adminApiService ?? this.adminApiService;
         if (!admin || !botId || playerId === undefined) return { error: "Earlier files can't be looked up right now." };
         const who = this.chatCallFor(botId, playerId, botClient, spaceName);
@@ -4652,8 +4803,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             limits,
             artifacts: artifactsEnabled(),
             linkOf: (store) => linkOfStore(store),
-            // One look through Universe AI's vision, never for a bot on a person's own key (as for images people send)
-            ...(source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
+            // One look at an image it opened, by whoever looks at images people send it: what the owner picked, or, with nothing
+            // picked, Universe AI's vision, never for a bot on a person's own key
+            ...this.lookAtOpened(vision, source, abortSignal),
             send: async (file, url) =>
                 this.someoneCameSince(botClient, spaceName, playerId, present)
                     ? SOMEONE_CAME
@@ -4971,7 +5123,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** The Apps a review in this reply said the computer could do better (the reply's own set, filled as it goes). */
         reviewedApps?: ReadonlySet<string>,
         /** Where the reply is said: the memory tools (what is remembered, forgetting it) are the person's own and run only in their direct message, whatever the model asks for. */
-        channel: 'world' | 'dm' = 'world'
+        channel: 'world' | 'dm' = 'world',
+        /** Where this bot's images go (the Vision row), when Orbit says: an image it opens is looked at the same way as one sent to it. */
+        vision?: ResolvedVision,
+        /** This reply's notes to the Universe team: the steps it ran so far and its reference. */
+        reportTurn?: ReportTurn,
+        /** Where this reply's tools came from (its Apps, and the tools it was offered), to record each step for a note. */
+        reportSources?: StepSources
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -4985,6 +5143,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
         }
         
+        // A note to the Universe team can be about a step of this same round: it waits until the round's other calls ended and were recorded
+        let othersRecorded: () => void = () => undefined;
+        const othersRan = new Promise<void>((resolve) => (othersRecorded = resolve));
+        // Which App ran each call (its connection), by call: the note names that App, not the first one listed under the tool's name
+        const ranOn = new Map<string, string | null | string[]>();
+
         // Execute all tool calls in parallel for better performance
         const toolPromises = validToolCalls.map(async (toolCall) => {
             // A private answer was offered no tools: whatever the model asks for anyway would show its steps, cards and files to the whole space
@@ -5307,7 +5471,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runFileToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present }
+                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present, vision }
                         );
                         break;
 
@@ -5347,6 +5511,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runAppToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case REPORT_TOOL:
+                        await othersRan;
+                        result = await this.runReportToolCall(
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId, channel, source, turn: reportTurn }
                         );
                         break;
 
@@ -5420,6 +5592,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const mcpServerConfig = shareable && botId && !forOthers
                             ? await this.appForLinkTool(botId, toolCall.name, shareable, this.gatePerson(botId, playerId, botClient, spaceName), botClient, parsedArgs)
                             : shareable;
+                        if (mcpServerConfig) ranOn.set(toolCall.id, mcpServerConfig.connectionId ?? null);
                         if (mcpServerConfig) {
                             // A ready-made App's batch call: each action inside it is judged on its own (game "Ask, Do, Ignore" for Bricks). What
                             // runs right away runs now, what asks first goes on one card, what is off is never sent. Someone else keeps today's rules.
@@ -5430,7 +5603,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 if (split.kind === 'parts') {
-                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
+                                    // The Apps that ran a part: one, or all of them when parts ran on more than one (a note names none of them then,
+                                    // but two such batches on different Apps stay two notes). Until a call is sent, the Apps it is for (as one call
+                                    // that waits for an OK names its App); once calls are sent, only the Apps they went to, never one whose part waits
+                                    const apps = (ids: Array<string | null>) => {
+                                        const ran = new Set(ids);
+                                        ranOn.set(toolCall.id, ran.size === 1 ? [...ran][0] : ran.size === 0 ? null : [...ran].map((id) => id ?? '').sort());
+                                    };
+                                    apps(split.parts.filter((part) => part.decision.kind !== 'refuse').map((part) => part.entry.connectionId ?? null));
+                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds, sentTo: apps });
                                     break;
                                 }
                             }
@@ -5544,8 +5725,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
         });
 
+        // Each step this round ran (never a note itself), kept for a note later in this round or this reply
+        const recorded = Promise.all(toolPromises.filter((_, index) => validToolCalls[index].name !== REPORT_TOOL))
+            .then((results) => {
+                if (reportTurn && reportSources) noteWhatRan(reportTurn, results.map((ran) => (ranOn.has(ran.id) ? { ...ran, ranOn: ranOn.get(ran.id) } : ran)), reportSources);
+            })
+            .finally(othersRecorded);
+
         // Wait for all tool calls to complete in parallel
-        return Promise.all(toolPromises);
+        const results = await Promise.all(toolPromises);
+        await recorded.catch(() => undefined);
+        return results;
     }
 
     /**
@@ -5776,6 +5966,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         spaceName?: string;
         abortSignal?: AbortSignal;
         toolTimeoutSeconds?: number | null;
+        /** Told the connections of the Apps that calls were sent to, when any were (a part that waits for an OK or was held back is not among them). */
+        sentTo?: (connections: Array<string | null>) => void;
     }): Promise<unknown> {
         const { botId, args, playerId, botClient, spaceName } = input;
         const byIndex = (a: AppPart, b: AppPart) => a.index - b.index;
@@ -5879,6 +6071,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // Each action's own result in the answer says whether it was done; a call that failed fails them all
             results.push({ group, answer, outcomes: batchOutcomes(answer, group.map((part) => part.slug), outcomeOf(answer)) });
         }
+        if (results.length > 0) input.sentTo?.(results.map(({ group }) => group[0].entry.connectionId ?? null));
         const outcomeOfPart = new Map<AppPart, PartOutcome>();
         for (const { group, outcomes } of results) group.forEach((part, at) => outcomeOfPart.set(part, outcomes[at]));
         // The things it made go back to the limit when the call that would have made them proved it made nothing
