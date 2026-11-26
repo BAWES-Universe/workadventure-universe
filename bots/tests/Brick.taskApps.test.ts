@@ -345,6 +345,21 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(propose).toHaveBeenCalledWith(expect.objectContaining({ decision: expect.objectContaining({ kind: 'ask', heading: 'makesNew' }) }));
     });
 
+    it('offers and runs a link tool the Apps share through the first App that lets it be used', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => {
+            const policy = serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS);
+            return serverId === 'g1' ? { ...policy, settings: { ...policy.settings, looksUp: 'off' as const } } : policy;
+        });
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const { apps, call } = setUp({}, { discover: async () => ({ tools: [tool(LOOKUP)], servers: new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }]]) }), gate });
+        const session = (await apps.open(run()))!;
+        expect(session.definitions.map((definition) => definition.function.name)).toEqual([LOOKUP]);
+        await session.call(LOOKUP, { queries: ['events'] });
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
+    });
+
     it('sends a batch through the App its actions belong to, and refuses one that mixes Apps or names none clearly', async () => {
         const { apps, call } = withGate({ ...gmail, otherApps: [calendar] });
         const session = (await apps.open(run()))!;

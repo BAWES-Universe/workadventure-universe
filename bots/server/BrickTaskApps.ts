@@ -85,7 +85,7 @@ export class TaskApps {
                 if (name === READ_PAGE_TOOL || name === FINISH_CHECK_TOOL) return;
                 const entry = found.servers.get(name);
                 if (!entry) return;
-                const verdict = await this.deps.gate.decide(this.gateCall(run, name, entry));
+                const { verdict } = await this.decideFor(run, name, entry);
                 // A ready-made App's batch tool is offered as it is: each call brings its actions, judged one by one when it is made
                 const offeredBatch = isBatchTool(name) && verdict.kind === 'run' && !verdict.heading;
                 if (offeredBatch || this.refusal(verdict, name) === null) {
@@ -116,6 +116,22 @@ export class TaskApps {
         return policies.length > 0 ? withoutOff(answer, (slug) => policies.some((policy) => isOffRow(policy!, slug))) : answer;
     }
 
+    /**
+     * The gate's verdict on a tool, and the App the step goes through. A link tool that several ready-made Apps share (their search,
+     * schemas, connections) goes through the first of them that lets it be used, as in chat; a batch goes through the App it was routed to.
+     */
+    private async decideFor(run: DueRun, name: string, entry: ToolServerEntry, args?: Record<string, unknown>): Promise<{ app: ToolServerEntry; verdict: GateDecision }> {
+        const apps = entry.readyMade && entry.otherApps?.length && !isBatchTool(name) ? [entry, ...entry.otherApps] : [entry];
+        let first: { app: ToolServerEntry; verdict: GateDecision } | undefined;
+        for (const app of apps) {
+            // eslint-disable-next-line no-await-in-loop
+            const verdict = await this.deps.gate.decide(this.gateCall(run, name, app, args));
+            first ??= { app, verdict };
+            if (this.refusal(verdict, name) === null) return { app, verdict };
+        }
+        return first!;
+    }
+
     private gateCall(run: DueRun, toolName: string, entry: ToolServerEntry, args?: Record<string, unknown>): GateCall {
         return {
             botId: run.brickId,
@@ -142,6 +158,8 @@ export class TaskApps {
 
     private async call(run: DueRun, name: string, args: Record<string, unknown>, entry: ToolServerEntry | undefined, state: { waiting: boolean }): Promise<string> {
         if (!entry) return JSON.stringify({ error: 'That is not something a check can do.' });
+        // Every App under this name, for what the link's lookups answer, whichever App the step goes through
+        const listed = entry;
         try {
             // A batch goes through the one App its actions belong to, holding them as they were read
             if (isBatchTool(name)) {
@@ -150,7 +168,9 @@ export class TaskApps {
                 ({ app: entry, args } = routed);
             }
             // The check right before the call: the tool, the person and the settings as they are now
-            const verdict = await this.deps.gate.decide(this.gateCall(run, name, entry, args));
+            const decided = await this.decideFor(run, name, entry, args);
+            entry = decided.app;
+            const verdict = decided.verdict;
             const why = this.refusal(verdict, name);
             if (why !== null) return refused(why);
             if (verdict.kind === 'refuse') return refused(verdict.line);
@@ -158,7 +178,7 @@ export class TaskApps {
             const asks = verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading);
             if (!asks) {
                 const answer = await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) });
-                return asText(await this.withoutOffActions(run.brickId, name, entry, answer));
+                return asText(await this.withoutOffActions(run.brickId, name, listed, answer));
             }
             return await this.askFor(
                 run,
