@@ -243,10 +243,19 @@
                                     shownBotCount === shownBotCountOnScheduleForConfig
                                         ? lastSavedBotConfig
                                         : savedConfigOnSchedule;
+                                // A refusal can only be about the Vision pick when this save carried one that is not what was saved:
+                                // a refusal about anything else (a position, a route) leaves the pick as it is
+                                let savedVision: unknown = null;
+                                try {
+                                    savedVision = saved ? (JSON.parse(saved) as { vision?: unknown }).vision ?? null : null;
+                                } catch {
+                                    savedVision = null;
+                                }
+                                const visionInThisSave = JSON.stringify(bot.behaviorConfig?.vision ?? null);
                                 if (
                                     currentBot &&
-                                    JSON.stringify(currentBot.behaviorConfig?.vision ?? null) ===
-                                        JSON.stringify(bot.behaviorConfig?.vision ?? null)
+                                    visionInThisSave !== JSON.stringify(savedVision) &&
+                                    JSON.stringify(currentBot.behaviorConfig?.vision ?? null) === visionInThisSave
                                 ) {
                                     const reverted = withoutRefused(currentBot, "config", saved);
                                     // Only when something was really put back: a refusal about something else changes nothing here,
