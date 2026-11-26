@@ -4,7 +4,8 @@ import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { i18nObject } from "../../../../i18n/i18n-util";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import { lastSeenDay } from "../UserList/Friends";
-import { OFFLINE_GREY, statusDotColour, statusWords } from "./ChatStatus";
+import { partnerStatus } from "../Room/DirectChat/PartnerStatus";
+import { OFFLINE_GREY, profileStatusLine, statusDotColour, statusWords } from "./ChatStatus";
 
 // 1 Nov 2026, 15:00 in whatever zone the tests run in.
 const NOW = new Date(2026, 10, 1, 15, 0, 0).getTime();
@@ -57,6 +58,49 @@ describe("status of a direct chat (#1731)", () => {
             expect(statusDotColour({ kind: "bot", state: "online" }, LL())).toBe("#68e97a");
             expect(statusDotColour({ kind: "bot", state: "unready" }, LL())).toBe("#ffffff");
             expect(statusDotColour({ kind: "bot", state: undefined }, LL())).toBeUndefined();
+        });
+    });
+
+    describe("the Profile's status line", () => {
+        it("says Online for a Brick the header calls Online (it has no avatar and no chat presence)", () => {
+            // What the Profile read before: a Brick is nowhere in the world and publishes no presence, so it was "offline".
+            expect(partnerStatus({ kind: "offline" }, LL()).label).toBe("Offline");
+            const facts = { kind: "bot", state: "online" } as const;
+            const line = profileStatusLine(facts, LL());
+            expect(line.label).toBe("Online");
+            expect(line.label).toBe(statusWords(facts, LL(), "en-US", NOW));
+            expect(line.color).toBe(statusDotColour(facts, LL()));
+        });
+
+        it("matches the header for every state a bot can be in", () => {
+            for (const state of ["online", "resting", "unready", "gone"] as const) {
+                const facts = { kind: "bot", state } as const;
+                expect(profileStatusLine(facts, LL())).toEqual({
+                    label: statusWords(facts, LL(), "en-US", NOW),
+                    color: statusDotColour(facts, LL()),
+                });
+            }
+        });
+
+        it("shows no line, and no dot, until the bot server has answered", () => {
+            expect(profileStatusLine({ kind: "bot", state: undefined }, LL())).toEqual({
+                label: undefined,
+                color: undefined,
+            });
+        });
+
+        it("stays quiet in words where the header does, with the dot as the header has it", () => {
+            // Someone with no access to the bot: the header shows no words, but keeps the bot server's dot.
+            expect(profileStatusLine({ kind: "bot", state: "online" }, LL(), { words: undefined })).toEqual({
+                label: undefined,
+                color: "#68e97a",
+            });
+        });
+
+        it("leaves a person's line as it was", () => {
+            const place = { kind: "here", roomName: "Cafe" } as const;
+            expect(profileStatusLine({ kind: "person", place }, LL())).toEqual(partnerStatus(place, LL()));
+            expect(profileStatusLine({ kind: "person", place: { kind: "offline" } }, LL()).label).toBe("Offline");
         });
     });
 

@@ -41,3 +41,25 @@ export function statusWords(
     }
     return partnerStatus(facts.place, ll).label;
 }
+
+/**
+ * The status line under the name on a direct chat's Profile, from the same facts as the chat header, so the two always
+ * agree. A Brick has no avatar in the world and publishes no chat presence, so reading where it is said "Offline" while
+ * the header (the bot server's state) said "Online". `shown.words` is the state the header shows in words, which stays
+ * quiet for someone with no access to the bot, while the dot follows the bot server's state (as the header's dot does).
+ * No label means no line (a bot that has not answered yet).
+ */
+export function profileStatusLine(
+    facts: ChatStatusFacts,
+    ll: TranslationFunctions,
+    shown?: { words: BotAvailability | undefined }
+): { label?: string; color?: string } {
+    if (facts.kind === "bot") {
+        const words = shown ? shown.words : facts.state;
+        return {
+            label: words ? ll.chat.botStatus[words]() : undefined,
+            color: facts.state ? botStatusColour(facts.state) : undefined,
+        };
+    }
+    return partnerStatus(facts.place, ll);
+}
