@@ -69,6 +69,16 @@ const NOT_A_NAME_WHEN_BARE = new Set([
     'fine', 'good', 'great', 'okay', 'ok', 'glad', 'happy', 'sure', 'done', 'ready', 'afraid', 'curious', 'interested', 'new',
     'hungry', 'sad', 'tired', 'excited', 'angry', 'frustrated', 'worried', 'scared', 'nervous', 'thirsty', 'bored', 'lonely', 'confused', 'sick', 'ill',
     'busy', 'late', 'early', 'free', 'online', 'offline', 'stuck', 'lost', 'home',
+    // Who they are and what they speak or believe, not what they are called ("I'm American", "I'm Christian and I like tea")
+    'american', 'british', 'canadian', 'australian', 'mexican', 'brazilian', 'argentinian', 'colombian', 'chilean', 'peruvian', 'cuban',
+    'german', 'french', 'spanish', 'italian', 'dutch', 'swedish', 'norwegian', 'danish', 'finnish', 'polish', 'russian', 'ukrainian', 'greek',
+    'turkish', 'irish', 'scottish', 'welsh', 'english', 'portuguese', 'czech', 'hungarian', 'romanian', 'bulgarian', 'serbian', 'croatian',
+    'egyptian', 'moroccan', 'tunisian', 'algerian', 'libyan', 'sudanese', 'kuwaiti', 'saudi', 'emirati', 'qatari', 'bahraini', 'omani', 'yemeni',
+    'iraqi', 'syrian', 'lebanese', 'jordanian', 'palestinian', 'israeli', 'iranian', 'persian', 'afghan', 'pakistani', 'indian', 'bangladeshi',
+    'nepali', 'chinese', 'japanese', 'korean', 'vietnamese', 'thai', 'filipino', 'indonesian', 'malaysian', 'singaporean', 'african', 'nigerian',
+    'kenyan', 'ethiopian', 'ghanaian', 'european', 'asian', 'arab', 'arabic', 'hebrew', 'latin', 'swiss', 'belgian', 'austrian', 'icelandic',
+    'muslim', 'christian', 'jewish', 'hindu', 'buddhist', 'sikh', 'catholic', 'orthodox', 'atheist', 'agnostic', 'vegan', 'vegetarian',
+    'single', 'married', 'divorced', 'engaged', 'retired', 'unemployed', 'bilingual',
 ]);
 /** Months are names too ("April", "May"), unless a day follows ("call me May 3rd", "I'm April 5"). */
 const MONTH_NAMES = new Set(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']);
@@ -145,7 +155,7 @@ function thingOf(rest: string): string | null {
 
 /** Words that may stand between "I" and what they say they do ("I really don't like", "I honestly can't stand"). Never a word that turns it round. */
 const ADVERBS = '(?:really|absolutely|totally|just|also|still|actually|truly|definitely|always|honestly|personally|seriously|genuinely|simply|completely|literally|generally|usually|mostly|probably|quite|kind of|sort of|do)';
-const LIKE = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+((?:${ADVERBS}\\s+)*)(${LIKE_VERBS}|${DISLIKE_VERBS})\\s+(.+)$`, 'u');
+const LIKE = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+((?:${ADVERBS}\\s+)*)(${LIKE_VERBS}|${DISLIKE_VERBS})\\s+(.+)$`, 'iu');
 const NEG_LIKE = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+(?:${ADVERBS}\\s+)*(?:don${APOS}?t|do not|never|no longer|can${APOS}?t stand|cannot stand|can${APOS}?t bear|hardly|barely|dont)\\s+(?:(?:really|actually|truly|much|particularly|even|ever|quite)\\s+)*(${LIKE_VERBS}|care for|enjoy)\\s+(.+)$`, 'iu');
 const CANT_STAND = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+(?:${ADVERBS}\\s+)*(?:can${APOS}?t|cannot)\\s+(?:really\\s+)?(?:stand|bear|stomach)\\s+(.+)$`, 'iu');
 const FAVORITE = new RegExp(`\\bmy\\s+(?:all[- ]time\\s+)?favou?rite\\s+((?:\\p{L}+\\s+){0,2}?)(?:is|are)\\s+(.+)$`, 'iu');
