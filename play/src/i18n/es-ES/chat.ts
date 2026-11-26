@@ -57,6 +57,10 @@ const chat: DeepPartial<Translation["chat"]> = {
                 "Estás escribiendo en el ordenador de {name}. Un programa que instaló {name} sigue en ejecución y podría ver lo que escribes.",
             notReady: "No se pudo preparar el ordenador. No se cambió nada en él. Inténtalo de nuevo.",
         },
+        files: {
+            artifactsMade: "{count} {{artefacto creado|artefactos creados}}",
+            opensArtifacts: "Abre Tus artefactos",
+        },
     },
     artifacts: {
         kindApp: "Mini app",
@@ -183,12 +187,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         artifactsEmpty: "Aún no hay artefactos",
         artifactsMore: "Mostrar más",
         artifactsFailed: "No se pudieron cargar los artefactos.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "{count} {{artefacto creado|artefactos creados}}",
-            opensArtifacts: "Abre Tus artefactos",
-        },
     },
 };
 

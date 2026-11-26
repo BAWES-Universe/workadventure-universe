@@ -277,6 +277,10 @@ const chat: DeepPartial<Translation["chat"]> = {
                 "Du tippst auf dem Computer von {name}. Ein von {name} installiertes Programm läuft noch und könnte sehen, was du tippst.",
             notReady: "Der Computer konnte nicht vorbereitet werden. Es wurde nichts geändert. Versuche es erneut.",
         },
+        files: {
+            artifactsMade: "{count} {{Artefakt|Artefakte}} erstellt",
+            opensArtifacts: "Öffnet Deine Artefakte",
+        },
     },
     artifacts: {
         kindApp: "Mini-App",
@@ -406,12 +410,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         artifactsEmpty: "Noch keine Artefakte",
         artifactsMore: "Mehr anzeigen",
         artifactsFailed: "Die Artefakte konnten nicht geladen werden.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "{count} {{Artefakt|Artefakte}} erstellt",
-            opensArtifacts: "Öffnet Deine Artefakte",
-        },
     },
 };
 

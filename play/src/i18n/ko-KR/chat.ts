@@ -533,6 +533,10 @@ const chat: DeepPartial<Translation["chat"]> = {
                 "{name}의 컴퓨터에 입력하고 있어요. {name}이(가) 설치한 프로그램이 아직 실행 중이라 입력하는 내용을 볼 수 있어요.",
             notReady: "컴퓨터를 준비하지 못했어요. 아무것도 바뀌지 않았어요. 다시 시도해 주세요.",
         },
+        files: {
+            artifactsMade: "만든 아티팩트 {count}개",
+            opensArtifacts: "내 아티팩트를 엽니다",
+        },
     },
     artifacts: {
         kindApp: "미니 앱",
@@ -657,12 +661,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         artifactsEmpty: "아직 아티팩트가 없습니다",
         artifactsMore: "더 보기",
         artifactsFailed: "아티팩트를 불러오지 못했습니다.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "만든 아티팩트 {count}개",
-            opensArtifacts: "내 아티팩트를 엽니다",
-        },
     },
 };
 

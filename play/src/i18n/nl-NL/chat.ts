@@ -297,6 +297,10 @@ const chat: DeepPartial<Translation["chat"]> = {
                 "Je typt op de computer van {name}. Een programma dat {name} heeft geïnstalleerd draait nog en kan zien wat je typt.",
             notReady: "De computer kon niet worden voorbereid. Er is niets gewijzigd. Probeer het opnieuw.",
         },
+        files: {
+            artifactsMade: "{count} {{artefact|artefacten}} gemaakt",
+            opensArtifacts: "Opent Jouw artefacten",
+        },
     },
     artifacts: {
         kindApp: "Mini-app",
@@ -425,12 +429,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         artifactsEmpty: "Nog geen artefacten",
         artifactsMore: "Meer tonen",
         artifactsFailed: "De artefacten konden niet worden geladen.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "{count} {{artefact|artefacten}} gemaakt",
-            opensArtifacts: "Opent Jouw artefacten",
-        },
     },
 };
 
