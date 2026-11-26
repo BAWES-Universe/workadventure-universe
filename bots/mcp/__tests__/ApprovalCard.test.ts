@@ -280,6 +280,9 @@ describe('how a call ended', () => {
         expect(looksLikeData('[{"id":1}]')).toBe(true);
         expect(looksLikeData('["a"]')).toBe(true);
         expect(looksLikeData('[ERROR] no such team')).toBe(false);
+        expect(looksLikeData('```json\n[1]\n```')).toBe(true);
+        expect(looksLikeData('```\n["a"]\n```')).toBe(true);
+        expect(looksLikeData('```Created 2 events```')).toBe(false);
         expect(looksLikeData('[1] emails found')).toBe(false);
         expect(looksLikeData('[2024-05-01] Message sent')).toBe(false);
         expect(looksLikeData('[1, 2, 3]')).toBe(true);

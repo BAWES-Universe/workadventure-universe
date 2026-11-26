@@ -354,7 +354,11 @@ export function chatAsks<M extends MessageWithAsk>(messages: Readable<readonly M
 export function looksLikeData(text: string): boolean {
     let body = text.trim();
     const fence = /^```[\w-]*\s*/.exec(body);
-    if (fence) body = body.slice(fence[0].length).trimStart();
+    if (fence)
+        body = body
+            .slice(fence[0].length)
+            .replace(/\s*```\s*$/, "")
+            .trim();
     if (body.startsWith("{")) return true;
     if (!body.startsWith("[")) return false;
     try {
