@@ -91,9 +91,20 @@ describe('an encoded body is taken out, and what the Brick reads a mail by stays
         expect(file).toEqual({ name: 'a.ts', encoding: 'utf-8', content: source });
     });
 
+    it('never reads a file as a mail: a decoded source file keeps its tags, styles and scripts, however many it has', () => {
+        const source = `<script lang="ts">\n  let n = 0;\n</script>\n<style>.a { color: red }</style>\n${'<div class="a"><span>{n}</span></div>\n'.repeat(20)}`;
+        const file = { name: 'Counter.svelte', encoding: 'base64', content: Buffer.from(source).toString('base64') };
+        expect(JSON.parse(fitAppAnswer(file))).toEqual({ ...file, encoding: 'utf-8', content: source });
+        // Nor when the answer is too long and markup is being read as text
+        const long = JSON.parse(fitAppAnswer({ files: [file, { ...file, name: 'B.svelte' }] }, 1_500)) as { files: { content: string }[] };
+        expect(long.files[0].content).toBe(source);
+    });
+
     it('takes the tags, styles and scripts out of a mail written in HTML, and leaves a short snippet of markup alone', () => {
         const html = `<!DOCTYPE html><html><head><style>.a{color:red}</style></head><body><div><p>Dear Sara,</p><p>Your appointment is on <b>Tuesday</b> &amp; it is free.</p></div>${'<p>Filler line.</p>'.repeat(30)}<script>track()</script></body></html>`;
-        const read = JSON.parse(fitAppAnswer({ subject: 'Appointment', html })) as { subject: string; html: string };
+        // Markup that fits is what the App was asked for and stays as it is; the text is read only when the answer would not fit
+        expect(fitAppAnswer({ subject: 'Appointment', html })).toBe(JSON.stringify({ subject: 'Appointment', html }));
+        const read = JSON.parse(fitAppAnswer({ subject: 'Appointment', html }, 700)) as { subject: string; html: string };
         expect(read.subject).toBe('Appointment');
         expect(read.html).toContain('Dear Sara,');
         expect(read.html).toContain('Your appointment is on Tuesday & it is free.');

@@ -110,30 +110,35 @@ function decodedFile(value: Record<string, unknown>): string | null {
     return text.includes('\ufffd') ? null : text;
 }
 
-/** The answer rebuilt without what nobody reads. Always new objects and lists, so what is built can be changed in place. */
-function tidy(value: unknown, taken: Taken): unknown {
+/**
+ * The answer rebuilt without what nobody reads. Always new objects and lists, so what is built can be changed in place. `html` also turns
+ * raw HTML into its text: it is only asked for when the answer does not fit otherwise, because markup can be what an App was asked for
+ * (a page's source, a component) and what fits is never changed.
+ */
+function tidy(value: unknown, taken: Taken, html: boolean): unknown {
     if (typeof value === 'string') {
         if (isEncoded(value)) {
             taken.count++;
             return leftOut(value);
         }
         const json = readJson(value);
-        if (json.ok) return tidy(json.value, taken);
-        if (looksLikeHtml(value)) {
+        if (json.ok) return tidy(json.value, taken, html);
+        if (html && looksLikeHtml(value)) {
             taken.count++;
             return htmlAsText(value);
         }
         return value;
     }
-    if (Array.isArray(value)) return value.map((one) => tidy(one, taken));
+    if (Array.isArray(value)) return value.map((one) => tidy(one, taken, html));
     if (isObject(value)) {
         // A file is its text, not its base64
         const file = decodedFile(value);
         const out: Record<string, unknown> = {};
         for (const [key, inner] of Object.entries(value)) {
             if (file !== null && key === 'content') {
+                // The file's own text, as it is: source code is never read as a mail
                 taken.count++;
-                out[key] = tidy(file, taken);
+                out[key] = file;
             } else if (file !== null && key === 'encoding') {
                 out[key] = 'utf-8';
             } else if (key.toLowerCase() === 'headers' && Array.isArray(inner) && isMailHeaders(inner)) {
@@ -141,7 +146,7 @@ function tidy(value: unknown, taken: Taken): unknown {
                 if (kept.length < inner.length) taken.count++;
                 out[key] = kept;
             } else {
-                out[key] = tidy(inner, taken);
+                out[key] = tidy(inner, taken, html);
             }
         }
         return out;
@@ -198,9 +203,11 @@ export function fitAppAnswer(value: unknown, max: number = RUN_ANSWER_MAX): stri
     const asText = (answer: unknown) => (typeof answer === 'string' ? answer : JSON.stringify(answer ?? null));
     const asIs = asText(value);
     const taken: Taken = { count: 0 };
-    let answer = tidy(value, taken);
+    let answer = tidy(value, taken, false);
     // Nothing to take out and it fits: exactly as it came
     if (taken.count === 0 && asIs.length <= max) return asIs;
+    // Still too long: raw HTML is read as its text too
+    if (asText(answer).length > max) answer = tidy(value, { count: 0 }, true);
     // Whole items out of the longest list, then of the next longest, until it fits or no list can be shortened
     for (let round = 0; round < 12 && asText(answer).length > max; round++) {
         const place = longestList(answer);
