@@ -198,12 +198,13 @@ describe('asking Orbit', () => {
     it('the computer read asks for the job "try again" would carry on, and an Orbit that does not say names none', async () => {
         process.env.BOT_SERVICE_TOKEN = 'secret';
         request.mockResolvedValueOnce({ data: { available: true, on: true, busy: false, retry: { id: OLD, title: 'Visa form', how: 'error', endedAt: null, toldAt: '2026-11-23T08:00:00.000Z' } } });
-        expect(await service().computerState(BRICK, 'uuid-alice')).toEqual({ on: true, retry: retry() });
-        expect(request).toHaveBeenCalledWith(expect.objectContaining({ method: 'get', params: { userId: 'uuid-alice', retry: '1' } }));
+        expect(await service().computerState(BRICK, 'uuid-alice')).toMatchObject({ on: true, retry: retry() });
+        // The same one read also asks for the person's jobs (the Brick chat audit, 26 Nov: tests/ComputerJobsNow.test.ts)
+        expect(request).toHaveBeenCalledWith(expect.objectContaining({ method: 'get', params: { userId: 'uuid-alice', retry: '1', jobs: '1' } }));
         request.mockResolvedValueOnce({ data: { available: true, on: true, busy: false } });
-        expect(await service().computerState(BRICK, 'uuid-alice')).toEqual({ on: true, retry: null });
+        expect(await service().computerState(BRICK, 'uuid-alice')).toMatchObject({ on: true, retry: null });
         request.mockResolvedValueOnce({ data: { available: true, on: false, retry: { id: OLD, title: 'Visa form', how: 'error' } } });
-        expect(await service().computerState(BRICK, 'uuid-alice')).toEqual({ on: false, retry: null });
+        expect(await service().computerState(BRICK, 'uuid-alice')).toMatchObject({ on: false, retry: null });
     });
 });
 

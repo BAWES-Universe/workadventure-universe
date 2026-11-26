@@ -139,6 +139,7 @@ import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefin
 import type { StartKeyStore } from '../server/ComputerStartKeys';
 import { CANCEL_JOB_TOOL, COMPUTER_JOBS_TOOL, JOB_FIRST_TOOL, PAUSE_JOB_TOOL, RESUME_JOB_TOOL, STOP_COMPUTER_TOOL, TELL_JOB_TOOL, computerControlToolDefinitions, newControlState, runComputerControlTool, startControlTurn } from './ComputerControlTools';
 import { asksToTryAgain, offersTryAgain, tryAgainNote, type RetryJob } from './ComputerTryAgain';
+import { NO_COMPUTER_NOTE, computerJobsNote, type ComputerJobsNow } from './ComputerJobsNow';
 import { COMPUTER_TOOL, ConfirmationQueue, computerToolDefinitions, computerToolsNote, forgetSettledStarts, isComputerTool, reviewAppSteps, runComputerTool, withReviewNote, type AppStepReview } from './ComputerTools';
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
@@ -1753,7 +1754,7 @@ export class AIService {
             }
 
             // A Brick's own computer, in its owner's direct messages and only while it is on for them (game #2000)
-            const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService) : false;
+            const computerOn = channel === 'dm' && botId && playerId !== undefined ? await this.computerOnFor(botId, playerId, adminApiService, true) : false;
             // The owner, in their own Brick's direct messages (#2002): Orbit says whether this person may ask it to keep reminders
             const taskSettings = !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.taskSettingsOf(botId, playerId, botClient, adminApiService) : null;
 
@@ -1783,6 +1784,8 @@ export class AIService {
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
                     computerOn ? computerToolsNote() : '',
+                    // What is on its computer right now, and what ended lately, read fresh with this message: it never claims a job that is not there (the Brick chat audit, 26 Nov)
+                    channel === 'dm' && !forOthers && !options?.onlyForThem && botId && playerId !== undefined ? this.computerJobsNoteFor(botId, playerId) : '',
                     // "Try again" carries on the job that failed as ours or that we ended, only when the person asks for it (piece 8)
                     computerOn && !forOthers && !options?.onlyForThem && botId && playerId !== undefined ? await this.tryAgainNoteFor(botId, playerId, adminApiService) : '',
                     instantListing ? instantToolsNote() : '',
@@ -4138,7 +4141,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             return this.brickNames.get(botId);
         }
     }
-    private computerOnCache = new Map<string, { on: boolean; at: number; retry?: RetryJob | null }>();
+    private computerOnCache = new Map<string, { on: boolean; at: number; retry?: RetryJob | null; available?: boolean; jobs?: ComputerJobsNow | null; read?: boolean }>();
     /** Where the key of a computer job's start waits while its outcome is open, so a restart of this server finds it (see `ComputerStartKeys`). Set by the server when it has a shared store. */
     private computerStartKeys: StartKeyStore | undefined;
     setComputerStartKeys(store: StartKeyStore | undefined): void {
@@ -4149,17 +4152,41 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      * Whether this Brick's computer is on for the person in this direct message. Orbit answers; the answer is kept a short while so
      * chat stays fast, and a failure means off. Never wakes anything.
      */
-    private async computerOnFor(botId: string, playerId: number, adminApiService?: AdminApiService): Promise<boolean> {
+    private async computerOnFor(botId: string, playerId: number, adminApiService?: AdminApiService, fresh = false): Promise<boolean> {
         const admin = adminApiService ?? this.adminApiService;
         const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
         if (!this.ownBricks.has(botId) || !admin?.isConfigured?.() || !userId) return false;
         const key = `${botId}|${userId}`;
         const known = this.computerOnCache.get(key);
-        if (known && Date.now() - known.at < 30_000) return known.on;
-        // The same one read also names the job "try again" would carry on (piece 8); an admin without that read says only whether it is on
-        const state = admin.computerState ? await admin.computerState(botId, userId).catch(() => ({ on: false, retry: null })) : { on: await admin.computerIsOn(botId, userId).catch(() => false), retry: undefined };
-        this.computerOnCache.set(key, { on: state.on, at: Date.now(), ...(state.retry !== undefined ? { retry: state.retry } : {}) });
+        // A new message reads it fresh (`fresh`): a computer given a moment ago is on for it, and its jobs are as they are now (the Brick chat audit, 26 Nov)
+        if (!fresh && known && Date.now() - known.at < 30_000) return known.on;
+        // The same one read also names the job "try again" would carry on (piece 8) and the person's jobs; an admin without that read says only whether it is on
+        const state: { on: boolean; retry?: RetryJob | null; available?: boolean; jobs?: ComputerJobsNow | null; read?: boolean } = admin.computerState
+            ? await admin.computerState(botId, userId).catch(() => ({ on: false, retry: null, read: false }))
+            : { on: await admin.computerIsOn(botId, userId).catch(() => false) };
+        this.computerOnCache.set(key, {
+            on: state.on,
+            at: Date.now(),
+            ...(state.retry !== undefined ? { retry: state.retry } : {}),
+            ...(state.available !== undefined ? { available: state.available } : {}),
+            ...(state.jobs !== undefined ? { jobs: state.jobs } : {}),
+            ...(state.read !== undefined ? { read: state.read } : {}),
+        });
         return state.on;
+    }
+
+    /**
+     * What a person's own Brick is told about its computer with this message (the Brick chat audit, 26 Nov), from the read this message's `computerOnFor` just made: its jobs working, waiting
+     * or in line and the ones that ended lately, or, when the computer could be given but is not on, that it has none right now. Nothing when Orbit could not be read, sent no jobs (an older
+     * Orbit), or there is no computer to give.
+     */
+    private computerJobsNoteFor(botId: string, playerId: number): string {
+        const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
+        if (!userId || !this.ownBricks.has(botId)) return '';
+        const known = this.computerOnCache.get(`${botId}|${userId}`);
+        if (!known || known.read !== true) return '';
+        if (known.on) return known.jobs ? computerJobsNote(known.jobs) : '';
+        return known.available === true ? NO_COMPUTER_NOTE : '';
     }
 
     /**
@@ -4380,6 +4407,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             ...(memory.computerConfirmations ? { confirmations: memory.computerConfirmations } : {}),
             // The message this control was asked in: every control of it goes to Orbit under an id made from that message, so one sent again is done once
             ...(memory.dmEventId ? { inbound: { eventId: memory.dmEventId } } : {}),
+            // The jobs that ended lately, so the jobs list never reads a finished job as "no job" (the Brick chat audit, 26 Nov)
+            ...(admin.computerState ? { endedLately: async () => (await admin.computerState(where.botId!, userId)).jobs?.ended ?? null } : {}),
         });
         // What the bar says has changed: read it fresh next time
         this.computerOnCache.delete(`${where.botId}|${userId}`);
