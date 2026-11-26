@@ -74,51 +74,100 @@ describe('joining the answers of several Apps', () => {
 describe('a session the App’s link refused', () => {
     const sent = { tools: [{ tool_slug: 'GOOGLECALENDAR_CREATE_EVENT', arguments: {} }], session_id: 'sess-g1' };
 
-    it('is told only from a refusal of the whole call that names the session id', () => {
-        expect(sessionRefused({ error: 'Invalid session id sess-g1' }, sent)).toBe(true);
+    const refusal = (error: string, id = 'sess-g1', outcome = 'failed') => sessionRefused({ error, outcome }, { tools: sent.tools, session_id: id });
+
+    it('is told only when the whole error line is one of the known refusal shapes, with the id that was sent where an id is named', () => {
+        const refused: Array<[string, string?]> = [
+            ['Invalid session'],
+            ['Unknown session'],
+            ['Expired session'],
+            ['Invalid session id'],
+            ['Invalid session id sess-g1'],
+            ['Invalid session id: sess-g1'],
+            ['Invalid session id `sess-g1`'],
+            ['Invalid session id "sess-g1".'],
+            ["Invalid session id 'sess-g1'!"],
+            ['Tool error: Invalid session id sess-g1'],
+            ['Error: invalid session id sess-g1'],
+            ['INVALID SESSION ID sess-g1'],
+            ['Session not found'],
+            ['Session is not found'],
+            ['Session is invalid'],
+            ['Session was expired'],
+            ['Session id is not found'],
+            ['Session id was expired'],
+            ['Session id sess-g1 not found'],
+            ['Session id sess-g1 is not found'],
+            ['Session sess-g1 was not found'],
+            ['Tool error: Invalid session id sess-g1 {"results":[{"tool_slug":"A"}],"note":"x"}'],
+            ['Tool error: Invalid session   id  sess-g1 .'],
+            // A named id that is also a word of a refusal, when that is the id that was sent
+            ['Invalid session id unknown', 'unknown'],
+            ['Invalid session id "unknown"', 'unknown'],
+            ['Invalid session id new', 'new'],
+        ];
+        for (const [error, id] of refused) expect([error, refusal(error, id)]).toEqual([error, true]);
         expect(sessionRefused(text({ successful: false, error: 'Session not found' }), sent)).toBe(true);
         expect(sessionRefused(text({ successful: false, error: 'Unknown session' }), sent)).toBe(true);
-        // The refusal quotes the id that was sent
-        expect(sessionRefused({ error: 'Tool error: Invalid session id sess-g1', outcome: 'failed' }, sent)).toBe(true);
-        expect(sessionRefused({ error: 'The link is not answering.' }, sent)).toBe(false);
-        expect(sessionRefused(text({ successful: true, data: { note: 'a session started' } }), sent)).toBe(false);
     });
 
-    it('is never told from the word session alone, a thrown error, an unsure outcome or an answer with results of actions', () => {
-        expect(sessionRefused({ error: 'Strategy session could not be created' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'MCP tool error: invalid session in the transport' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'Invalid session', outcome: 'uncertain' }, sent)).toBe(false);
+    it('is never told from any other line: another id, an id in another case, another word, words about what was done, or an id where a refusal word stands', () => {
+        const not: Array<[string, string?]> = [
+            ['The link is not answering.'],
+            ['Strategy session could not be created'],
+            ['Event note mentions sess-g1'],
+            ['Invalid session id sess-other'],
+            ['Invalid session id SESS-G1'],
+            ['Invalid session id new'],
+            ['Invalid session id unknown'],
+            ['Invalid session id "unknown"'],
+            ["Invalid session id 'expired'"],
+            ['Invalid session id sess-g1x'],
+            ['Invalid session id sess-g'],
+            ['Invalid session. It was sess-g1'],
+            ['Invalid session. Action 1 completed.'],
+            ['Tool error: Invalid session. Action 1 completed.'],
+            ['Invalid session id sess-g1 after the event was created'],
+            ['Invalid session, please start a new one'],
+            ['Session id expired'],
+            ['Tool error: Session id expired'],
+            ['Session id unknown'],
+            ['Session sess-other not found'],
+            ['Session expired for sess-other'],
+            ['Your session id sess-g1 is invalid'],
+            ['Invalid  session id sess-g1 and sess-other'],
+            ['Tool error: Boom {"message":"Invalid session id sess-g1"}'],
+            ['Tool error: {"successful":true,"data":{"results":[{"tool_slug":"A"}]}} then Invalid session'],
+            ['MCP tool error: invalid session in the transport'],
+            ['Invalid session id sess-g1', 'sess-other'],
+            ['Invalid session id', ''],
+        ];
+        for (const [error, id] of not) expect([error, refusal(error, id)]).toEqual([error, false]);
+        // A thrown error, an unsure outcome, an answer that carries results of actions (in data or at the root), a success: no refusal
+        expect(refusal('Invalid session', 'sess-g1', 'uncertain')).toBe(false);
         expect(sessionRefused(text({ successful: false, error: 'Invalid session', data: { results: [{ index: 0, tool_slug: 'A', response: { successful: true } }] } }), sent)).toBe(false);
-        // Another session than the one sent says nothing about this one; the id alone, in another field, is no refusal
-        expect(sessionRefused({ error: 'Invalid session id sess-other' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'Event note mentions sess-g1' }, sent)).toBe(false);
-        // Results at the root, or signs that actions ran in the error's own words
         expect(sessionRefused(text({ successful: false, error: 'Invalid session', results: [{ index: 0, tool_slug: 'A' }] }), sent)).toBe(false);
-        expect(sessionRefused({ error: 'Tool error: {"successful":true,"data":{"results":[{"tool_slug":"A"}]}} then Invalid session', outcome: 'failed' }, sent)).toBe(false);
-        // Only a bare refusal: words about what was done make it a call that may have run
-        expect(sessionRefused({ error: 'Tool error: Invalid session. Action 1 completed.', outcome: 'failed' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'Invalid session id sess-g1 after the event was created', outcome: 'failed' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'Tool error: Invalid session id sess-g1', outcome: 'failed' }, sent)).toBe(true);
-        // An unquoted id after "session id" is the id sent, whatever else the word may mean; the refusal's own verb is not an id
-        expect(sessionRefused({ error: 'Invalid session id unknown', outcome: 'failed' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'Tool error: Session id expired', outcome: 'failed' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'Invalid session id unknown', outcome: 'failed' }, { tools: sent.tools, session_id: 'unknown' })).toBe(true);
-        expect(sessionRefused({ error: 'Session id is not found', outcome: 'failed' }, sent)).toBe(true);
-        // The data a failed call keeps after its words is not read as words (the retry is for lookups only, which change nothing)
-        expect(sessionRefused({ error: 'Tool error: Invalid session id sess-g1 {"results":[{"tool_slug":"A"}],"note":"x"}', outcome: 'failed' }, sent)).toBe(true);
-        expect(sessionRefused({ error: 'Tool error: Boom {"message":"Invalid session id sess-g1"}', outcome: 'failed' }, sent)).toBe(false);
-        // A named id is exactly the one sent, even when it is also a word of a refusal, and in its own case
-        expect(sessionRefused({ error: 'Invalid session id new', outcome: 'failed' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'Invalid session id SESS-G1', outcome: 'failed' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'Invalid session id new', outcome: 'failed' }, { tools: sent.tools, session_id: 'new' })).toBe(true);
-        expect(sessionRefused({ error: 'Invalid session. It was sess-g1', outcome: 'failed' }, sent)).toBe(false);
-        // A quoted name is the id sent or no refusal of it, even when it spells a refusal's own word
-        expect(sessionRefused({ error: 'Invalid session id "unknown"', outcome: 'failed' }, sent)).toBe(false);
-        expect(sessionRefused({ error: "Invalid session id 'expired'", outcome: 'failed' }, sent)).toBe(false);
-        expect(sessionRefused({ error: 'Invalid session id `sess-g1`', outcome: 'failed' }, sent)).toBe(true);
-        expect(sessionRefused({ error: 'Invalid session id "unknown"', outcome: 'failed' }, { tools: sent.tools, session_id: 'unknown' })).toBe(true);
+        expect(sessionRefused(text({ successful: true, data: { note: 'a session started' } }), sent)).toBe(false);
+        expect(sessionRefused(null, sent)).toBe(false);
         // Nothing was sent with a session: nothing to take away
         expect(sessionRefused({ error: 'Invalid session' }, { tools: [] })).toBe(false);
+    });
+
+    it('holds for variants of one shape: the fixed words in any case and spacing, the sent id only as it was sent', () => {
+        const ids = ['sess-g1', 'a.b+c', 'X_9', 'unknown', 'not', 'id'];
+        for (const id of ids) {
+            for (const shape of ['Invalid session id <ID>', 'invalid SESSION ID <ID>.', 'Unknown session id: <ID>', 'Session ID <ID> is not found', 'Session id <ID> was invalid']) {
+                const line = shape.split('<ID>').join(id);
+                expect([line, id, refusal(line, id)]).toEqual([line, id, true]);
+                // The same line for another id, or for the id in another case, is no refusal of this one
+                expect(refusal(line, id + 'x')).toBe(false);
+                // (An id that is itself one of the fixed words, like "id", reads as that word in another case: the line is then a refusal without an id)
+                if (id.toUpperCase() !== id && !['unknown', 'not', 'id'].includes(id)) {
+                    const other = shape.split('<ID>').join(id.toUpperCase());
+                    expect([other, id, refusal(other, id)]).toEqual([other, id, false]);
+                }
+            }
+        }
     });
 
     it('is tried again only on a ready-made App’s own lookups, never on the batch that runs actions', () => {

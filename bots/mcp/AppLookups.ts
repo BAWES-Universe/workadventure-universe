@@ -154,28 +154,51 @@ export const sessionIdOf = (args: Record<string, unknown>): string | undefined =
     return isObject(args?.session) && typeof args.session.id === 'string' && args.session.id !== '' ? args.session.id : undefined;
 };
 
-/** Words that say a session id was not accepted (never just the word "session": an event may be called a "Strategy session"). */
-const SESSION_NOT_ACCEPTED = /\b(invalid|unknown|expired|unrecognized|missing)\s+(\w+\s+)?session\b|\bsession(\s+id)?\s+(is\s+)?(not\s+found|invalid|unknown|expired|missing)\b/i;
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** A fixed word of a refusal, in any case (the session id is the only part compared exactly). */
+const word = (text: string): string => text.replace(/[a-z]/gi, (letter) => `[${letter.toLowerCase()}${letter.toUpperCase()}]`);
 
 /**
- * Every word a bare refusal of a session may be made of. A refusal that says anything else ("Invalid session. Action 1 completed.") may
- * come from a call where some actions ran, so it is never taken for a refusal before anything ran.
+ * The only shapes an error line may have to count as the link refusing the session id that was sent. The WHOLE line (after the connector's
+ * "Tool error:" and without the data kept after it) must be one of them, with the sent id exactly as it was sent (in quotes or not) where an id
+ * is named: any other words, any other id, or the id where a refusal word stands, is no refusal and nothing is tried again.
+ *   Invalid session            Invalid session id <sent id>        Unknown session        Expired session ...
+ *   Session not found          Session id <sent id> is not found   Session is invalid     Session id is expired ...
  */
-/** The words that may follow "session id" without naming an id: the refusal's own verb. */
-const ID_VERBS = new Set(['is', 'was', 'not', 'are']);
+function refusalShapes(id: string): RegExp[] {
+    const named = `["'\`]?${escapeRegExp(id)}["'\`]?`;
+    const bad = `(?:${[word('not found'), word('invalid'), word('unknown'), word('expired'), word('missing')].join('|')})`;
+    const before = `(?:${['invalid', 'unknown', 'expired', 'unrecognized', 'missing'].map(word).join('|')})`;
+    const session = word('session');
+    const idWord = word('id');
+    const verb = `(?:${word('is')}|${word('was')})`;
+    return [
+        // Invalid session / Invalid session id / Invalid session id <sent id>
+        new RegExp(`^${before} ${session}(?: ${idWord}:?)?(?: ${named})?$`),
+        // Session not found / Session is invalid
+        new RegExp(`^${session}(?: ${verb})? ${bad}$`),
+        // Session id is not found
+        new RegExp(`^${session} ${idWord} ${verb} ${bad}$`),
+        // Session id <sent id> not found / is not found
+        new RegExp(`^${session}(?: ${idWord}:?)? ${named}(?: ${verb})? ${bad}$`),
+    ];
+}
 
-const REFUSAL_WORDS = new Set([
-    'tool', 'error', 'session', 'id', 'the', 'a', 'an', 'is', 'was', 'are', 'invalid', 'unknown', 'expired', 'unrecognized', 'missing', 'not', 'found',
-    'provided', 'given', 'supplied', 'sent', 'your',
-]);
-
+/** The words of an error line: without the connector's "Tool error:", the data kept after them, closing punctuation and extra spaces. */
+const refusalWords = (line: string): string =>
+    line
+        .replace(/\s[{[][\s\S]*$/, '')
+        .replace(/^\s*(?:tool error|error)\s*:\s*/i, '')
+        .replace(/[.!\s]+$/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
 
 /**
  * Whether a call failed only because the App's link refused the session id it was given, so that nothing ran: the model carries the
  * session id one App's link gave (the joined search keeps the oldest App's) to another App's link, which may not know it. True only for an
  * explicit refusal of the whole call (never a thrown error, an unsure outcome, or an answer that carries any sign that actions ran, at
  * the root, in `data` or in the error's own words) that names an invalid, unknown, expired or missing session and says nothing more than
- * that (the session id it quotes can only be the one that was sent).
+ * that, in one of the exact shapes of `refusalShapes` (the session id it names can only be the one that was sent).
  */
 export function sessionRefused(answer: unknown, args: Record<string, unknown>): boolean {
     const id = sessionIdOf(args);
@@ -191,22 +214,9 @@ export function sessionRefused(answer: unknown, args: Record<string, unknown>): 
     if (hasResults(isObject(data) ? data : undefined) || hasResults(inner)) return false;
     // The connector keeps the data of a failed call after its words (`Invalid session id x {"results":...}`): only the words are read here, as
     // the one retry that uses this is a lookup (search, schemas), which changes nothing and is safe to send again
-    const message = line.replace(/\s[{[][\s\S]*$/, '');
+    const message = refusalWords(line);
     if (SHOWS_ACTIONS_RAN.test(message)) return false;
-    if (!SESSION_NOT_ACCEPTED.test(message)) return false;
-    // Only a bare refusal: its words are the refusal's own, and a session id named in it is exactly the one that was sent (compared as it is,
-    // right after the word "session" or "id"), nothing that could tell of an action or of another session
-    // A quoted word is a name, never a refusal's word: it must be the id that was sent, whatever it spells ("unknown" included)
-    for (const [, quoted] of message.matchAll(/["'`]([^"'`]*)["'`]/g)) if (quoted !== id) return false;
-    const words = message.replace(/["'`][^"'`]*["'`]/g, ' ').match(/[A-Za-z0-9_-]+/g) ?? [];
-    for (let at = 0; at < words.length; at++) {
-        const previous = words[at - 1]?.toLowerCase();
-        if (words[at] === id && (previous === 'session' || previous === 'id')) continue;
-        // What follows "session id" is the id that was named (exactly the one sent) unless it is the verb of the refusal itself ("is", "was",
-        // "not"): "Invalid session id unknown" names the id "unknown", whatever else the word may mean
-        if (previous === 'id' && words[at - 2]?.toLowerCase() === 'session' && !ID_VERBS.has(words[at].toLowerCase())) return false;
-        if (!REFUSAL_WORDS.has(words[at].toLowerCase())) return false;
-    }
+    if (!refusalShapes(id).some((shape) => shape.test(message))) return false;
     return true;
 }
 
