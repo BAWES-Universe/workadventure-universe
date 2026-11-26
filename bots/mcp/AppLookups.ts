@@ -161,6 +161,9 @@ const SESSION_NOT_ACCEPTED = /\b(invalid|unknown|expired|unrecognized|missing)\s
  * Every word a bare refusal of a session may be made of. A refusal that says anything else ("Invalid session. Action 1 completed.") may
  * come from a call where some actions ran, so it is never taken for a refusal before anything ran.
  */
+/** The words that may follow "session id" without naming an id: the refusal's own verb. */
+const ID_VERBS = new Set(['is', 'was', 'not', 'are']);
+
 const REFUSAL_WORDS = new Set([
     'tool', 'error', 'session', 'id', 'the', 'a', 'an', 'is', 'was', 'are', 'invalid', 'unknown', 'expired', 'unrecognized', 'missing', 'not', 'found',
     'provided', 'given', 'supplied', 'sent', 'your',
@@ -199,6 +202,9 @@ export function sessionRefused(answer: unknown, args: Record<string, unknown>): 
     for (let at = 0; at < words.length; at++) {
         const previous = words[at - 1]?.toLowerCase();
         if (words[at] === id && (previous === 'session' || previous === 'id')) continue;
+        // What follows "session id" is the id that was named (exactly the one sent) unless it is the verb of the refusal itself ("is", "was",
+        // "not"): "Invalid session id unknown" names the id "unknown", whatever else the word may mean
+        if (previous === 'id' && words[at - 2]?.toLowerCase() === 'session' && !ID_VERBS.has(words[at].toLowerCase())) return false;
         if (!REFUSAL_WORDS.has(words[at].toLowerCase())) return false;
     }
     return true;

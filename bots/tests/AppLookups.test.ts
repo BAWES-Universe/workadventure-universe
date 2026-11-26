@@ -99,6 +99,11 @@ describe('a session the App’s link refused', () => {
         expect(sessionRefused({ error: 'Tool error: Invalid session. Action 1 completed.', outcome: 'failed' }, sent)).toBe(false);
         expect(sessionRefused({ error: 'Invalid session id sess-g1 after the event was created', outcome: 'failed' }, sent)).toBe(false);
         expect(sessionRefused({ error: 'Tool error: Invalid session id sess-g1', outcome: 'failed' }, sent)).toBe(true);
+        // An unquoted id after "session id" is the id sent, whatever else the word may mean; the refusal's own verb is not an id
+        expect(sessionRefused({ error: 'Invalid session id unknown', outcome: 'failed' }, sent)).toBe(false);
+        expect(sessionRefused({ error: 'Tool error: Session id expired', outcome: 'failed' }, sent)).toBe(false);
+        expect(sessionRefused({ error: 'Invalid session id unknown', outcome: 'failed' }, { tools: sent.tools, session_id: 'unknown' })).toBe(true);
+        expect(sessionRefused({ error: 'Session id is not found', outcome: 'failed' }, sent)).toBe(true);
         // The data a failed call keeps after its words is not read as words (the retry is for lookups only, which change nothing)
         expect(sessionRefused({ error: 'Tool error: Invalid session id sess-g1 {"results":[{"tool_slug":"A"}],"note":"x"}', outcome: 'failed' }, sent)).toBe(true);
         expect(sessionRefused({ error: 'Tool error: Boom {"message":"Invalid session id sess-g1"}', outcome: 'failed' }, sent)).toBe(false);
