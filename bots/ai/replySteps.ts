@@ -212,7 +212,15 @@ export class StepRoom {
     private readonly setAsideResults = new WeakSet<StepResult>();
     private readonly setAsideCalls = new WeakSet<ToolCall>();
 
-    constructor(private readonly room: number) {}
+    /**
+     * `total`: the room is for all the steps together, as a run's rounds are (a chat reply keeps its own reading: only a single step larger than
+     * the room is cut). A step that would not fit beside the ones kept gets its results cut to what is left, with the note; what the model said
+     * and its reasoning are never cut, so when they alone fill the room the results are only the note.
+     */
+    constructor(
+        private readonly room: number,
+        private readonly total = false
+    ) {}
 
     /** A text in a call's arguments is long, and can be set aside, past a twentieth of the room. */
     private get longText(): number {
@@ -225,9 +233,11 @@ export class StepRoom {
 
     add(step: ReplyStep): void {
         if (this.size() + sizeOf(step) > this.room) this.setAside(this.steps);
-        // A step larger than the room on its own: its long arguments go first, then its results get what the rest leaves
-        if (sizeOf(step) > this.room) this.setAsideArguments(step);
-        if (sizeOf(step) > this.room) this.fit(step, Math.max(0, this.room - (sizeOf(step) - resultsSizeOf(step))));
+        // A step larger than the room on its own (or, for all the steps together, than what the kept ones leave): its long arguments go first,
+        // then its results get what the rest leaves
+        const left = this.total ? this.room - this.size() : this.room;
+        if (sizeOf(step) > left) this.setAsideArguments(step);
+        if (sizeOf(step) > left) this.fit(step, Math.max(0, left - (sizeOf(step) - resultsSizeOf(step))));
         this.steps.push(step);
     }
 

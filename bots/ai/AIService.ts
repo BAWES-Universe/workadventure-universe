@@ -4300,8 +4300,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (resolved.resting) return { ended: 'resting' };
         const config = resolved.config;
         // The rounds of a run keep the room a chat reply's steps have ("Room for tool results in one reply"): older results are set aside
-        // to a line and a result longer than the room is cut, saying so, so eight rounds of long answers never outgrow the model's context
-        const room = new StepRoom((config.limits ?? BOT_LIMIT_DEFAULTS).roomChars);
+        // to a line and what still passes the room together is cut from the newest answer, saying so, so eight rounds of long answers never outgrow the model's context
+        const room = new StepRoom((config.limits ?? BOT_LIMIT_DEFAULTS).roomChars, true);
         const rounds: ReplySteps = { steps: room.steps };
         // A model that answers in words instead of calling a tool is asked once more, then it is a no
         let user = opts.user;

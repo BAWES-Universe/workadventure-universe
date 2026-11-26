@@ -103,6 +103,29 @@ describe('an encoded body is taken out, and what the Brick reads a mail by stays
     });
 });
 
+describe('routing headers are only taken from the headers of a mail', () => {
+    it('leaves a list of names and values that is data alone, even when a name looks like a header', () => {
+        const stock = { data: [{ name: 'X-100', value: 'In stock' }, { name: 'Y-200', value: 'Unavailable' }] };
+        expect(fitAppAnswer(stock)).toBe(JSON.stringify(stock));
+        const asBlock = asBlocks(stock);
+        expect(fitAppAnswer(asBlock)).toBe(JSON.stringify(asBlock));
+        // Under `headers`, but not a mail's (no From, Subject, Date ...)
+        // Mail headers, but not under `headers`
+        const elsewhere = { data: [{ name: 'Subject', value: 'Hi' }, { name: 'X-Mailer', value: 'y' }] };
+        expect(fitAppAnswer(elsewhere)).toBe(JSON.stringify(elsewhere));
+        const http = { headers: [{ name: 'X-Request-Id', value: 'abc' }, { name: 'X-Trace', value: 'def' }] };
+        expect(fitAppAnswer(http)).toBe(JSON.stringify(http));
+    });
+
+    it('takes them from a mail whose headers are under `headers`, in any case', () => {
+        const headers = [{ name: 'Subject', value: 'Hi' }, { name: 'Received', value: 'from x' }, { name: 'X-Mailer', value: 'y' }];
+        for (const key of ['headers', 'Headers']) {
+            const read = JSON.parse(fitAppAnswer({ payload: { [key]: headers } })) as { payload: Record<string, { name: string }[]> };
+            expect(read.payload[key].map((header) => header.name)).toEqual(['Subject']);
+        }
+    });
+});
+
 describe('an answer that is still too long loses whole items, and says how many', () => {
     it('keeps the first items entire and tells the Brick "Showing k of 50"', () => {
         // 50 messages, each about 2,000 characters once the encoded bodies are out: 100,000 characters, past the room

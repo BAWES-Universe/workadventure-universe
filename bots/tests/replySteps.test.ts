@@ -124,6 +124,35 @@ describe("a reply's room for tool results", () => {
         expect(room.size()).toBeLessThanOrEqual(before - 50);
     });
 
+    it('for a run, keeps all the steps together within the room: a step that fits alone is cut to what the kept ones leave', () => {
+        // A chat reply keeps its reading (only a single step past the room is cut); a run's rounds share the room
+        const chat = new StepRoom(1000);
+        const run = new StepRoom(1000, true);
+        for (const room of [chat, run]) {
+            // What the model said in round one cannot be set aside, so it stays and takes room
+            room.add({ ...step(1, 'a'.repeat(400)), content: 'x'.repeat(500) });
+            room.add(step(2, 'b'.repeat(800)));
+        }
+        expect(chat.steps[1]!.results[0]!.content).toBe('b'.repeat(800));
+        expect(chat.size()).toBeGreaterThan(1000);
+        expect(run.steps[1]!.results[0]!.content).toContain('Only the first');
+        expect(run.size()).toBeLessThanOrEqual(1000 + 200);
+        // Cut to what is left, no more: the kept steps and the newest one, note counted, fit the room but for the note
+        const note = `\n[Only the first 1,000 of 1,000 characters fit in this reply's room for tool results ("Room for tool results in one reply").]`.length;
+        expect(run.size()).toBeLessThanOrEqual(1000 + note);
+    });
+
+    it('for a run, leaves a step that fits beside the kept ones as it is, and gives only the note when what the model said fills the room', () => {
+        const room = new StepRoom(1000, true);
+        room.add(step(1, 'a'.repeat(200)));
+        room.add(step(2, 'b'.repeat(200)));
+        expect(room.steps[1]!.results[0]!.content).toBe('b'.repeat(200));
+        const full = new StepRoom(500, true);
+        full.add({ ...step(1, 'a'.repeat(50)), content: 'x'.repeat(600) });
+        full.add(step(2, 'b'.repeat(300)));
+        expect(full.steps[1]!.results[0]!.content).toMatch(/^b\n\[Only the first 1 of 300 characters fit/);
+    });
+
     it('keeps as much of one step larger than the room as fits, and says so', () => {
         // What it said and called takes 31 of the room
         const room = new StepRoom(1031);

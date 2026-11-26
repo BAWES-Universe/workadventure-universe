@@ -77,8 +77,12 @@ function looksLikeHtml(text: string): boolean {
     return (text.match(HTML_TAG) ?? []).length >= 10;
 }
 
-function isHeaderList(value: unknown[]): value is { name: string; value: string }[] {
-    return value.length > 0 && value.every((one) => isObject(one) && typeof one.name === 'string' && typeof one.value === 'string' && Object.keys(one).length === 2);
+const MAIL_HEADER = /^(?:from|to|subject|date|message-id|received|mime-version|content-type)$/i;
+
+/** The headers of a mail: under a key `headers`, as name and value pairs, with the headers every mail has. Any other list of names and values is data. */
+function isMailHeaders(value: unknown[]): value is { name: string; value: string }[] {
+    const pairs = value.every((one) => isObject(one) && typeof one.name === 'string' && typeof one.value === 'string' && Object.keys(one).length === 2);
+    return pairs && value.some((one) => MAIL_HEADER.test((one as { name: string }).name));
 }
 
 /** What was taken out, so an answer that lost nothing can be given exactly as it came. */
@@ -121,14 +125,7 @@ function tidy(value: unknown, taken: Taken): unknown {
         }
         return value;
     }
-    if (Array.isArray(value)) {
-        if (isHeaderList(value)) {
-            const kept = value.filter((header) => !ROUTING_HEADER.test(header.name));
-            if (kept.length < value.length) taken.count++;
-            return kept;
-        }
-        return value.map((one) => tidy(one, taken));
-    }
+    if (Array.isArray(value)) return value.map((one) => tidy(one, taken));
     if (isObject(value)) {
         // A file is its text, not its base64
         const file = decodedFile(value);
@@ -139,6 +136,10 @@ function tidy(value: unknown, taken: Taken): unknown {
                 out[key] = tidy(file, taken);
             } else if (file !== null && key === 'encoding') {
                 out[key] = 'utf-8';
+            } else if (key.toLowerCase() === 'headers' && Array.isArray(inner) && isMailHeaders(inner)) {
+                const kept = inner.filter((header) => !ROUTING_HEADER.test(header.name));
+                if (kept.length < inner.length) taken.count++;
+                out[key] = kept;
             } else {
                 out[key] = tidy(inner, taken);
             }

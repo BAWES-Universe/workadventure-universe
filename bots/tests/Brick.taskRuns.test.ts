@@ -652,22 +652,24 @@ describe('each model call of a run is on the books, one row each, under the runâ
             meteredStream: async function* (_l: unknown, _p: unknown, _s: unknown, _u: string, _c: unknown, _t: unknown, _sig: unknown, _i: unknown, steps?: { steps: { results: { content: string; name: string }[] }[] }) {
                 seen.push((steps?.steps ?? []).flatMap((step) => step.results.map((result) => ({ ...result }))));
                 call++;
-                yield { content: '', done: false, toolCalls: [{ id: `c${call}`, name: call < 3 ? 'search' : 'finish_check', arguments: call < 3 ? '{}' : '{"result":"nothing_new"}' }] };
+                yield { content: call < 3 ? 'x'.repeat(300) : '', done: false, toolCalls: [{ id: `c${call}`, name: call < 3 ? 'search' : 'finish_check', arguments: call < 3 ? '{}' : '{"result":"nothing_new"}' }] };
                 yield { content: '', done: true, metadata: { tokensUsed: 10, promptTokens: 5, completionTokens: 5 } };
             },
             trackUsage: vi.fn(async () => undefined),
         });
-        const answers = ['A'.repeat(600), 'B'.repeat(5_000)];
+        const answers = ['A'.repeat(600), 'B'.repeat(700)];
         let n = 0;
         const runTool = vi.fn(async (name: string) => (name === 'search' ? answers[n++] : '{"ok":true}'));
         const base = { botId: 'brick-1', providerId: 'universe-ai', system: 's', user: 'u', tools: [], maxSteps: 4, final: 'finish_check', usage: { runId: 'run-1', attempt: 1 } };
         expect(await (ai as unknown as Pick<AIService, 'runBrickTask'>).runBrickTask({ ...base, permit: async () => true, runTool })).toEqual({ ended: 'final' });
-        // Round two still sees round one whole; round three sees round one set aside to a line and round two cut to the room, saying so
+        // Round two still sees round one whole; round three sees round one's answer set aside to a line and round two's cut to what is left of
+        // the room beside what the model said in both (700 would fit alone, but not with the 600 it said before it, and 600 more it said now)
         expect(seen[0]).toEqual([]);
         expect(seen[1].map((result) => result.content)).toEqual(['A'.repeat(600)]);
         expect(seen[2][0].content).toMatch(/^\[search: 600 characters, set aside to make room/);
-        expect(seen[2][1].content.length).toBeLessThan(5_000);
         expect(seen[2][1].content).toContain('Only the first');
+        expect(seen[2][1].content.startsWith('B'.repeat(100))).toBe(true);
+        expect(seen[2][1].content.length).toBeLessThan(700);
     });
 
     it('goes on after a tool, ends after finish_check ran, and books each call on the task channel with its own id', async () => {
