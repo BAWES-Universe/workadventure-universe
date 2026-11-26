@@ -167,24 +167,27 @@ describe('a search on a Brick with Gmail and Calendar', () => {
         expect(slugs).toContain('GMAIL_FETCH_EMAILS');
     });
 
-    it('asks an App that asks first like any other when its OK is already given, and does not leave it out', async () => {
-        const own: ToolServerEntry = { botId: 'b1', serverId: 'own1', serverUrl: 'https://own.example/mcp', authType: 'none', serverName: 'My link', fingerprint: 'fp-own' };
-        const ownPolicy: ServerPolicy = {
-            serverId: 'own1',
+    it('runs an App that asks first and whose OK is already given, even when a later App’s card is shown', async () => {
+        const own = (serverId: string): ToolServerEntry => ({ botId: 'b1', serverId, serverUrl: `https://${serverId}.example/mcp`, authType: 'none', serverName: serverId, fingerprint: `fp-${serverId}` });
+        const askingPolicy = (serverId: string): ServerPolicy => ({
+            serverId,
             kind: 'tools',
             state: 'confirmed',
             policyRevision: 2,
             settings: DEFAULTS,
-            tools: new Map<string, PolicyTool>([[SEARCH, { name: SEARCH, heading: 'looksUp', fingerprint: 'fp-own', suggestedHeading: 'looksUp', confirmed: true, setting: 'asksFirst' }]]),
-        };
+            tools: new Map<string, PolicyTool>([[SEARCH, { name: SEARCH, heading: 'looksUp', fingerprint: `fp-${serverId}`, suggestedHeading: 'looksUp', confirmed: true, setting: 'asksFirst' }]]),
+        });
         const { service, execute, propose } = twoApps(gmailPolicy(), calendarPolicy());
-        propose.mockImplementation((async () => ({ kind: 'run' })) as never);
-        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'own1' ? ownPolicy : serverId === 'cal1' ? calendarPolicy() : gmailPolicy()));
+        // The first App that asks has its OK already; the second one's card is shown
+        propose.mockImplementationOnce((async () => ({ kind: 'run' })) as never);
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? calendarPolicy() : serverId === 'g1' ? gmailPolicy() : askingPolicy(serverId)));
         service['toolGate'] = new ToolGate({ read } as never, { check: vi.fn(async () => ({ kind: 'allowed', allowed: true })) } as never, { canManageBotTools: async () => false });
-        const servers = new Map<string, ToolServerEntry>([[SEARCH, { ...own, otherApps: [GMAIL, CALENDAR] }]]);
-        await service['executeToolCalls']([{ id: 'c1', name: SEARCH, arguments: '{"queries":[{"use_case":"events"}]}' }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
-        expect(propose).toHaveBeenCalledTimes(1);
-        expect(execute.mock.calls.map((args: unknown[]) => args[0]).sort()).toEqual(['cal1', 'g1', 'own1']);
+        const servers = new Map<string, ToolServerEntry>([[SEARCH, { ...own('ownA'), otherApps: [own('ownB'), CALENDAR] }]]);
+        const [searched] = await service['executeToolCalls']([{ id: 'c1', name: SEARCH, arguments: '{"queries":[{"use_case":"events"}]}' }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+        expect(propose).toHaveBeenCalledTimes(2);
+        expect(searched.result).toMatchObject({ status: 'waiting_for_ok' });
+        // ownA (OK given) and Calendar answer now; ownB waits on its card
+        expect(execute.mock.calls.map((args: unknown[]) => args[0]).sort()).toEqual(['cal1', 'ownA']);
     });
 });
 
