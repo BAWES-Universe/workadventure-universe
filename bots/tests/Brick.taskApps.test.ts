@@ -171,15 +171,79 @@ describe('what a run does with an App', () => {
         }
     });
 
-    it('answers a step that fails with a plain error and never throws, and cuts what an App gives back', async () => {
+    it('answers a step that fails with a plain error and never throws', async () => {
         const broken = setUp({ search: RUN('looksUp') }, {
             call: async () => {
                 throw new Error('boom');
             },
         });
         expect(JSON.parse(await (await broken.apps.open(run()))!.call('search', {})).error).toMatch(/did not work/);
-        const big = setUp({ search: RUN('looksUp') }, { call: async () => 'x'.repeat(50_000) });
-        expect((await (await big.apps.open(run()))!.call('search', {})).length).toBe(12_000);
+    });
+
+    it('gives a run the room a chat reply has, and says when it cut what an App gave back', async () => {
+        const sentence = 'The quick brown fox jumps over the lazy dog. ';
+        const words = (n: number) => sentence.repeat(Math.ceil(n / sentence.length)).slice(0, n);
+        // 50,000 characters used to be cut at 12,000 with no word of it
+        const fits = setUp({ search: RUN('looksUp') }, { call: async () => words(50_000) });
+        expect(await (await fits.apps.open(run()))!.call('search', {})).toBe(words(50_000));
+        const big = setUp({ search: RUN('looksUp') }, { call: async () => words(200_000) });
+        const cut = await (await big.apps.open(run()))!.call('search', {});
+        expect(cut.startsWith(words(72_000))).toBe(true);
+        expect(cut).toContain('Only the first 72,000 of 200,000 characters fit');
+    });
+});
+
+describe('a mail answer through a run', () => {
+    const b64 = (text: string) => Buffer.from(text, 'utf8').toString('base64url');
+    const mail = (n: number, body: number) => ({
+        messageId: `m${n}`,
+        sender: `Sender ${n} <s${n}@example.com>`,
+        subject: `Subject ${n}`,
+        messageTimestamp: '2026-11-25T09:00:00Z',
+        preview: { body: `Snippet ${n}` },
+        payload: { parts: [{ mimeType: 'text/html', body: { data: b64(`<html><body>${'<p>Hello there, a paragraph.</p>'.repeat(body)}</body></html>`) } }] },
+    });
+    const answerOf = (messages: unknown[]) => [{ type: 'text', text: JSON.stringify({ data: { messages }, successful: true }) }];
+
+    it('shows the Brick every message of a list whose bodies were what made it long (it used to stop at 12,000 characters, mid-message)', async () => {
+        // About 30,000 characters of encoded body each: five of them were 150,000 characters, and the Brick saw a third of the first
+        const messages = [1, 2, 3, 4, 5].map((n) => mail(n, 900));
+        const { apps } = setUp({ search: RUN('looksUp') }, { call: async () => answerOf(messages) });
+        const text = await (await apps.open(run()))!.call('search', {});
+        expect(text.length).toBeLessThan(12_000);
+        const read = JSON.parse(text)[0].text.data.messages as ReturnType<typeof mail>[];
+        expect(read.map((one) => [one.sender, one.subject, one.preview.body])).toEqual(messages.map((one) => [one.sender, one.subject, one.preview.body]));
+    });
+
+    it('takes the routing headers out only for a mail App, by the tool it called', async () => {
+        const part = { payload: { mimeType: 'text/plain', body: { size: 3, data: 'abc' }, headers: [{ name: 'Subject', value: 'Hi' }, { name: 'Received', value: 'from x' }] } };
+        const blocks = [{ type: 'text', text: JSON.stringify(part) }];
+        const names = (text: string) => {
+            const inner = JSON.parse(text)[0].text;
+            return ((typeof inner === 'string' ? JSON.parse(inner) : inner).payload.headers as { name: string }[]).map((header) => header.name);
+        };
+        const gmail = setUp({ GMAIL_FETCH_EMAILS: RUN('looksUp') }, { call: async () => blocks });
+        const other = setUp({ search: RUN('looksUp') }, { call: async () => blocks });
+        expect(names(await (await gmail.apps.open(run()))!.call('GMAIL_FETCH_EMAILS', {}))).toEqual(['Subject']);
+        expect(names(await (await other.apps.open(run()))!.call('search', {}))).toEqual(['Subject', 'Received']);
+    });
+
+    it('says "Showing 20 of 50" when even without the bodies there is more than fits, and never cuts a message in half', async () => {
+        const messages = Array.from({ length: 50 }, (_, n) => ({ ...mail(n + 1, 10), messageText: `Message ${n + 1}. `.repeat(200) }));
+        const { apps } = setUp({ search: RUN('looksUp') }, { call: async () => answerOf(messages) });
+        const text = await (await apps.open(run()))!.call('search', {});
+        expect(text.length).toBeLessThanOrEqual(80_000);
+        const data = JSON.parse(text)[0].text.data;
+        expect(data.messages.length).toBeLessThan(50);
+        expect(data.messages_note).toMatch(new RegExp(`^Showing ${data.messages.length} of 50:`));
+        for (const read of data.messages) expect(read.messageText.endsWith('. ')).toBe(true);
+    });
+
+    it('still gives the Brick a plain error, not a throw, for an answer that cannot be written', async () => {
+        const circular: Record<string, unknown> = {};
+        circular.me = circular;
+        const { apps } = setUp({ search: RUN('looksUp') }, { call: async () => circular });
+        expect(JSON.parse(await (await apps.open(run()))!.call('search', {})).error).toMatch(/cannot be read/);
     });
 });
 

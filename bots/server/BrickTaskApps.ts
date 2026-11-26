@@ -20,9 +20,13 @@ import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolAp
 import type { ToolHeading } from '../mcp/ToolCatalog';
 import type { DueRun } from './BrickRunner';
 import { FINISH_CHECK_TOOL, READ_PAGE_TOOL, type ToolDefinition } from './BrickTaskRun';
+import { fitAppAnswer, isMailTool, RUN_ANSWER_MAX } from './BrickAppAnswer';
 
-/** What an App's answer to a step can be at most, as text for the model (the rest is cut). */
-export const APP_RESULT_MAX = 12_000;
+/**
+ * What an App's answer to a step can be at most, as text for the model: the room a chat reply has. An answer longer than that is first
+ * made smaller (encoded bodies and raw HTML out), then shortened by whole items, and only then cut, and it always says so (BrickAppAnswer).
+ */
+export const APP_RESULT_MAX = RUN_ANSWER_MAX;
 
 export interface TaskAppsDeps {
     /** The tools the Brick's Apps give, and where each one lives. Throws when they cannot be listed. */
@@ -45,9 +49,9 @@ export interface TaskAppsSession {
     waiting(): boolean;
 }
 
-const asText = (value: unknown): string => {
+const asText = (value: unknown, mail: boolean): string => {
     try {
-        return (typeof value === 'string' ? value : JSON.stringify(value ?? null)).slice(0, APP_RESULT_MAX);
+        return fitAppAnswer(value, APP_RESULT_MAX, mail);
     } catch {
         return JSON.stringify({ error: 'That gave back something that cannot be read.' });
     }
@@ -134,7 +138,7 @@ export class TaskApps {
             const heading = verdict.heading!;
             const asks = verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading);
             if (!asks) {
-                return asText(await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) }));
+                return asText(await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) }), isMailTool(name, entry.serverName));
             }
             return await this.askFor(
                 run,
