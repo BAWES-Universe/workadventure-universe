@@ -503,6 +503,34 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(call).toHaveBeenCalledTimes(1);
     });
 
+    it("offers and runs the ready-made App's search and batch when the person's own App first under those names has them Off (own Apps first)", async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const own: ToolServerEntry = { serverId: 'own1', serverUrl: 'https://own.example/mcp', authType: 'none', serverName: 'My link', fingerprint: 'fp-own' };
+        const ownOff: ServerPolicy = {
+            serverId: 'own1',
+            kind: 'tools',
+            state: 'confirmed',
+            policyRevision: 2,
+            settings: { looksUp: 'rightAway', makesNew: 'rightAway', changesThings: 'asksFirst', deletesOrSends: 'asksFirst' },
+            tools: new Map<string, PolicyTool>([LOOKUP, BATCH].map((name) => [name, { name, heading: 'looksUp', fingerprint: 'fp-own', suggestedHeading: 'looksUp', confirmed: true, setting: 'off' }])),
+        };
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'own1' ? ownOff : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const servers = new Map([
+            [LOOKUP, { ...own, otherApps: [gmail] }],
+            [BATCH, { ...own, otherApps: [gmail] }],
+        ]);
+        const { apps, call } = setUp({}, { discover: async () => ({ tools: [tool(LOOKUP), tool(BATCH)], servers }), gate });
+        const session = (await apps.open(run()))!;
+        expect(session.definitions.map((definition) => definition.function.name)).toEqual([BATCH, LOOKUP]);
+        await session.call(LOOKUP, { queries: ['mail'] });
+        await session.call(BATCH, actions('GMAIL_FETCH_EMAILS'));
+        expect(call.mock.calls.map((args) => args[1].serverId)).toEqual(['g1', 'g1']);
+        // An action no ready-made App owns goes to their own App, where it is Off: nothing is sent
+        expect(await session.call(BATCH, actions('NOTION_SEARCH'))).toContain('turned off');
+        expect(call).toHaveBeenCalledTimes(2);
+    });
+
     it("never sends an action of an App the person has their own copy of through another App's link, even with one App left (own Apps first)", async () => {
         // Universe's ready-made Exa was left out because the owner has their own Exa: its search is refused here, and Gmail's own actions still run
         const { apps, call } = withGate({ ...gmail, ownCopyApps: ['Exa'] });

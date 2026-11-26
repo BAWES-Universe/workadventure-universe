@@ -89,10 +89,12 @@ export class TaskApps {
                 if (name === READ_PAGE_TOOL || name === FINISH_CHECK_TOOL) return;
                 const entry = found.servers.get(name);
                 if (!entry) return;
-                const { verdict } = await this.decideFor(run, name, entry);
+                // A batch of several Apps is offered when any of them allows it: its actions go to their own Apps when it is called
+                const judged = isBatchTool(name) && entry.otherApps?.length ? [entry, ...entry.otherApps] : [entry];
+                const verdicts = await Promise.all(judged.map(async (app) => (await this.decideFor(run, name, app)).verdict));
                 // A ready-made App's batch tool is offered as it is: each call brings its actions, judged one by one when it is made
-                const offeredBatch = isBatchTool(name) && verdict.kind === 'run' && !verdict.heading;
-                if (offeredBatch || this.refusal(verdict, name) === null) {
+                const offeredBatch = (verdict: GateDecision) => isBatchTool(name) && verdict.kind === 'run' && !verdict.heading;
+                if (verdicts.some((verdict) => offeredBatch(verdict) || this.refusal(verdict, name) === null)) {
                     offered.push(tool);
                     servers.set(name, entry);
                 }
@@ -125,7 +127,8 @@ export class TaskApps {
      * schemas, connections) goes through the first of them that lets it be used, as in chat; a batch goes through the App it was routed to.
      */
     private async decideFor(run: DueRun, name: string, entry: ToolServerEntry, args?: Record<string, unknown>): Promise<{ app: ToolServerEntry; verdict: GateDecision }> {
-        const apps = entry.readyMade && entry.otherApps?.length && !isBatchTool(name) ? [entry, ...entry.otherApps] : [entry];
+        // The person's own App comes first under its name (own Apps first); an Off there never takes the tool from the ready-made Apps beside it
+        const apps = entry.otherApps?.length && !isBatchTool(name) ? [entry, ...entry.otherApps] : [entry];
         let first: { app: ToolServerEntry; verdict: GateDecision } | undefined;
         for (const app of apps) {
             // eslint-disable-next-line no-await-in-loop
