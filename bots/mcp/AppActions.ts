@@ -318,9 +318,11 @@ function answerData(answer: unknown): Record<string, unknown> | undefined {
  * call's own outcome for every action, as before. `slugs` are the actions as sent, in order.
  */
 export function batchOutcomes(answer: unknown, slugs: readonly string[], whole: PartOutcome): PartOutcome[] {
-    // A call that failed with the results of actions in its error words (a tool that ran some of the work and then failed) is not known to
-    // have done nothing: it is never counted as nothing done, and its things are not given back to the limit
-    if (whole === 'failed' && isObject(answer) && typeof answer.error === 'string' && SHOWS_ACTIONS_RAN.test(answer.error)) return slugs.map(() => 'uncertain');
+    // A tool that answered with an error (the connector's "Tool error: ..." for a tool's own failure, or its protocol error) may have run some
+    // of the work before it failed, and what it says about that can be in any words: no action of it is known to be undone, so none is counted as
+    // nothing done, and what it was to make is not given back to the limit. Only a call that never got to the tool (not sent, no sign-in,
+    // no answer) is known to have done nothing.
+    if (whole === 'failed' && isObject(answer) && typeof answer.error === 'string' && answer.error.startsWith('Tool error:')) return slugs.map(() => 'uncertain');
     if (whole !== 'succeeded') return slugs.map(() => whole);
     const data = answerData(answer);
     const inner = data && isObject(data.data) ? data.data : data;

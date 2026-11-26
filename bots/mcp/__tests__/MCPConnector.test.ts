@@ -610,6 +610,12 @@ describe('MCPConnector', () => {
                 expect((failed as { outcome: string }).outcome).toBe('failed');
             });
 
+            it('gives a batch whose tool answered with an isError result no action counted as nothing done, whatever words it uses', async () => {
+                const { batchOutcomes } = await import('../AppActions');
+                const failed = await callWith({ isError: true, content: [{ type: 'text', text: 'Invalid session. Action 1 completed.' }] });
+                expect(batchOutcomes(failed, ['A_ONE', 'A_TWO'], (failed as { outcome: 'failed' }).outcome)).toEqual(['uncertain', 'uncertain']);
+            });
+
             it('keeps the data of a protocol error in the error too', async () => {
                 mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
                     body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: { jsonrpc: '2.0', id: '2', error: { code: -32000, message: 'Invalid session', data: { results: [{ tool_slug: 'A' }] } } } }

@@ -258,11 +258,11 @@ describe('a session id that Calendar’s link does not know', () => {
         expect(sent.get('cal1')?.session_id).toBe('sess-cal1');
     });
 
-    it('never says nothing was done for a failed call whose error shows that some of its actions ran', async () => {
+    it('never says nothing was done for a tool’s own error, in whatever words it says that some of its actions ran', async () => {
         const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
         execute.mockImplementation(async (...args: unknown[]) =>
             (args[0] === 'cal1'
-                ? { error: 'Tool error: Invalid session {"results":[{"tool_slug":"GOOGLECALENDAR_EVENTS_LIST","response":{"successful":true}}]}', outcome: 'failed' }
+                ? { error: 'Tool error: Invalid session. Action 1 completed.', outcome: 'failed' }
                 : text({ successful: true, data: { results: [{ index: 0, tool_slug: 'GMAIL_FETCH_EMAILS', response: { successful: true } }] } })) as never
         );
         const servers = new Map<string, ToolServerEntry>([[BATCH, { ...GMAIL, otherApps: [CALENDAR] }]]);
