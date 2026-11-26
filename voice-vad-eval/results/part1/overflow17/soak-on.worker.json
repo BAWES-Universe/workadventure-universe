@@ -1,0 +1,104 @@
+{
+  "observer": "on",
+  "node": "v22.23.5",
+  "arch": "x64",
+  "cpuModel": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "seconds": 600,
+  "memory": {
+    "limitMb": 512,
+    "peakMb": 153,
+    "peakShareOfLimit": 0.298,
+    "peakAnonMbSampled": 143,
+    "peakProcessRssMbSampled": 219,
+    "endAnonMb": 132,
+    "oomKills": 0
+  },
+  "cpu": {
+    "coresUsed": 0.51,
+    "throttledSeconds": 4.19,
+    "throttledPeriods": 85
+  },
+  "eventLoopDelayMs": {
+    "p50": 5.2,
+    "p99": 9.2,
+    "max": 96.1
+  },
+  "heard": {
+    "frames": 662694,
+    "ms": 9537270,
+    "speechTurns": 397,
+    "bargeIns": 138,
+    "lanesConnected": 40,
+    "lanesClosed": 40,
+    "roomsConnected": 0,
+    "roomsClosed": 0
+  },
+  "observerWork": {
+    "status": "on",
+    "offeredMs": {
+      "lane": 5820660,
+      "room": 3716610
+    },
+    "acceptedMs": {
+      "lane": 5507232,
+      "room": 3397504
+    },
+    "coverage": {
+      "lane": 0.9462,
+      "room": 0.9141
+    },
+    "windows": {
+      "completed": 278273,
+      "accepted": 278273,
+      "revoked": 0,
+      "stale": 0,
+      "expired": 0,
+      "failed": 0
+    },
+    "audioSecondsJudged": 8905,
+    "calls": 140785,
+    "meanPeoplePerCall": 2,
+    "mostPeopleInACall": 15,
+    "meanCallMs": 1.11,
+    "maxCallMs": 77,
+    "meanAgeMs": 2,
+    "maxAgeMs": 106,
+    "maxOldestSampleAgeMs": 147,
+    "peakQueuedMs": 1652,
+    "peakStreams": 15,
+    "peakLine": 15,
+    "lostMs": {
+      "overflow": 630590,
+      "expired": 0,
+      "idle": 672,
+      "revoked": 1186,
+      "failed": 0,
+      "reset": 964
+    },
+    "overloads": 0,
+    "timedOut": 0,
+    "gaveUp": 0,
+    "errors": 0,
+    "refusedAfterClose": 0,
+    "streamsStarted": 192,
+    "streamsEnded": 192,
+    "streamsRefused": 47463,
+    "speechWindows": 63261,
+    "besideTodaysGate": {
+      "lane": {
+        "todaysGateSaidSpeaking": 203,
+        "observerFirings": 300,
+        "within600msOfEachOther": 33
+      },
+      "room": {
+        "todaysGateSaidSpeaking": 78,
+        "observerFirings": 173,
+        "within600msOfEachOther": 10
+      },
+      "todaysGateStoppedTheVoice": 136,
+      "observerFiringsWhileBotSpoke": 129,
+      "acceptedSecondsWhileBotSpoke": 3821
+    }
+  },
+  "maxQueuedMsSeen": 762
+}
