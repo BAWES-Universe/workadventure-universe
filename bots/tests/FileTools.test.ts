@@ -502,7 +502,8 @@ describe('the file tools in AIService', () => {
         expect((await run('own-key'))[0].result).toMatchObject({ look: 'none' });
         expect(describe).not.toHaveBeenCalled();
         expect((await run('universe-ai'))[0].result).toMatchObject({ look: 'seen', seen: 'A map' });
-        expect(describe).toHaveBeenCalledWith(['https://cdn.example.com/map.png'], undefined);
+        // The look is reported as the person's Universe AI use, for the bot and the chat it was opened in (G7)
+        expect(describe).toHaveBeenCalledWith(['https://cdn.example.com/map.png'], undefined, { botId: 'bot1', talker: expect.objectContaining({ channel: 'nearby' }) });
     });
 
     it('in a direct message: the file goes with the reply, marked as sent again, under its own name', async () => {

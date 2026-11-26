@@ -3429,6 +3429,8 @@ export class AdminApiService {
         isGuest?: boolean;
         /** A greeting the bot made on its own (greetings cooldown): free for the person, still the payer's usage. */
         greeting?: boolean;
+        /** A look Universe AI's vision took at an image (G7): the person's Universe AI use, never counted as a reply. */
+        imageRead?: boolean;
     }): Promise<void> {
         if (!this.isConfigured()) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -3465,6 +3467,9 @@ export class AdminApiService {
                 ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
                 // A greeting the bot made on its own: the payer's usage, never counted against the person it greeted
                 ...(usage.greeting ? { greeting: true } : {}),
+                // A look at an image is also marked a greeting, so an Orbit from before image looks still keeps it out of every reply
+                // count; an Orbit that knows `imageRead` stores it as a look at an image and not as a greeting
+                ...(usage.imageRead ? { imageRead: true, greeting: true } : {}),
             };
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
