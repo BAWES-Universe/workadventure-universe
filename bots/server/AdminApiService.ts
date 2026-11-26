@@ -420,11 +420,22 @@ export interface InstantToolInfo {
     firstUse?: boolean;
 }
 
+/**
+ * Why research on Universe's account is not offered to the owner now, while it otherwise would be: they were not given credit for it this month
+ * (`not_given`: the month's budget ran out, for one) or they spent it (`used_up`, back at `renewsAt` when it is monthly). Comes with no tools.
+ */
+export interface InstantResearchStanding {
+    state: 'not_given' | 'used_up';
+    renewsAt: string | null;
+}
+
 /** What may be offered now. `ready` false (paused, not set up, no credit source) comes with no tools. */
 export interface InstantListing {
     ready: boolean;
     reason: string | null;
     tools: InstantToolInfo[];
+    /** Present when the owner has no credit that pays for a search: the Brick says so once, instead of searching. */
+    research?: InstantResearchStanding;
 }
 
 /** Who an Instant call is for: a person's own chat message, or the Brick working for its owner on its own. */
@@ -1992,7 +2003,14 @@ export class AdminApiService {
                 ...(tool.firstUse === true ? { firstUse: true } : {}),
             });
         }
-        return { ready: answer.data.ready === true, reason: asText(answer.data.reason), tools };
+        const research = answer.data.research as Record<string, unknown> | null | undefined;
+        const state = research?.state === 'not_given' || research?.state === 'used_up' ? research.state : null;
+        return {
+            ready: answer.data.ready === true,
+            reason: asText(answer.data.reason),
+            tools,
+            ...(state ? { research: { state, renewsAt: asShort(research?.renewsAt, 40) ?? null } } : {}),
+        };
     }
 
     /**

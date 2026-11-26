@@ -89,6 +89,7 @@ function researchNote(listing: InstantListing | null): string[] {
     const yourOwn = fresh.length === 1 ? `${fresh[0].app} account` : 'account of that App';
     return [
         `Research Apps: ${apps.map((one) => withStrength(one.app, one.strength)).join(', ')}. They are on for your owner with nothing to set up or connect: when a question needs facts from the web (news, prices, places, opening hours, people, companies, studies), search right away with the App whose strength fits best, then answer from what you found. Do not ask first, and never offer to connect or switch on anything for these.`,
+        'If your owner has their own search App on for you (another research or web search App among your tools), use it first; these are for when they do not.',
         'Try them in the order given unless another one fits the question better. When the answer is thin or off the point, you may try another research App or other words once or twice; stop when you have enough, and if one says you have done as many look-ups as one question may have, answer from what you have.',
         'In your reply, say which App you searched with, by its name, and give the sources as links.',
         ...(fresh.length > 0
@@ -101,12 +102,31 @@ function researchNote(listing: InstantListing | null): string[] {
 }
 
 /**
+ * What the Brick is told when its owner has no credit that pays for a search on Universe's account (never given this month, or spent): it says so
+ * once, points to their own free search App on Apps (which has no Universe limit), and answers from what it knows. No card, no search tried.
+ */
+export function researchStandingNote(research: NonNullable<InstantListing['research']>): string {
+    const why =
+        research.state === 'used_up'
+            ? research.renewsAt
+                ? 'Their monthly credit for it is used up and comes back on the 1st.'
+                : 'Their credit for it is used up.'
+            : 'It is not available to them this month.';
+    return [
+        `Web research: searching the web on Universe's account is not available to your owner right now. ${why}`,
+        "If your owner has their own search App on for you (a research or web search App among your tools), use it as usual. Otherwise, the first time in this chat a question needs facts from the web, say once, in one short line in their language, that you can't search the web on Universe's account right now and that their own free account of a search App on [Apps](#apps) has no Universe limit; then answer from what you know and say it may be out of date.",
+        'Say that line once in this chat, never again, never as a question, and never with a card. Never offer more credit or a top-up, and never say a price or an amount.',
+    ].join('\n');
+}
+
+/**
  * What a Brick with Instant Apps is told with its instructions. Research Apps are on for its owner with nothing to set up (Orbit's list for
  * this Brick, cheapest first): the Brick searches right away when a question needs it, picks the App whose strength fits, may try another
  * when the answer is thin (Orbit stops a question at its limit), and the first time it uses an App it says once, in one line, that the
  * owner's own free account of it has no Universe limit. Never a price, an amount or how much credit is left.
  */
 export function instantToolsNote(listing: InstantListing | null = null): string {
+    if (listing?.research && listing.tools.length === 0) return researchStandingNote(listing.research);
     return [
         'Instant Apps: you can run Instant Apps for your owner with the tools whose names start with instant_app_. Call them Instant Apps or Apps, never tools or connectors.',
         "Each run is paid from your owner's Instant Apps credit. Use one when it does what was asked better than answering yourself or reading a page could; never in a loop, never twice with the same words, never to try it out.",
@@ -144,7 +164,8 @@ export class InstantOffers {
             try {
                 await admin.appsOfferableFor(botId, userId);
                 const found = await admin.instantTools(botId);
-                return found?.ready && found.tools.length > 0 ? found : null;
+                // No tools but a reason the owner has no research credit: kept, so the Brick can say it once instead of trying
+                return found?.ready && (found.tools.length > 0 || found.research) ? found : null;
             } catch {
                 return null;
             }
@@ -222,7 +243,7 @@ export interface InstantRunResult {
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Reasons that are about the platform, not about the person's credit: more credit is never the answer to them. */
-const NOT_ABOUT_CREDIT = new Set(['not_set', 'paused', 'exposure_full', 'provider_off', 'provider_empty', 'credit_unavailable', 'not_offered', 'rule', 'question_limit']);
+const NOT_ABOUT_CREDIT = new Set(['not_set', 'paused', 'exposure_full', 'provider_off', 'provider_empty', 'credit_unavailable', 'not_offered', 'rule', 'question_limit', 'credit_not_given']);
 
 const PLAIN_FALLBACK = 'That did not run.';
 

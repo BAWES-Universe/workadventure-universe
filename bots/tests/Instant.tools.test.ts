@@ -310,6 +310,46 @@ describe('research Apps on by default: what the Brick knows about them', () => {
         expect(instantToolsNote(listing())).not.toMatch(/Research Apps/);
     });
 
+    it('tells the Brick to use its owner’s own search App first', () => {
+        expect(instantToolsNote(research())).toMatch(/If your owner has their own search App on for you .* use it first; these are for when they do not/);
+    });
+
+    it('reads why research is not offered (never given this month, or spent) and nothing else from Orbit', async () => {
+        respond(200, { ready: true, reason: null, tools: [], research: { state: 'not_given', renewsAt: null } });
+        expect(await admin().instantTools(BRICK)).toEqual({ ready: true, reason: null, tools: [], research: { state: 'not_given', renewsAt: null } });
+        respond(200, { ready: true, reason: null, tools: [], research: { state: 'used_up', renewsAt: '2026-12-01T00:00:00.000Z' } });
+        expect((await admin().instantTools(BRICK))?.research).toEqual({ state: 'used_up', renewsAt: '2026-12-01T00:00:00.000Z' });
+        respond(200, { ready: true, reason: null, tools: [], research: { state: 'something else' } });
+        expect(await admin().instantTools(BRICK)).not.toHaveProperty('research');
+    });
+
+    it('with no research credit, the Brick says once that it cannot search on Universe’s account and points to their own free account: no tools, no card, no credit talk', async () => {
+        const notGiven: InstantListing = listing({ tools: [], research: { state: 'not_given', renewsAt: null } });
+        // Kept for the owner although nothing can run, so the Brick is told why
+        const offers = new InstantOffers();
+        expect(await offers.listingFor({ appsOfferableFor: vi.fn().mockResolvedValue([]), instantTools: vi.fn().mockResolvedValue(notGiven) }, BRICK, 'uuid-alice')).toEqual(notGiven);
+        expect(instantToolDefinitions(notGiven)).toEqual([]);
+        const note = instantToolsNote(notGiven);
+        expect(note).toMatch(/searching the web on Universe's account is not available to your owner right now\. It is not available to them this month\./);
+        expect(note).toMatch(/their own free account of a search App on \[Apps\]\(#apps\) has no Universe limit/);
+        expect(note).toMatch(/Say that line once in this chat, never again, never as a question, and never with a card/);
+        expect(note).toMatch(/Never offer more credit or a top-up/);
+        expect(note).not.toMatch(/instant_app_|search right away|A card asks them/);
+        expect(note).not.toMatch(/\$\d|cents|composio/i);
+        // Spent: it comes back on the 1st when it is monthly
+        expect(instantToolsNote(listing({ tools: [], research: { state: 'used_up', renewsAt: '2026-12-01T00:00:00.000Z' } }))).toMatch(/Their monthly credit for it is used up and comes back on the 1st\./);
+        expect(instantToolsNote(listing({ tools: [], research: { state: 'used_up', renewsAt: null } }))).toMatch(/Their credit for it is used up\./);
+    });
+
+    it('a run refused because no credit was given is not "used up": no card, and more credit is never offered', async () => {
+        const words = 'Research on Universe’s account isn’t available right now. Your own free account on Apps has no Universe limit.';
+        const instantRun = vi.fn().mockResolvedValue({ status: 'refused', reason: 'credit_not_given', message: words, stop: false, renewsAt: undefined, canAskForMore: undefined } satisfies InstantRunAnswer);
+        const outcome = await runInstantTool({ admin: { instantRun }, botId: BRICK, who: { forOwner: true }, tool: TOOL, arguments: { query: 'x' } });
+        expect(outcome).toMatchObject({ ended: 'not_sent', carryOn: null, result: { reason: 'credit_not_given', error: words } });
+        expect(String(outcome.result.note)).toMatch(/never suggest more credit/);
+        expect(String(outcome.result.note)).not.toMatch(/credit does not cover it/);
+    });
+
     it('a question that had as many runs as one may have is not about credit: more credit is never offered for it', async () => {
         const instantRun = vi.fn().mockResolvedValue({ status: 'refused', reason: 'question_limit', message: 'That is as many look-ups as I do for one question.', stop: false, renewsAt: undefined, canAskForMore: undefined } satisfies InstantRunAnswer);
         const outcome = await runInstantTool({ admin: { instantRun }, botId: BRICK, who: { forOwner: true }, tool: TOOL, arguments: { query: 'x' } });
