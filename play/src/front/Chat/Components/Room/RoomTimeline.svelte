@@ -109,6 +109,7 @@
     import { loadMyApps } from "../../Bricks/Apps/AppsStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import BrickMadeLinks from "../../Bricks/BrickMadeLinks.svelte";
+    import BrickReportLine from "../../Bricks/BrickReportLine.svelte";
     import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
     import { PendingBrickChatRoom } from "../../Bricks/PendingBrickChat";
     import PendingBrickTitle from "../../Bricks/PendingBrickTitle.svelte";
@@ -1789,6 +1790,12 @@
                             />
                             {#if entry.message.brickMade?.length}
                                 <BrickMadeLinks made={entry.message.brickMade} content={entry.message.content} />
+                            {/if}
+                            {#if entry.message.brickReports?.length}
+                                <BrickReportLine
+                                    reports={entry.message.brickReports}
+                                    messageAt={entry.message.date?.getTime() ?? null}
+                                />
                             {/if}
                             {#if entry.message.stoppedBySpeech}
                                 <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />

@@ -22,6 +22,7 @@ import {
     type GuestChatLine,
     type MadeBrick,
 } from "../../Bricks/Brick";
+import { readBrickReports, type BrickReport } from "../../Bricks/BrickReport";
 import { LL } from "../../../../i18n/i18n-svelte";
 import { readArtifactField, type ArtifactCard } from "../../../Artifacts/artifactCard";
 import { readBotSteps, type BotSteps } from "../../Bots/BotSteps";
@@ -85,6 +86,8 @@ export class MatrixChatMessage implements ChatMessage {
     brickIdeas: boolean;
     /** The Bricks a Brick made while writing this answer (#1996). */
     brickMade: MadeBrick[];
+    /** The notes a Brick sent to the Universe team with this answer (mock "Brick reports inbox"). */
+    brickReports: BrickReport[];
     /** A Brick's suggestion of a Brick for a job that keeps coming back (#1996). */
     brickOffer: BrickOffer | undefined;
     /** A Brick's offer to connect an App (#2001): "Connect your calendar?". */
@@ -120,6 +123,7 @@ export class MatrixChatMessage implements ChatMessage {
         this.answeredNearby = cards.answeredNearby;
         this.brickIdeas = cards.brickIdeas;
         this.brickMade = cards.brickMade;
+        this.brickReports = cards.brickReports;
         this.brickOffer = cards.brickOffer;
         this.appOffer = cards.appOffer;
         this.newJobOffer = cards.newJobOffer;
@@ -227,6 +231,7 @@ export class MatrixChatMessage implements ChatMessage {
             answeredNearby: readAnsweredNearby(sender, content),
             brickIdeas: readBrickIdeas(sender, content),
             brickMade: readBrickMade(sender, content),
+            brickReports: readBrickReports(sender, content),
             brickOffer: readBrickOffer(sender, content),
             appOffer: readAppOffer(sender, content),
             newJobOffer: readNewJobOffer(sender, content),
@@ -263,6 +268,7 @@ export class MatrixChatMessage implements ChatMessage {
             answeredNearby: this.answeredNearby,
             brickIdeas: this.brickIdeas,
             brickMade: this.brickMade,
+            brickReports: this.brickReports,
             brickOffer: this.brickOffer,
             appOffer: this.appOffer,
             newJobOffer: this.newJobOffer,

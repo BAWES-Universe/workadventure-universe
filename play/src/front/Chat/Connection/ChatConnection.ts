@@ -3,6 +3,7 @@ import type { AvailabilityStatus } from "@workadventure/messages";
 import type { MapStore } from "@workadventure/store-utils";
 import type { StateEvents } from "matrix-js-sdk";
 import type { AppOffer, BrickOffer, GuestChatLine, MadeBrick } from "../Bricks/Brick";
+import type { BrickReport } from "../Bricks/BrickReport";
 import type { BotStatusNote } from "../Bots/BotChatStatus";
 import type { BotRoomLink } from "../Bots/BotRoomLink";
 import type { BotReplyLimit } from "../Bots/BotReplyLimit";
@@ -239,6 +240,8 @@ export interface ChatMessage {
     brickIdeas?: boolean;
     /** The Bricks a Brick made while writing this answer (#1996): each is one tap from its chat, under the answer. */
     brickMade?: MadeBrick[];
+    /** The notes a Brick sent to the Universe team with this answer (mock "Brick reports inbox"): "Sent to the Universe team" under it. */
+    brickReports?: BrickReport[];
     /**
      * Set on the one message a Brick leaves when someone signs in with a chat they had with the Brick for guests
      * (#1997): the lines of that chat, which the chat draws as they were said, then the Brick's welcome.

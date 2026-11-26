@@ -704,6 +704,89 @@ export class BotApiService {
     }
 
     /**
+     * Takes back a note a Brick sent to the Universe team (mock "Brick reports inbox") with the key its message carries, within 24 hours.
+     * "taken" also when it was taken back already; "too_late" past 24 hours; "failed" when Orbit could not be asked or did not know it.
+     * Asked with no sign-in: a guest in the chat can take it back too, and the key is the proof.
+     */
+    async takeBackBrickReport(id: string, key: string): Promise<"taken" | "too_late" | "failed"> {
+        const adminUrl = this.adminUrl;
+        if (!adminUrl) return "failed";
+        try {
+            // The answer's body is read within the deadline too: headers that come with a body that never ends still fail in time
+            const data = await this.withDeadline(
+                "Orbit did not answer in time",
+                BRICK_WRITE_TIMEOUT_MS,
+                async (signal) => {
+                    const response = await fetch(`${adminUrl}/api/me/brick-reports/take-back`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "omit",
+                        body: JSON.stringify({ id, key }),
+                        signal,
+                    });
+                    return (await response.json()) as { takenBack?: unknown; reason?: unknown };
+                }
+            );
+            if (data.takenBack === true) return "taken";
+            return data.reason === "too_late" ? "too_late" : "failed";
+        } catch {
+            return "failed";
+        }
+    }
+
+    /**
+     * Sends the person's own words with a note a Brick sent to the Universe team, when they press Send on the exact words the chat
+     * shows. Like Take it back, the key in the chat's message is the proof: no sign-in, so a guest can too. Orbit answers the words it
+     * kept (cleaned the same way as what was shown).
+     */
+    async addBrickReportWords(
+        id: string,
+        key: string,
+        words: string
+    ): Promise<{ outcome: "sent"; words: string } | { outcome: "too_late" | "taken_back" | "failed" }> {
+        const data = await this.brickReportCall<{ added?: unknown; words?: unknown; reason?: unknown }>("words", {
+            id,
+            key,
+            words,
+        });
+        if (data?.added === true && typeof data.words === "string") return { outcome: "sent", words: data.words };
+        if (data?.reason === "too_late" || data?.reason === "taken_back") return { outcome: data.reason };
+        return { outcome: "failed" };
+    }
+
+    /** What became of a note (taken back on another device, words already sent), with its key alone. Null when Orbit could not say. */
+    async brickReportStatus(
+        id: string,
+        key: string
+    ): Promise<{ state: "live" | "taken_back" | "not_found"; words: string } | null> {
+        const data = await this.brickReportCall<{ state?: unknown; words?: unknown }>("status", { id, key });
+        if (data?.state !== "live" && data?.state !== "taken_back" && data?.state !== "not_found") return null;
+        return { state: data.state, words: typeof data.words === "string" ? data.words : "" };
+    }
+
+    /** One call to Orbit's note routes, with the key alone (no sign-in, no cookies). Null when Orbit can't be asked or did not answer. */
+    private async brickReportCall<T>(route: "words" | "status", body: Record<string, string>): Promise<T | null> {
+        const adminUrl = this.adminUrl;
+        if (!adminUrl) return null;
+        try {
+            // The answer's body is read within the deadline too: headers that come with a body that never ends still fail in time
+            return await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, async (signal) => {
+                const response = await fetch(`${adminUrl}/api/me/brick-reports/${route}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "omit",
+                    body: JSON.stringify(body),
+                    signal,
+                });
+                if (!response.ok) return null;
+                return (await response.json()) as T;
+            });
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * How many things in Orbit wait for this player's answer (pending invitations for now), for the count on the
      * Orbit button. Null when it can't be known: a guest, no Orbit, or Orbit didn't answer.
      */

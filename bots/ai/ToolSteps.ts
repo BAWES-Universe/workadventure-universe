@@ -5,6 +5,7 @@
  */
 import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 import { MAKE_BRICK_TOOL } from './BrickTools';
+import { REPORT_TOOL } from './ReportTools';
 import { FORGET_MEMORY_TOOL } from './MemoryTools';
 import { COMPUTER_TOOL } from './ComputerTools';
 import { COMPUTER_JOBS_TOOL } from './ComputerControlTools';
@@ -120,6 +121,8 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
         const name = shown(args.name);
         return { doing: name ? `Making ${name}` : 'Making a Brick', done: name ? `Made ${name}` : 'Made a Brick', detail: asDetail(shown(args.line)), group: `make_brick:${name ?? ''}`, kind: 'write' };
     },
+    // A note to the Universe team (mock "Brick reports inbox"): "Sent to the Universe team", with its title under it
+    [REPORT_TOOL]: () => ({ doing: 'Sending to the Universe team', done: 'Sent to the Universe team', group: 'send_to_universe_team', kind: 'write' }),
     // Forgetting something about the person (game #2003): "Forgot", with their own words under it
     [FORGET_MEMORY_TOOL]: (args) => ({ doing: 'Forgetting', done: 'Forgot', detail: shown(args.about), group: 'forget_memory', kind: 'write' }),
     // A job on the Brick's own computer (game #2000)
@@ -241,6 +244,9 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
         if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
             return { id, ok: false, noChange: true, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
         }
+        // A note to the Universe team that did not go (the day's limit, Orbit away, enough for one reply): never "Sent" (mock "Brick reports inbox")
+        if (r.sent === false && r.uncertain === true) return { id, ok: false, unknown: true, note: 'Not confirmed' };
+        if (r.sent === false && !r.error) return { id, ok: false, note: 'Not sent' };
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
             // A tool server call that may have run is not a failure; a cancelled turn stays as it was

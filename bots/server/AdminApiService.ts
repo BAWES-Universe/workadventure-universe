@@ -16,6 +16,7 @@ import { brickLimitFrom } from '../ai/BrickLimit';
 import { computerReportOf, type ComputerReport, type UndeliverableWhy } from './ComputerReports';
 import { dueRunOf, failedNoticeOf, heldNoticeOf, type DueRun, type FailedNotice, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 import { retryJobOf, type RetryJob } from '../ai/ComputerTryAgain';
+import { computerJobsNowOf, type ComputerJobsNow } from '../ai/ComputerJobsNow';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -168,6 +169,36 @@ export interface ArtifactMediaUpload {
     contentType: string;
     body: Uint8Array;
 }
+
+/**
+ * One note a Brick sends to the Universe team (mock "Brick reports inbox"): product-only, filled from what ran. `draftWords` only when the
+ * person asked to tell the team something: Orbit answers them cleaned (`wordsPreview`) and keeps none of them.
+ */
+export interface BrickReportSend {
+    botId: string;
+    /** Who was in the chat (person:<id>, guest:<id>): Orbit keeps only a one-way hash, to count different people. */
+    personKey?: string;
+    /** sha256 of the chat's message and what the note is about: sent again, Orbit answers the same receipt. */
+    ref: string;
+    kind: 'problem' | 'cant_do' | 'friction' | 'idea';
+    area: 'apps' | 'computer' | 'pages' | 'chat' | 'voice' | 'map' | 'memory' | 'files' | 'credit' | 'other';
+    /** One of the Brick's own tools, `app` or `none`. */
+    operation: string;
+    /** For `app`: the connection it ran on, so Orbit can name the catalog App it came from. */
+    appConnectionId?: string;
+    failure: 'failed' | 'signed_out' | 'timed_out' | 'not_allowed' | 'no_result' | 'missing_ability' | 'corrected' | 'idea';
+    retried: boolean;
+    effect: 'stopped' | 'slowed' | 'idea';
+    draftWords?: string;
+    context?: { model?: string; ownKey?: boolean; gameVersion?: string; tools?: string[] };
+}
+
+/** The note as Orbit kept it: what the chat shows under "What was sent". */
+export type BrickReportKept = Pick<BrickReportSend, 'kind' | 'area' | 'failure' | 'retried' | 'effect'> & { title: string; operation: string };
+
+export type BrickReportOutcome =
+    | { sent: true; id: string; takeBackKey: string; note: BrickReportKept; again?: boolean; takenBack?: boolean; wordsPreview?: string }
+    | { sent: false; reason: 'limit' | 'unknown_brick' | 'refused' };
 
 /** Orbit said no, or could not be asked. `code` is Orbit's (edit_not_found, change_not_allowed, ...) or orbit_unavailable. */
 export class ArtifactCallError extends Error {
@@ -1498,6 +1529,58 @@ export class AdminApiService {
         };
     }
 
+    /**
+     * A Brick's note to the Universe team (mock "Brick reports inbox"): Orbit counts it into a problem and answers it as kept, with the key
+     * the chat holds to take it back; the same `ref` sent again answers the same receipt (`again`). A refusal (`limit`, `unknown_brick`) is
+     * an answer, not an error. Throws when Orbit cannot be reached or says anything else: the caller may ask again with the same `ref`.
+     */
+    async sendBrickReport(report: BrickReportSend): Promise<BrickReportOutcome> {
+        let response: AxiosResponse<Record<string, unknown>>;
+        try {
+            response = await this.brickCall<Record<string, unknown>>('post', 'api/bricks/reports', report);
+        } catch (error) {
+            // Orbit turned the request down (not its kind of note, or not this bot's to send): nothing was kept, so asking again changes nothing.
+            // A timeout, "too many", a server error or no answer at all may still be a note Orbit kept: that throws, and is asked again.
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) return { sent: false, reason: 'refused' };
+            throw error;
+        }
+        const data = response.data ?? {};
+        if (data.sent === true && typeof data.id === 'string' && typeof data.takeBackKey === 'string' && data.note && typeof data.note === 'object') {
+            const note = data.note as Record<string, unknown>;
+            const words = (value: unknown) => (typeof value === 'string' ? value : '');
+            return {
+                sent: true,
+                id: data.id,
+                takeBackKey: data.takeBackKey,
+                note: {
+                    kind: report.kind,
+                    area: report.area,
+                    effect: report.effect,
+                    title: words(note.title),
+                    operation: words(note.operation) || report.operation,
+                    failure: report.failure,
+                    retried: note.retried === true,
+                },
+                ...(data.again === true ? { again: true } : {}),
+                ...(data.takenBack === true ? { takenBack: true } : {}),
+                ...(typeof data.wordsPreview === 'string' && data.wordsPreview ? { wordsPreview: data.wordsPreview } : {}),
+            };
+        }
+        if (data.sent === false && (data.reason === 'limit' || data.reason === 'unknown_brick')) return { sent: false, reason: data.reason };
+        // Anything else may be a note Orbit kept: never read as a refusal; asked again with the same reference, Orbit answers its receipt
+        throw new Error('Orbit answered the note in a way it does not know');
+    }
+
+    /**
+     * Tells Orbit the chat message carrying these notes' receipts went out (mock "Brick reports inbox"). A note never confirmed is withdrawn
+     * after 15 minutes. Throws when Orbit cannot be reached; asking again is harmless.
+     */
+    async confirmBrickReports(botId: string, ids: string[]): Promise<number> {
+        const response = await this.brickCall<{ confirmed?: unknown }>('post', 'api/bricks/reports/delivered', { botId, ids: ids.slice(0, 4) });
+        return typeof response.data?.confirmed === 'number' ? response.data.confirmed : 0;
+    }
+
     /** May the suggestion for this topic be shown now? Orbit says yes once per person and topic, on every device (#1996). */
     async claimBrickOffer(viaBotId: string, userId: string, topic: string): Promise<{ show: boolean; topic: string }> {
         const response = await this.brickCall<{ show?: unknown; topic?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });
@@ -1858,14 +1941,16 @@ export class AdminApiService {
      * The same read, with the job "try again" would carry on (piece 8, `retry=1`): the person's latest ended job on this Brick that failed as ours or that we ended, or null (none, or an
      * Orbit that does not say). One request. Read only. Off and no job when Orbit cannot be asked.
      */
-    async computerState(viaBotId: string, userId: string): Promise<{ on: boolean; retry: RetryJob | null }> {
+    async computerState(viaBotId: string, userId: string): Promise<{ on: boolean; retry: RetryJob | null; available?: boolean; jobs?: ComputerJobsNow | null; read?: boolean }> {
         try {
-            const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1' });
-            const on = response.data?.available === true && response.data?.on === true;
-            return { on, retry: on ? retryJobOf(response.data?.retry) : null };
+            // `jobs=1` (the Brick chat audit, 26 Nov): the person's jobs on this Brick, live and lately ended, for the note the Brick gets with every message. An Orbit without it sends none
+            const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown; jobs?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1', jobs: '1' });
+            const available = response.data?.available === true;
+            const on = available && response.data?.on === true;
+            return { on, retry: on ? retryJobOf(response.data?.retry) : null, available, jobs: on ? computerJobsNowOf(response.data?.jobs) : null, read: true };
         } catch (error) {
             console.warn("[AdminApiService] Could not read a Brick's computer:", error instanceof Error ? error.message : error);
-            return { on: false, retry: null };
+            return { on: false, retry: null, available: false, jobs: null, read: false };
         }
     }
 

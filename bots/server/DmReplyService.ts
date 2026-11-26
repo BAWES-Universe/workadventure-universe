@@ -25,7 +25,8 @@ import type { BotConfiguration } from './AdminApiService';
 import { BrickLimitReached } from '../ai/BrickLimit';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
 import { withJobLines } from '../ai/JobStatusLine';
-import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
+import type { AppOfferNote, BrickNote, BrickOfferNote, ReportSentNote } from '../ai/BrickTools';
+import { reportSentText } from '../ai/ReportTools';
 import type { BotManager } from './BotManager';
 
 /** Label stored with direct messages in memory and analytics, where bubble messages store their space name. */
@@ -169,6 +170,12 @@ export interface DmReply {
     ideas?: boolean;
     /** What this turn did about Bricks (#1996): Bricks it made go with the text, a suggestion goes out as a card after it. */
     bricks?: BrickNote[];
+    /**
+     * For a reply with notes to the Universe team: tells Orbit, once, that the message carrying their receipts (and Take it back) went out.
+     * Call it only once Matrix took that message. A note never confirmed is withdrawn by Orbit after 15 minutes, so none stays that the
+     * chat cannot see or take back. Never throws.
+     */
+    reportsDelivered?: () => Promise<void>;
     /**
      * Orbit refused to carry a job on and a new job is a sensible next step (GPT's sixth answer, finding 6): a card with one "Start a new job" button goes out after the text, for
      * the job of this title. Nothing was started; the tap is an ordinary new start.
@@ -822,6 +829,9 @@ export class DmReplyService extends BaseBehavior {
         // its chat one tap away instead of a "couldn't answer" note
         const madeOne = bricks.find((note) => note.kind === 'made');
         if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
+        // A note sent to the Universe team with no words around it: the fixed line, so the chat still shows what was sent and Take it back under it
+        const reports = bricks.filter((note): note is ReportSentNote => note.kind === 'report');
+        if (!replyText.trim() && reports.length > 0) replyText = reportSentText(reports);
         // A reply that names a computer job but has no words of its own (the model made only a card or a file) says so in one fixed sentence: the job is confirmed to Orbit only once the person
         // received an event that tells them of it, so there is always one
         // Every job this reply names has its fixed status line APPENDED to the reply's own words, built from what Orbit really said of it (started, waiting and not started yet, still going, done,
@@ -834,6 +844,7 @@ export class DmReplyService extends BaseBehavior {
         const claimApp = this.appClaim(bricks, botId, person.uuid);
         const releaseOffer = this.offerRelease(bricks, botId, person.uuid);
         const releaseApp = this.appRelease(bricks, botId, person.uuid);
+        const reportsDelivered = this.reportReceipts(bricks, botId);
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
@@ -864,8 +875,28 @@ export class DmReplyService extends BaseBehavior {
             ...(claimApp ? { claimApp } : {}),
             ...(releaseOffer ? { releaseOffer } : {}),
             ...(releaseApp ? { releaseApp } : {}),
+            ...(reportsDelivered ? { reportsDelivered } : {}),
             ...(toolSignIn ? { toolSignIn, ...(toolSignInDelivery ? { toolSignInDelivery } : {}) } : {}),
         };
+    }
+
+    /**
+     * Tells Orbit that the receipts of this reply's notes to the Universe team reached the chat (mock "Brick reports inbox"): once, asked a
+     * second time if the first try is lost. Without it Orbit withdraws them after 15 minutes; the chat reading a note proves it as well.
+     */
+    private reportReceipts(bricks: BrickNote[], botId: string): (() => Promise<void>) | undefined {
+        const ids = bricks.filter((note): note is ReportSentNote => note.kind === 'report').map((note) => note.id);
+        const admin = this.adminApiService;
+        if (ids.length === 0 || !admin) return undefined;
+        let told: Promise<void> | undefined;
+        return () =>
+            (told ??= admin
+                .confirmBrickReports(botId, ids)
+                .catch(() => admin.confirmBrickReports(botId, ids))
+                .then(
+                    () => undefined,
+                    (error) => console.warn('[DmReplyService] Could not confirm note receipts to Orbit:', error instanceof Error ? error.message : error)
+                ));
     }
 
     /**
