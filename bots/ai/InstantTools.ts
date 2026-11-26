@@ -40,8 +40,14 @@ export function instantToolName(slug: string): string {
 
 type ToolDefinition = { type: 'function'; function: { name: string; description: string; parameters: object } };
 
-/** A tool's own description, with the one rule that matters at the call: it runs for the owner and is paid from their credit, once for each search. */
-const DESCRIPTION_TAIL = ' This is one of your Instant Apps: it runs for your owner and is paid from their Instant Apps credit, so call it when it helps, never to test it, and never twice with the same words.';
+/** A tool's own description, with the one rule that matters at the call: it runs for the owner and is paid from their credit, once for a question. */
+const DESCRIPTION_TAIL = ' This is one of your Instant Apps: it runs once for your owner and is paid from their Instant Apps credit, so call it only when it really helps, never to test it, and never again for the same question.';
+
+/** A research App's tail: a thin answer may be searched again with other words or another research App (Orbit stops a question at its limit). */
+const RESEARCH_DESCRIPTION_TAIL = ' This is one of your Instant Apps: it runs for your owner and is paid from their Instant Apps credit, so call it when it helps, never to test it, and never twice with the same words.';
+
+/** Only an App Orbit says is a research one may be searched again; any other kind, or none, keeps "once for a question". */
+const tailFor = (tool: InstantToolInfo): string => (tool.kind === 'research' ? RESEARCH_DESCRIPTION_TAIL : DESCRIPTION_TAIL);
 
 /** "Strength" as it reads after a name: "Exa (papers, companies and people)". */
 const withStrength = (app: string, strength: string | undefined): string => (strength ? `${app} (${strength.charAt(0).toLowerCase()}${strength.slice(1)})` : app);
@@ -62,7 +68,7 @@ export function instantToolDefinitions(listing: InstantListing | null): ToolDefi
             type: 'function',
             function: {
                 name,
-                description: `${appPrefix(tool)}${(tool.description ?? `Runs ${tool.name.toLowerCase().replace(/_/g, ' ')}.`).trim()}${DESCRIPTION_TAIL}`,
+                description: `${appPrefix(tool)}${(tool.description ?? `Runs ${tool.name.toLowerCase().replace(/_/g, ' ')}.`).trim()}${tailFor(tool)}`,
                 // Orbit's schema, as it came
                 parameters: tool.inputSchema,
             },
@@ -91,7 +97,7 @@ function researchNote(listing: InstantListing | null): string[] {
     return [
         `Research Apps: ${apps.map((one) => withStrength(one.app, one.strength)).join(', ')}. They are on for your owner with nothing to set up or connect: when a question needs facts from the web (news, prices, places, opening hours, people, companies, studies), search right away with the App whose strength fits best, then answer from what you found. Do not ask first, and never offer to connect or switch on anything for these.`,
         'If your owner has their own search App on for you (another research or web search App among your tools), use it first; these are for when they do not.',
-        'Try them in the order given unless another one fits the question better. When the answer is thin or off the point, you may try another research App or other words once or twice; stop when you have enough, and if one says you have done as many look-ups as one question may have, answer from what you have.',
+        'Try them in the order given unless another one fits the question better. Research Apps are the one exception to once for a question: when the answer is thin or off the point, you may try another research App or other words once or twice, never twice with the same words; stop when you have enough, and if one says you have done as many look-ups as one question may have, answer from what you have.',
         'In your reply, say which App you searched with, by its name, and give the sources as links.',
         ...(fresh.length > 0
             ? [
@@ -131,7 +137,7 @@ export function instantToolsNote(listing: InstantListing | null = null): string 
     if (listing?.research && listing.tools.length === 0) return researchStandingNote(listing.research);
     return [
         'Instant Apps: you can run Instant Apps for your owner with the tools whose names start with instant_app_. Call them Instant Apps or Apps, never tools or connectors.',
-        "Each run is paid from your owner's Instant Apps credit. Use one when it does what was asked better than answering yourself or reading a page could; never in a loop, never twice with the same words, never to try it out.",
+        "Each run is paid from your owner's Instant Apps credit. Use one only when it does what was asked and answering yourself or reading a page cannot; once for a question, never in a loop, never to try it out.",
         ...(listing?.research ? [researchStandingNote(listing.research)] : researchNote(listing)),
         'Never say a price, an amount, or how much credit is left: their Usage page shows it ([Usage](#usage) opens it when they ask). Never say who runs an App for Universe.',
         'When a run did not work or was refused, say it in one plain sentence in their language, in the words you were given, and carry on another way if you can.',

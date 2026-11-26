@@ -228,7 +228,9 @@ describe('what the model is offered', () => {
         expect(defs[0].function.name).toBe('instant_app_exa_search');
         expect(defs[0].function.parameters).toBe(SEARCH_SCHEMA);
         expect(defs[0].function.description).toMatch(/^Search the web\./);
-        expect(defs[0].function.description).toMatch(/never twice with the same words/);
+        // An App that is not a research one (or of no kind) keeps "once for a question"
+        expect(defs[0].function.description).toMatch(/runs once for your owner .* never again for the same question\.$/);
+        expect(defs[0].function.description).not.toMatch(/never twice with the same words/);
         expect(isInstantTool(defs[0].function.name)).toBe(true);
         expect(isInstantTool('use_computer')).toBe(false);
         // "Didn't work" is not a chat tool: a result that ran fine is not given back, and a technical failure is given back by Orbit by itself
@@ -252,6 +254,8 @@ describe('what the model is offered', () => {
         expect(note).toMatch(/Never say who runs an App for Universe/);
         expect(note).toMatch(/More credit is never the answer to something that is not available/);
         expect(note).toMatch(/never in a loop/);
+        expect(note).toMatch(/once for a question, never in a loop, never to try it out/);
+        expect(note).not.toMatch(/try another|never twice with the same words/);
         expect(note).toMatch(/When a rule they set says no/);
         expect(note).not.toMatch(/didn.t work/i);
         expect(note).not.toMatch(/\$\d|cents|per search/);
@@ -298,6 +302,10 @@ describe('research Apps on by default: what the Brick knows about them', () => {
         // The tools say which App they are
         const defs = instantToolDefinitions(research());
         expect(defs.map((def) => def.function.description.split(':')[0])).toEqual(['Exa (papers, companies and people)', 'Exa (papers, companies and people)', 'Tavily (fresh news and quick facts)']);
+        // A research App may be searched again with other words; the general rule names it as the one exception
+        for (const def of defs) expect(def.function.description).toMatch(/never twice with the same words\.$/);
+        expect(note).toMatch(/once for a question, never in a loop/);
+        expect(note).toMatch(/Research Apps are the one exception to once for a question/);
     });
 
     it('says once, the first time an App is used, that the owner’s own free account has no Universe limit, only for Apps that are new to them', () => {
@@ -320,6 +328,9 @@ describe('research Apps on by default: what the Brick knows about them', () => {
         // Mixed: only the research one is named as research
         const mixed = listing({ tools: [...research().tools, ...other.tools] });
         expect(researchAppsOf(mixed).map((one) => one.app)).toEqual(['Exa', 'Tavily']);
+        // ...and only the research ones may be searched again: Gmail keeps "never again for the same question"
+        const tails = instantToolDefinitions(mixed).map((def) => (def.function.description.endsWith('never twice with the same words.') ? 'again' : def.function.description.endsWith('never again for the same question.') ? 'once' : '?'));
+        expect(tails).toEqual(['again', 'again', 'again', 'once']);
     });
 
     it('tells the Brick to use its owner’s own search App first', () => {
