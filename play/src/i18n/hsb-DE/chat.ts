@@ -182,6 +182,22 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Nětko w",
         inThisRoom: "Sy w tutej rumnosći",
     },
+    artifacts: {
+        openPublic: "Zjawny",
+        openPublicHelp: "Kóždy z wotkazom widźi jenož to, štož wozjewiš",
+        notPublished: "Hišće njewozjewjeny",
+        publishHelp: "Ludźo widźa wersiju, kotruž wozjewiš. Změny po tym wostanu priwatne, doniž znowa njewozjewiš.",
+        publishVersion: "Wersiju {version} wozjewić",
+        publishedStatus: "Wozjewjeny · Wersija {version} · {time}",
+        unpublishedChanges: "Wersija {version} hišće njeje wozjewjena",
+        linkFollows: "Wotkaz přeco pokazuje twoju najnowšu wersiju.",
+        publishBar: "Wozjewjene: wersija {version}. Wersija {latest} hišće njeje wozjewjena.",
+        publish: "Wozjewić",
+        publishing: "Wozjewja so…",
+        publishFailed: "Wozjewjenje njeje so poradźiło. Spytaj hišće raz.",
+        publicUnavailable: "Zjawna wersija k dispoziciji njesteji",
+        publicUnavailableHelp: "Ludźo widźa „K dispoziciji njesteji“, doniž wersiju njewozjewiš.",
+    },
 };
 
 export default chat;

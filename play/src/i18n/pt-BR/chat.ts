@@ -492,6 +492,23 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Agora em",
         inThisRoom: "Você está nesta sala",
     },
+    artifacts: {
+        openPublic: "Público",
+        openPublicHelp: "Qualquer pessoa com o link vê apenas o que você publica",
+        notPublished: "Ainda não publicado",
+        publishHelp:
+            "As pessoas veem a versão que você publica. As alterações depois disso ficam privadas até você publicar de novo.",
+        publishVersion: "Publicar a versão {version}",
+        publishedStatus: "Publicado · Versão {version} · {time}",
+        unpublishedChanges: "A versão {version} ainda não foi publicada",
+        linkFollows: "O link sempre mostra a sua versão mais recente.",
+        publishBar: "Publicado: versão {version}. A versão {latest} ainda não foi publicada.",
+        publish: "Publicar",
+        publishing: "Publicando…",
+        publishFailed: "Não foi possível publicar. Tente de novo.",
+        publicUnavailable: "Versão pública indisponível",
+        publicUnavailableHelp: 'As pessoas veem "Indisponível" até você publicar uma versão.',
+    },
 };
 
 export default chat;

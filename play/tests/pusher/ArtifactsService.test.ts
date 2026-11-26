@@ -420,6 +420,55 @@ describe("ArtifactsService", () => {
         expect(answer.artifact.openScope).toBe("link");
     });
 
+    it("shares as Public, and publishes a version as the viewer with a POST, keeping what was published (game #2115)", async () => {
+        const published = { version: 2, at: "2026-11-20T09:12:00.000Z" };
+        const http = {
+            put: vi.fn(() => Promise.resolve({ data: { artifact: { ...opened.artifact, openScope: "public" } } })),
+            post: vi.fn(() =>
+                Promise.resolve({ data: { artifact: { ...opened.artifact, openScope: "public", published } } })
+            ),
+        };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        expect((await service.share(ID, { openScope: "public" }, viewer)).artifact.openScope).toBe("public");
+        const answer = await service.publish(ID, 2, viewer);
+        expect(http.post).toHaveBeenCalledWith(
+            `https://orbit.test/api/artifacts/${ID}/publish`,
+            { viewer, version: 2 },
+            { headers: { Authorization: "secret" } }
+        );
+        expect(answer.artifact.published).toEqual(published);
+        // An Orbit that does not say it yet is read as nothing published
+        const old = new ArtifactsService("https://orbit.test", "secret", {
+            put: vi.fn(),
+            post: vi.fn(() => Promise.resolve({ data: { artifact: opened.artifact } })),
+        });
+        expect((await old.publish(ID, undefined, viewer)).artifact.published).toBeUndefined();
+    });
+
+    it("tells a published version that is gone to its owner, and passes on that it cannot be published", async () => {
+        const http = {
+            put: vi.fn(),
+            post: vi.fn(() =>
+                Promise.resolve({
+                    data: {
+                        ...opened,
+                        artifact: {
+                            ...opened.artifact,
+                            published: { version: 1, at: "2026-11-20T09:12:00.000Z", available: false },
+                        },
+                    },
+                })
+            ),
+        };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        expect((await service.open(ID, viewer)).artifact.published).toMatchObject({ version: 1, available: false });
+        const notShared = new ArtifactsService("https://orbit.test", "secret", {
+            put: vi.fn(),
+            post: vi.fn(() => Promise.reject(orbitError(409, { error: "not_shared", message: "Share it first." }))),
+        });
+        await expect(notShared.publish(ID, 2, viewer)).rejects.toEqual(new ArtifactsError("not_shared", 409));
+    });
+
     it("passes Orbit's refusal on with its status and code", async () => {
         const http = {
             put: vi.fn(),

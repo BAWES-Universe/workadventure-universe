@@ -61,6 +61,12 @@ const ArtifactView = z.object({
     changeScope: z.string(),
     chatKind: z.string().nullable(),
     expiresAt: z.string().nullable(),
+    // What the owner published (game #2115), or none. `available` is told to its owner only: false when that version is gone.
+    // An Orbit that does not say it yet counts as nothing published.
+    published: z
+        .object({ version: z.number(), at: z.string(), available: z.boolean().optional() })
+        .nullable()
+        .optional(),
 });
 
 const Rights = z.object({
@@ -92,7 +98,6 @@ export type OpenedArtifact = Omit<z.infer<typeof Opened>, "version"> & {
 const Shared = z.object({ artifact: ArtifactView });
 export type SharedArtifact = z.infer<typeof Shared>;
 
-/** Who can open it: just its owner (game #1994), people in the chat it was made in, or anyone with the link. */
 /**
  * A page that takes payments, as the game's window may know it (game #2044): whether it does, the checkout the owner's amount
  * made, and where an order stands. Nothing of the key, the amount's terms or the service's own answer comes through.
@@ -147,7 +152,11 @@ export interface ArtifactPayRequest {
     receiptCode?: string;
 }
 
-export const OPEN_SCOPES = ["me", "chat", "link"] as const;
+/**
+ * Who can open it: just its owner (game #1994), people in the chat it was made in, anyone with the link, or anyone with the
+ * link and only the version its owner published (game #2115).
+ */
+export const OPEN_SCOPES = ["me", "chat", "link", "public"] as const;
 /** Who can ask for changes: only its owner, or everyone who can open it, in its chat. */
 export const CHANGE_SCOPES = ["owner", "openers"] as const;
 
@@ -246,6 +255,14 @@ export class ArtifactsService {
     /** The owner says who can open it and who can ask for changes; the answer is the artifact as it now is. */
     share(id: string, sharing: ArtifactSharing, viewer: ArtifactViewer): Promise<SharedArtifact> {
         return this.call(`/api/artifacts/${encodeURIComponent(id)}/share`, { viewer, ...sharing }, Shared, "put");
+    }
+
+    /**
+     * The owner publishes a version (game #2115): the one they were looking at, or the latest. From then on people who open
+     * it only by its link see that version. The answer is the artifact as it now is.
+     */
+    publish(id: string, version: number | undefined, viewer: ArtifactViewer): Promise<SharedArtifact> {
+        return this.call(`/api/artifacts/${encodeURIComponent(id)}/publish`, { viewer, version }, Shared);
     }
 
     /**
