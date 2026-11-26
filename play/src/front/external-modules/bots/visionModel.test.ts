@@ -7,6 +7,7 @@ import {
     visionCandidates,
     visionMain,
     refusalPutsPickBack,
+    restoreBaseline,
     visionState,
     withVisionChoice,
     withoutRefused,
@@ -522,5 +523,23 @@ describe("refusalPutsPickBack", () => {
 
     it("puts a first pick back when nothing was saved yet", () => {
         expect(refusalPutsPickBack(another, another, null)).toBe(true);
+    });
+});
+
+describe("restoreBaseline", () => {
+    const universeAi = JSON.stringify({ vision: { choice: "universe-ai" } });
+    const thisModel = JSON.stringify({ vision: { choice: "this" } });
+
+    it("uses what Orbit accepted, not the snapshot taken when the refused save was scheduled (save A accepted after the page left, save B refused)", () => {
+        // A sent universe-ai and Orbit accepted it; B was scheduled while A was in flight and captured "this"
+        const baseline = restoreBaseline(universeAi, thisModel, thisModel, false);
+        expect(baseline).toBe(universeAi);
+        const refused = { id: "b1", behaviorConfig: { vision: { choice: "another", keyId: "k", model: "m" } } } as BotData;
+        expect(withoutRefused(refused, "config", baseline).behaviorConfig?.vision).toEqual({ choice: "universe-ai" });
+    });
+
+    it("with nothing accepted yet: the page's record while the page still shows the bot, else the one from when the save was scheduled", () => {
+        expect(restoreBaseline(undefined, universeAi, thisModel, true)).toBe(universeAi);
+        expect(restoreBaseline(undefined, universeAi, thisModel, false)).toBe(thisModel);
     });
 });

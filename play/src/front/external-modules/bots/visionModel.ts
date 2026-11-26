@@ -263,6 +263,19 @@ export function isAlreadyPicked(bot: Pick<BotData, "behaviorConfig">, state: Vis
 }
 
 /**
+ * What a refused save is put back to: what Orbit last accepted for that bot, even from a save that finished after the page left
+ * it. Only when none is known, the page's own record while it still shows that bot, else what was saved when the save was scheduled.
+ */
+export function restoreBaseline(
+    accepted: string | undefined,
+    pageRecord: string | null,
+    onSchedule: string | null,
+    pageStillThisBot: boolean
+): string | null {
+    return accepted ?? (pageStillThisBot ? pageRecord : onSchedule);
+}
+
+/**
  * Whether a refused save is one that put the Vision pick back: the save carried a pick that is not what was last saved
  * (a refusal about a position or a route leaves the pick alone), and the page still shows that pick (a newer one has its own
  * save coming).

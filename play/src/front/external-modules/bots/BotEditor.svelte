@@ -45,7 +45,7 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
-    import { refusalPutsPickBack, withoutRefused } from "./visionModel";
+    import { refusalPutsPickBack, restoreBaseline, withoutRefused } from "./visionModel";
     import { newBotRef } from "./mindModel";
     import { aiModelPlan } from "./modelPickerModel";
     import { botDataFromSave } from "./savedBotModel";
@@ -250,11 +250,12 @@
                                 refusedSave = true;
                                 const currentBot = get(botPreviewsStore).get(bot.id);
                                 // What Orbit last accepted for this bot, even from a save that finished after the page left it
-                                const saved =
-                                    acceptedBotConfig.get(bot.id) ??
-                                    (shownBotCount === shownBotCountOnScheduleForConfig
-                                        ? lastSavedBotConfig
-                                        : savedConfigOnSchedule);
+                                const saved = restoreBaseline(
+                                    acceptedBotConfig.get(bot.id),
+                                    lastSavedBotConfig,
+                                    savedConfigOnSchedule,
+                                    shownBotCount === shownBotCountOnScheduleForConfig
+                                );
                                 // A refusal can only be about the Vision pick when this save carried one that is not what was saved:
                                 // a refusal about anything else (a position, a route) leaves the pick as it is
                                 if (
