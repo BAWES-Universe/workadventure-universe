@@ -104,7 +104,7 @@ const DISLIKE_VERBS = 'hate|dislike|despise|detest|loathe';
 const MAX_PHRASE_WORDS = 6;
 const MAX_PHRASE_CHARS = 60;
 /** What a phrase starts with when it is a remark about the moment, the bot, or someone else, and not a thing the person likes. */
-const NOT_A_THING = /^(?:how|that|when|the way|it when|it that|if|whether|what|who|why|being|you\b|your\b|my\b|our\b|his\b|her\b|their\b|him\b|them\b|me\b|myself\b|us\b|this\b|these\b|those\b|it\b|its\b|there\b|her\b|something\b|anything\b|everything\b|nothing\b|one\b|so\b|too\b)/iu;
+const NOT_A_THING = /^(?:how|that|when|the way|it when|it that|if|whether|what|who|why|being|you\b|your\b|my\b|our\b|his\b|her\b|their\b|him\b|them\b|me\b|myself\b|us\b|this\b|these\b|those\b|not\b|never\b|no\b|it\b|its\b|there\b|her\b|something\b|anything\b|everything\b|nothing\b|one\b|so\b|too\b)/iu;
 /** A phrase that speaks to the bot ("to bother you") is a remark, not a taste. */
 const ABOUT_THE_BOT = /(?<![\p{L}\p{N}])(?:you|your|yours|you['’]re|you['’]ve|you['’]ll|yourself)(?![\p{L}\p{N}])/iu;
 const CONTACT = /@|https?:\/\/|www\.|\d{5,}/u;
@@ -129,7 +129,8 @@ const CANT_STAND = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+(?:can${APOS}?t|cannot)\\s
 const FAVORITE = new RegExp(`\\bmy\\s+(?:all[- ]time\\s+)?favou?rite\\s+((?:\\p{L}+\\s+){0,2}?)(?:is|are)\\s+(.+)$`, 'iu');
 
 /** A sentence with two things said by the person ("I like tea and I hate coffee") as one line for each; "and my sister hates it" is cut off, as it is not theirs. */
-const NEXT_SAYING = /\s*(?:,\s*)?\b(?:and|but|while|though|although|then|yet)\s+(?=(?:[Ii]|[Mm]y|[Mm]y)(?![\p{L}\p{N}]|['’]s))/u;
+const SAYING_STARTS = `(?=(?:[Ii]|[Mm]y)(?![\\p{L}\\p{N}]|['’]s))`;
+const NEXT_SAYING = new RegExp(`\\s*(?:,\\s*)?\\b(?:and|but|while|though|although|then|yet)\\s+${SAYING_STARTS}|\\s*[,;]\\s*${SAYING_STARTS}`, 'u');
 function sayingsOf(sentence: { text: string; question: boolean }): Array<{ text: string; question: boolean }> {
     return sentence.text
         .split(NEXT_SAYING)
@@ -174,7 +175,7 @@ export function tastesIn(message: string): Tastes {
         const favourite = FAVORITE.exec(text);
         if (favourite) {
             // "isn't" never reaches here: the form is "is" or "are" right after the kind of thing
-            const thing = thingOf(favourite[2]);
+            const thing = HEDGE.test(text.slice(0, favourite.index)) ? null : thingOf(favourite[2]);
             const kind = favourite[1].trim();
             push(likes, thing && !NEGATED.test(favourite[1]) ? (kind ? `${thing} (favorite ${kind})` : `${thing} (favorite)`) : null);
             continue;
