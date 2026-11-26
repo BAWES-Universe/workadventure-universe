@@ -1,5 +1,5 @@
 /**
- * "Send to the Universe team" (mock "Brick reports inbox"): every Brick has the tool, it refuses a note that repeats the person, Orbit is
+ * "Send to the Universe team" (mock "Brick reports inbox"): every Brick has the tool in its direct messages, it refuses a note that repeats the person, Orbit is
  * asked with the bot server's own token, and in a direct message the note rides on the words of the answer so the game shows "Sent to the
  * Universe team" under it with what was sent and Take it back.
  */
@@ -16,7 +16,7 @@ vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { AdminApiService } from '../server/AdminApiService';
 import { BRICK_REPORTS_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
-import { REPORT_TOOL, isReportTool, repeatsThePerson, reportSentText, reportToolDefinition, runReportTool, type ReportToolContext } from '../ai/ReportTools';
+import { REPORT_TOOL, isReportTool, noteWhatWasRead, repeatsThePerson, reportSentText, reportToolDefinition, runReportTool, type ReportToolContext } from '../ai/ReportTools';
 import type { BrickNote, ReportSentNote } from '../ai/BrickTools';
 import type { MatrixEvent } from '../matrix/MatrixAppServiceRouter';
 
@@ -101,9 +101,44 @@ describe('The send_to_universe_team tool', () => {
         expect(where.admin.sendBrickReport).toHaveBeenCalledTimes(2);
     });
 
-    it('on the map the Brick says it in words: nothing waits for a direct reply', async () => {
-        const where = context({ notes: null });
-        expect(await runReportTool(args, where)).toMatchObject({ sent: true });
+    it('finds a quote and a name in languages written without spaces, and through invisible characters', () => {
+        // Japanese and Thai: ten characters in a row of what they wrote
+        expect(repeatsThePerson(['予約ページのリンクが東京のホテルで開かない'], ['東京のホテルの予約ページのリンクが開かないのはなぜ'])).toBe(true);
+        expect(repeatsThePerson(['ลิงก์ในหน้าจองโรงแรมที่กรุงเทพเปิดไม่ได้'], ['ทำไมลิงก์ในหน้าจองโรงแรมที่กรุงเทพเปิดไม่ได้'])).toBe(true);
+        // A Chinese name of two characters
+        expect(repeatsThePerson(['王伟的页面打不开'], [], '王伟')).toBe(true);
+        // A zero-width space inside a word does not split it
+        expect(repeatsThePerson(['Ali\u200bce could not open it'], [], 'Alice Brown')).toBe(true);
+        expect(repeatsThePerson(['why you can\u200bnot add links to the listings'], ['why you cannot add links to the listings'])).toBe(true);
+        // General words still go through
+        expect(repeatsThePerson(["Links inside pages don't open"], ['東京のホテルの予約ページのリンクが開かないのはなぜ', 'Why do my links not work'], 'Alice Brown')).toBe(false);
+    });
+
+    it('refuses a note that repeats what Apps or files gave back in this reply', async () => {
+        const turn = { refusals: 0, read: [] as string[] };
+        noteWhatWasRead(turn, [
+            { name: 'gmail_read', result: { body: 'Dear team, the villa booking for the family reunion is confirmed for Friday' } },
+            { name: REPORT_TOOL, result: { sent: true } },
+        ]);
+        expect(turn.read).toHaveLength(1);
+        const where = context({ turn });
+        expect(await runReportTool({ ...args, tried: 'Read that the villa booking for the family reunion is confirmed.' }, where)).toMatchObject({ sent: false, error: expect.stringContaining('Apps or files') });
+        expect(where.admin.sendBrickReport).not.toHaveBeenCalled();
+        // Only the last part of a long reply is kept
+        const long = { refusals: 0, read: [] as string[] };
+        noteWhatWasRead(long, [{ name: 'files_read', result: 'x'.repeat(50_000) }]);
+        noteWhatWasRead(long, [{ name: 'files_read', result: 'y'.repeat(15_000) }]);
+        expect(long.read.reduce((sum, text) => sum + text.length, 0)).toBeLessThanOrEqual(20_000);
+    });
+
+    it('lets the Brick write a refused note again once in a reply, and no more', async () => {
+        const turn = { refusals: 0, read: [] as string[] };
+        const where = context({ turn });
+        const quote = { ...args, tried: 'They asked: explaining why you cannot add links to the listings.' };
+        expect(await runReportTool(quote, where)).toMatchObject({ sent: false, error: expect.stringContaining('send it again') });
+        expect(await runReportTool(quote, where)).toEqual({ sent: false, note: 'Not sent. Do not try again in this reply and do not mention it.' });
+        where.admin.sendBrickReport.mockResolvedValueOnce({ sent: false, reason: 'empty' });
+        expect(await runReportTool(args, where)).toMatchObject({ sent: false, note: expect.stringContaining('Do not try again') });
     });
 
     it('never says it was sent when Orbit could not take it or said no', async () => {
@@ -117,6 +152,9 @@ describe('The send_to_universe_team tool', () => {
         expect(await runReportTool(args, full)).toMatchObject({ sent: false, note: expect.stringContaining('enough notes today') });
         expect(await runReportTool({ ...args, title: '' }, context())).toMatchObject({ sent: false, error: expect.any(String) });
         expect(await runReportTool({ ...args, kind: 'rant' }, context())).toMatchObject({ sent: false });
+        const room = context();
+        room.admin.sendBrickReport.mockResolvedValueOnce({ sent: false, reason: 'unknown_brick' });
+        expect(await runReportTool(args, room)).toMatchObject({ sent: false, note: expect.stringContaining('cannot send notes') });
     });
 
     it('a reply with no words of its own says what it sent', () => {

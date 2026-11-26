@@ -144,7 +144,7 @@ import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
-import { REPORT_TOOL, reportToolDefinition, runReportTool } from './ReportTools';
+import { REPORT_TOOL, type ReportTurn, noteWhatWasRead, reportToolDefinition, runReportTool } from './ReportTools';
 import {
     InstantOffers,
     endInstantTask,
@@ -2268,6 +2268,8 @@ export class AIService {
                         const appStepCounts = new Map<string, number>();
                         // The Apps a review said the computer could do better for the rest: a use_computer that names one is Orbit's to weigh
                         const reviewedApps = new Set<string>();
+                        // Notes to the Universe team in this reply: one rewrite after a refusal, and what Apps and files gave back for the quote check
+                        const reportTurn: ReportTurn = { refusals: 0, read: [] };
                         // What the model said, and its reasoning, in the call that asked for this round's tools
                         let roundContent = firstCallContent || '';
                         let roundReasoning = chunk.reasoning;
@@ -2302,7 +2304,9 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel, reportTurn);
+                            // A note to the Universe team later in this reply never repeats what these tools gave back
+                            noteWhatWasRead(reportTurn, toolResults);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) {
                                 readForTheGroup = true;
@@ -3806,8 +3810,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: lead the owner to add a key for a service, and make a page take a payment (game #2044). The same Bricks, in the same chats.
         if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...keyToolDefinitions());
 
-        // Tool: a note to the Universe team where the Brick hit a wall (mock "Brick reports inbox"). Every Brick, on by default, wherever it talks with Orbit there
-        if ((botClient || channel === 'dm') && botId && adminApiService?.isConfigured?.()) tools.push(reportToolDefinition());
+        // Tool: a note to the Universe team where the Brick hit a wall (mock "Brick reports inbox"). Every Brick, on by default, in its direct
+        // messages: only there can the chat see what was sent and take it back (the map and voice come back when their bubble can carry that)
+        if (this.reportToolOn(channel, botId, adminApiService)) tools.push(reportToolDefinition());
 
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
@@ -4575,38 +4580,40 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return runKeyTool(name, args, { where: side, botId: where.botId, userId: memory.userUuid, apps });
     }
 
+    /** Whether this chat offers send_to_universe_team: a Brick (never a room bot), in a direct message, with Orbit set up. */
+    private reportToolOn(channel: 'world' | 'dm', botId: string | undefined, adminApiService?: AdminApiService): boolean {
+        const admin = adminApiService ?? this.adminApiService;
+        return channel === 'dm' && !!botId && !!admin?.isConfigured?.() && (!!this.knownBricks?.has(botId) || !!this.roomBricks?.has(botId));
+    }
+
     /**
-     * Runs send_to_universe_team (mock "Brick reports inbox"). In a direct message the note waits with the reply, so the game shows "Sent to the
-     * Universe team" under it; on the map the Brick says it in its words. The person is passed only for Orbit's one-way count; what they wrote is
-     * used here only to refuse a note that quotes them, and is never sent.
+     * Runs send_to_universe_team (mock "Brick reports inbox") in a Brick's direct message. The note waits with the reply, so the game shows
+     * "Sent to the Universe team" under it with Take it back. The person is passed only for Orbit's one-way count; what they wrote, and what
+     * Apps and files gave back in this reply, are used here only to refuse a note that quotes them, and are never sent.
      */
     private async runReportToolCall(
         args: Record<string, unknown>,
-        where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; botClient?: BotClient; spaceName?: string; channel: 'world' | 'dm'; source?: string }
+        where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; channel: 'world' | 'dm'; source?: string; turn?: ReportTurn }
     ): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
         const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
-        if (!admin || !where.botId) return { error: "That can't be done in this chat right now." };
+        // Only a Brick, in its direct messages, whatever the model asks for
+        if (!admin || !where.botId || !memory || !this.reportToolOn(where.channel, where.botId, admin)) return { error: "That can't be done in this chat right now." };
         let personKey: string | undefined;
-        if (where.channel === 'dm') {
-            const uuid = memory?.userUuid;
-            if (uuid && !uuid.startsWith('temp-')) personKey = `${memory?.isGuest === false ? 'person' : 'guest'}:${uuid}`;
-        } else {
-            const asker = this.gatePerson(where.botId, where.playerId, where.botClient, where.spaceName);
-            const guest = where.playerId !== undefined ? this.chatCallFor(where.botId, where.playerId, where.botClient, where.spaceName)?.person.identifier : undefined;
-            personKey = asker.signedIn && asker.identifier ? `person:${asker.identifier}` : guest ? `guest:${guest}` : undefined;
-        }
+        const uuid = memory.userUuid;
+        if (uuid && !uuid.startsWith('temp-')) personKey = `${memory.isGuest === false ? 'person' : 'guest'}:${uuid}`;
         if (personKey && !/^(person|guest):[A-Za-z0-9_.:-]{1,255}$/.test(personKey)) personKey = undefined;
-        const said = (memory?.conversationHistory ?? []).filter((line) => line.sender === 'person').map((line) => line.message);
+        const said = (memory.conversationHistory ?? []).filter((line) => line.sender === 'person').map((line) => line.message);
         const release = process.env.RELEASE_VERSION?.trim();
         return runReportTool(args, {
             admin,
             botId: where.botId,
             ...(personKey ? { personKey } : {}),
             said,
-            ...(memory?.playerName ? { name: memory.playerName } : {}),
-            // Only a direct message shows the line under the answer; a note pushed on the map would wait for the next direct reply
-            notes: where.channel === 'dm' && memory ? (memory.pendingBricks ??= []) : null,
+            ...(memory.playerName ? { name: memory.playerName } : {}),
+            ...(where.turn ? { turn: where.turn } : {}),
+            // The line under the answer, with what was sent and the key to take it back
+            notes: (memory.pendingBricks ??= []),
             context: { ownKey: where.source === 'own-key', ...(release ? { gameVersion: release.slice(0, 40) } : {}) },
         });
     }
@@ -4981,7 +4988,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** The Apps a review in this reply said the computer could do better (the reply's own set, filled as it goes). */
         reviewedApps?: ReadonlySet<string>,
         /** Where the reply is said: the memory tools (what is remembered, forgetting it) are the person's own and run only in their direct message, whatever the model asks for. */
-        channel: 'world' | 'dm' = 'world'
+        channel: 'world' | 'dm' = 'world',
+        /** This reply's notes to the Universe team: refusals so far and what its Apps and files gave back. */
+        reportTurn?: ReportTurn
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -5363,7 +5372,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     case REPORT_TOOL:
                         result = await this.runReportToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { adminApiService, botId, playerId, botClient, spaceName, channel, source }
+                            { adminApiService, botId, playerId, channel, source, turn: reportTurn }
                         );
                         break;
 

@@ -1,12 +1,16 @@
 /**
  * "Send to the Universe team" (mock "Brick reports inbox"): the one way a Brick tells the people who build Universe where it hit a wall.
  *
- * Every Brick has it, on by default, in every chat. It uses it when it can't do something, when a tool or App fails, when someone corrects
+ * Every Brick has it, on by default, in its direct messages (the map comes back once its bubble can carry the line and Take it back). It uses it when it can't do something, when a tool or App fails, when someone corrects
  * it or is unhappy, when it has a clear idea, and whenever someone asks it to report a problem or file an issue. It replaces the old habit
  * of writing a page "as a report", which only the owner could see. The note is in general words: the tool refuses one that repeats six
- * words in a row of what the person wrote in this chat, or their name, so the Brick rewrites it in the same reply (no extra AI call), and
+ * words in a row (ten characters in languages written without spaces) of what the person wrote in this chat or what Apps and files gave
+ * back in this reply, or their name, so the Brick rewrites it once in the same reply (no extra AI call), and
  * Orbit takes out emails, phone numbers, links, @names and long numbers before keeping it. The person is counted by a one-way hash only.
  * In a direct message the game shows "Sent to the Universe team" under the answer, with what was sent and Take it back for 24 hours.
+ *
+ * What a note says is untrusted (anyone can get a Brick to write anything): whatever reads notes later treats them as data, never as
+ * instructions.
  */
 import type { AdminApiService, BrickReportSend } from '../server/AdminApiService';
 import type { BrickNote, ReportSentNote } from './BrickTools';
@@ -24,6 +28,10 @@ const TITLE_MAX = 80;
 const TEXT_MAX = 280;
 /** Six words in a row of the person's own is a quote. */
 const QUOTE_WORDS = 6;
+/** In a language written without spaces, ten characters in a row is. */
+const QUOTE_CHARS = 10;
+/** What Apps and files gave back in this reply, the last part of it, for the quote check. */
+const READ_MAX = 20_000;
 /** Notes one reply sends: one per problem, and a reply is about one or two. */
 const NOTES_PER_REPLY = 2;
 
@@ -68,30 +76,83 @@ const text = (value: unknown, max: number): string =>
 
 const oneOf = <T extends string>(value: unknown, list: readonly T[]): T | undefined => (list as readonly string[]).includes(value as string) ? (value as T) : undefined;
 
+/** Scripts written without spaces between words: a quote in them is found by characters, and a name of two characters is a name. */
+const NOSPACE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+type WordSegmenter = { segment(input: string): Iterable<{ segment: string; isWordLike?: boolean }> };
+const Segmenter = (Intl as unknown as { Segmenter?: new (locale: string, options: { granularity: 'word' }) => WordSegmenter }).Segmenter;
+const segmenter = Segmenter ? new Segmenter('und', { granularity: 'word' }) : undefined;
+
+/** Lower case, the same forms of each character, and no invisible characters (a zero-width space never splits a word). */
+const plain = (value: string): string => value.normalize('NFKC').replace(/\p{Cf}+/gu, '').toLowerCase();
+
+/** The words of a text, in any language: Thai, Chinese and Japanese are split into words too. */
 const wordsOf = (value: string): string[] =>
-    value
-        .toLowerCase()
-        .normalize('NFKC')
-        .split(/[^\p{L}\p{N}]+/u)
-        .filter(Boolean);
+    segmenter
+        ? Array.from(segmenter.segment(plain(value)))
+              .filter((part) => part.isWordLike)
+              .map((part) => part.segment)
+        : plain(value)
+              .split(/[^\p{L}\p{N}]+/u)
+              .filter(Boolean);
+
+/** Only the letters and digits of a text, for the character check. */
+const charsOf = (value: string): string[] => Array.from(plain(value).replace(/[^\p{L}\p{N}]+/gu, ''));
 
 /**
- * Whether the note repeats the person: six words in a row from anything they wrote in this chat, or their name as a word of its own.
- * Words are compared in lower case without punctuation, so a quote with other commas or capitals is still a quote.
+ * Whether the note repeats the person: six words in a row from anything they wrote in this chat, ten characters in a row from a line in a
+ * language written without spaces, or their name as a word of its own (two characters is enough in those languages). `read` (what Apps and
+ * files gave back) is checked the same way, but for quotes only. Words are compared in lower case without punctuation or invisible
+ * characters, so a quote with other commas or capitals is still a quote.
  */
-export function repeatsThePerson(note: string[], said: string[], name?: string): boolean {
+export function repeatsThePerson(note: string[], said: string[], name?: string, read: string[] = []): boolean {
     const runs = new Set<string>();
-    for (const line of said) {
+    const charRuns = new Set<string>();
+    for (const line of [...said, ...read]) {
         const words = wordsOf(line);
         for (let i = 0; i + QUOTE_WORDS <= words.length; i++) runs.add(words.slice(i, i + QUOTE_WORDS).join(' '));
+        if (NOSPACE.test(line)) {
+            const chars = charsOf(line);
+            for (let i = 0; i + QUOTE_CHARS <= chars.length; i++) charRuns.add(chars.slice(i, i + QUOTE_CHARS).join(''));
+        }
     }
-    const nameWords = name ? wordsOf(name).filter((word) => word.length >= 3) : [];
+    const nameWords = name ? wordsOf(name).filter((word) => word.length >= (NOSPACE.test(word) ? 2 : 3)) : [];
+    // A name written without spaces (王伟) may be split into single characters: it is looked for whole, as it is written
+    const nameRuns = name ? plain(name).split(/[^\p{L}\p{N}]+/u).filter((part) => NOSPACE.test(part) && Array.from(part).length >= 2) : [];
     for (const field of note) {
         const words = wordsOf(field);
-        if (nameWords.some((word) => words.includes(word))) return true;
+        const flat = plain(field);
+        if (nameWords.some((word) => words.includes(word)) || nameRuns.some((run) => flat.includes(run))) return true;
         for (let i = 0; i + QUOTE_WORDS <= words.length; i++) if (runs.has(words.slice(i, i + QUOTE_WORDS).join(' '))) return true;
+        if (charRuns.size > 0) {
+            const chars = charsOf(field);
+            for (let i = 0; i + QUOTE_CHARS <= chars.length; i++) if (charRuns.has(chars.slice(i, i + QUOTE_CHARS).join(''))) return true;
+        }
     }
     return false;
+}
+
+/** This reply's own count, shared by its rounds: a note refused once may be written again once, and no more. */
+export interface ReportTurn {
+    refusals: number;
+    /** What Apps and files gave back in this reply's earlier rounds. */
+    read: string[];
+}
+
+/** Keeps what one round's tools gave back (but this tool's own answers) for the quote check, the last READ_MAX characters of the reply. */
+export function noteWhatWasRead(turn: ReportTurn, results: Array<{ name: string; result: unknown }>): void {
+    for (const { name, result } of results) {
+        if (isReportTool(name) || result === undefined || result === null) continue;
+        let text: string;
+        try {
+            text = typeof result === 'string' ? result : JSON.stringify(result);
+        } catch {
+            continue;
+        }
+        if (text) turn.read.push(text.length > READ_MAX ? text.slice(-READ_MAX) : text);
+    }
+    let total = turn.read.reduce((sum, text) => sum + text.length, 0);
+    while (total > READ_MAX && turn.read.length > 1) total -= turn.read.shift()!.length;
 }
 
 export interface ReportToolContext {
@@ -103,6 +164,8 @@ export interface ReportToolContext {
     said: string[];
     /** The person's name as the chat knows it: a note never carries it. */
     name?: string;
+    /** This reply's count of refused notes and what its Apps and files gave back. */
+    turn?: ReportTurn;
     /** Where this turn's cards for the game wait until the reply goes out; null where the chat shows none (on the map). */
     notes: BrickNote[] | null;
     /** What the bot server already knows, with no words in it. */
@@ -123,11 +186,14 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     const already = (context.notes ?? []).filter((note): note is ReportSentNote => note.kind === 'report');
     if (already.some((note) => note.title.toLowerCase() === title.toLowerCase())) return { sent: true, note: 'Already sent in this reply. Do not send it again.' };
     if (already.length >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
-    if (repeatsThePerson([title, tried, stopped, idea], context.said, context.name)) {
-        return {
-            sent: false,
-            error: 'Not sent: the note repeats the person\'s own words or name. Write it again in general words about Universe, with no quotes and no names, and send it again.',
-        };
+    // One rewrite after a refusal, then no more in this reply: each try costs a round
+    const refused = (error: string): Record<string, unknown> => {
+        const turn = context.turn;
+        if (turn && turn.refusals++ >= 1) return { sent: false, note: 'Not sent. Do not try again in this reply and do not mention it.' };
+        return { sent: false, error };
+    };
+    if (repeatsThePerson([title, tried, stopped, idea], context.said, context.name, context.turn?.read)) {
+        return refused('Not sent: the note repeats the person\'s own words or name, or words from what Apps or files gave back. Write it again in general words about Universe, with no quotes and no names, and send it again.');
     }
     let outcome: Awaited<ReturnType<AdminApiService['sendBrickReport']>>;
     try {
@@ -149,7 +215,8 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     }
     if (outcome.sent === false) {
         if (outcome.reason === 'limit') return { sent: false, note: 'You sent enough notes today. Do not say it was sent; carry on helping.' };
-        return { sent: false, error: 'Not sent: nothing was left of the title once links, emails and numbers were taken out. Write it in general words and send it again.' };
+        if (outcome.reason === 'empty') return refused('Not sent: nothing was left of the title once links, emails and numbers were taken out. Write it in general words and send it again.');
+        return { sent: false, note: 'This chat cannot send notes to the Universe team. Do not say it was sent; carry on helping.' };
     }
     const kept: ReportSentNote = {
         kind: 'report',

@@ -706,12 +706,17 @@ export class BotApiService {
     /**
      * Takes back a note a Brick sent to the Universe team (mock "Brick reports inbox") with the key its message carries, within 24 hours.
      * "taken" also when it was taken back already; "too_late" past 24 hours; "failed" when Orbit could not be asked or did not know it.
+     * Asked with no sign-in: a guest in the chat can take it back too, and the key is the proof.
      */
     async takeBackBrickReport(id: string, key: string): Promise<"taken" | "too_late" | "failed"> {
+        const adminUrl = this.adminUrl;
+        if (!adminUrl) return "failed";
         try {
             const response = await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, (signal) =>
-                this.fetch("/api/me/brick-reports/take-back", {
+                fetch(`${adminUrl}/api/me/brick-reports/take-back`, {
                     method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "omit",
                     body: JSON.stringify({ id, key }),
                     signal,
                 })
