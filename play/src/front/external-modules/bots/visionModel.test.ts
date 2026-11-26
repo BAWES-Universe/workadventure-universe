@@ -534,7 +534,10 @@ describe("restoreBaseline", () => {
         // A sent universe-ai and Orbit accepted it; B was scheduled while A was in flight and captured "this"
         const baseline = restoreBaseline(universeAi, thisModel, thisModel, false);
         expect(baseline).toBe(universeAi);
-        const refused = { id: "b1", behaviorConfig: { vision: { choice: "another", keyId: "k", model: "m" } } } as BotData;
+        const refused = {
+            id: "b1",
+            behaviorConfig: { vision: { choice: "another", keyId: "k", model: "m" } },
+        } as BotData;
         expect(withoutRefused(refused, "config", baseline).behaviorConfig?.vision).toEqual({ choice: "universe-ai" });
     });
 

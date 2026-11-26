@@ -4,7 +4,13 @@
     import LL from "../../../../../i18n/i18n-svelte";
     import type { BotAiOptions, BotData } from "../../types";
     import { botApiService } from "../../services/BotApiService";
-    import { canPickVision, isAlreadyPicked, visionState, withVisionChoice, type VisionCandidate } from "../../visionModel";
+    import {
+        canPickVision,
+        isAlreadyPicked,
+        visionState,
+        withVisionChoice,
+        type VisionCandidate,
+    } from "../../visionModel";
     import PageGroup from "./PageGroup.svelte";
     import { IconEye, IconEyeOff, IconInfoCircle, IconKey, IconSparkles, IconChevronDown } from "@wa-icons";
 

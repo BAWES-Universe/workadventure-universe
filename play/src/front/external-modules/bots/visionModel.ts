@@ -258,8 +258,14 @@ export function withVisionChoice(
  * counts, not only what is shown: "Another model" that has become the bot's own model shows as "This model", and tapping "This
  * model" then keeps it as its own pick, so a later change of "Runs on" doesn't send images to that key again.
  */
-export function isAlreadyPicked(bot: Pick<BotData, "behaviorConfig">, state: VisionState, choice: VisionPick["choice"]): boolean {
-    return state.picked && !state.problem && state.effective.choice === choice && readVisionPick(bot)?.choice === choice;
+export function isAlreadyPicked(
+    bot: Pick<BotData, "behaviorConfig">,
+    state: VisionState,
+    choice: VisionPick["choice"]
+): boolean {
+    return (
+        state.picked && !state.problem && state.effective.choice === choice && readVisionPick(bot)?.choice === choice
+    );
 }
 
 /**
