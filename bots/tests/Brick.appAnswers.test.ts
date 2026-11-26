@@ -124,6 +124,9 @@ describe('routing headers are only taken from the headers of a mail', () => {
         // Mail headers, but not under `headers`
         const elsewhere = { data: [{ name: 'Subject', value: 'Hi' }, { name: 'X-Mailer', value: 'y' }] };
         expect(fitAppAnswer(elsewhere)).toBe(JSON.stringify(elsewhere));
+        // An HTTP response shares From, Date and Content-Type with a mail: those alone do not make it one
+        const response = { headers: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Date', value: 'Tue, 25 Nov 2026 09:00:00 GMT' }, { name: 'From', value: 'a@b.test' }, { name: 'X-Request-Id', value: 'abc' }] };
+        expect(fitAppAnswer(response)).toBe(JSON.stringify(response));
         const http = { headers: [{ name: 'X-Request-Id', value: 'abc' }, { name: 'X-Trace', value: 'def' }] };
         expect(fitAppAnswer(http)).toBe(JSON.stringify(http));
     });
