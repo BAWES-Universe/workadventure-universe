@@ -17,7 +17,8 @@ const BOT = "@bot_0b7c1d2e-1111-4222-8333-944455556666:matrix.test";
 function stepsEvent(
     content: Record<string, unknown>,
     unsigned: Record<string, unknown> = {},
-    replacing?: Record<string, unknown>
+    replacing?: Record<string, unknown>,
+    replacingTs = 171_000
 ): MatrixEvent {
     return {
         getId: () => "$steps",
@@ -29,7 +30,7 @@ function stepsEvent(
         isDecryptionFailure: () => false,
         isRedacted: () => false,
         replacingEventId: () => (replacing ? "$edit" : undefined),
-        replacingEvent: () => (replacing ? { getOriginalContent: () => replacing, getTs: () => 171_000 } : null),
+        replacingEvent: () => (replacing ? { getOriginalContent: () => replacing, getTs: () => replacingTs } : null),
         getTs: () => 161_000,
         replyEventId: undefined,
         on: () => {},
@@ -107,5 +108,59 @@ describe("MatrixChatMessage steps line", () => {
             true
         );
         expect(get(message.steps)).toBeUndefined();
+    });
+
+    describe("when the SDK holds a stale bundled edit beside a newer one (game #2131)", () => {
+        const stale = (ts?: number) => ({
+            "m.relations": {
+                "m.replace": {
+                    content: { "m.new_content": notice("working", "Make a song") },
+                    ...(ts === undefined ? {} : { origin_server_ts: ts }),
+                },
+            },
+        });
+        const done = { "m.new_content": notice("done", "Make a song") };
+
+        it("shows the newer edit the SDK applied, not an older bundled one", () => {
+            const message = new MatrixChatMessage(
+                stepsEvent(notice("working", "Make a song"), stale(165_000), done, 171_000),
+                fakeRoom(),
+                false,
+                true
+            );
+            expect(get(message.steps)?.state).toBe("done");
+        });
+
+        it("shows the bundled edit when it is the newer one", () => {
+            const message = new MatrixChatMessage(
+                stepsEvent(
+                    notice("working", "Make a song"),
+                    {
+                        "m.relations": {
+                            "m.replace": {
+                                content: { "m.new_content": notice("done", "Make a song") },
+                                origin_server_ts: 180_000,
+                            },
+                        },
+                    },
+                    { "m.new_content": notice("working", "Make a song") },
+                    171_000
+                ),
+                fakeRoom(),
+                false,
+                true
+            );
+            expect(get(message.steps)?.state).toBe("done");
+        });
+
+        it("trusts the applied edit over a bundle with no time", () => {
+            const message = new MatrixChatMessage(
+                stepsEvent(notice("working", "Make a song"), stale(), done),
+                fakeRoom(),
+                false,
+                true
+            );
+            expect(get(message.steps)?.state).toBe("done");
+        });
     });
 });

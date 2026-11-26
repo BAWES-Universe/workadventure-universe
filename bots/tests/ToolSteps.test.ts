@@ -311,3 +311,54 @@ describe('waiting, times and what a step did (#2061)', () => {
         expect(steps.field().steps[0].shows).toEqual([{ label: 'To', text: 'a@b.co' }]);
     });
 });
+
+describe('a batch call by what its tools do (game #2131)', () => {
+    const fetch = { tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { query: 'is:unread', label_ids: ['INBOX'] } };
+    const labels = { tool_slug: 'GMAIL_LIST_LABELS', arguments: {} };
+    const call = (tools: unknown[], extra: Record<string, unknown> = {}) => ({ id: 'c1', name: 'COMPOSIO_MULTI_EXECUTE_TOOL', arguments: JSON.stringify({ tools, ...extra }) });
+
+    it('names the step by its action, in the same words as the card', () => {
+        const one = describeStep(call([fetch]), 'Multi Execute Composio Tools', 'Gmail');
+        expect(one).toMatchObject({ doing: 'Using Fetch emails', done: 'Used Fetch emails', kind: 'read' });
+        expect(describeStep(call([fetch, labels]), 'Multi Execute Composio Tools', 'Gmail').done).toBe('Used Fetch emails and list labels');
+        expect(describeStep(call([fetch, labels, labels]), undefined, 'Gmail').done).toBe('Used Fetch emails and 2 more');
+    });
+
+    it('is a write when any of its tools writes, a search when any searches, else a read', () => {
+        expect(describeStep(call([fetch, { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} }]), undefined, 'Gmail').kind).toBe('write');
+        expect(describeStep(call([{ tool_slug: 'GMAIL_SEARCH_PEOPLE', arguments: {} }, fetch]), undefined, 'Gmail').kind).toBe('search');
+    });
+
+    it('never shows the provider in a tool title', () => {
+        expect(describeStep({ id: 'x', name: 'COMPOSIO_SEARCH_TOOLS', arguments: '{}' }, 'Search Composio Tools').doing).toBe('Using Search Tools');
+        expect(describeStep({ id: 'x', name: 'COMPOSIO_SEARCH_TOOLS', arguments: '{}' }).doing).toBe('Using Search tools');
+        expect(describeStep({ id: 'x', name: 'x', arguments: '{}' }, 'Composio').doing).toBe('Using a tool');
+    });
+
+    it('renames a call announced before its tools were known once they are', () => {
+        const steps = new ReplySteps(0);
+        steps.start([describeStep({ id: 'c1', name: 'COMPOSIO_MULTI_EXECUTE_TOOL', arguments: '{"tools":[{"tool_s' }, 'Multi Execute Composio Tools', 'Gmail')]);
+        expect(steps.field().steps[0].doing).toBe('Using Multi Execute Tools');
+        steps.start([describeStep(call([fetch]), 'Multi Execute Composio Tools', 'Gmail')]);
+        expect(steps.field().steps).toHaveLength(1);
+        expect(steps.field().steps[0]).toMatchObject({ doing: 'Using Fetch emails', done: 'Used Fetch emails', kind: 'read' });
+        steps.finish([resultOf('c1', { successful: true })], 1000);
+        steps.end(2000);
+        expect(steps.field().line).toBe('Used Fetch emails');
+    });
+
+    it('shows what each tool was asked in plain lines, and never the model\'s own notes', () => {
+        const lines = stepDetails(call([fetch, labels], { thought: 'Look at the inbox', current_step: 'FETCHING_EMAILS', session_id: 's', sync_response_to_workbench: true }).arguments, undefined, false, 'Gmail');
+        expect(lines).toEqual([
+            { label: 'Fetch emails', text: 'Query is:unread · Labels Inbox' },
+            { label: 'List labels', text: 'Nothing to fill in' },
+        ]);
+    });
+
+    it('reads labels and capital words plainly in what a step sent', () => {
+        expect(stepDetails({ label_ids: ['INBOX', 'CATEGORY_UPDATES'], user_id: 'me' })).toEqual([
+            { label: 'Labels', text: 'Inbox, Category updates' },
+            { label: 'User', text: 'me' },
+        ]);
+    });
+});

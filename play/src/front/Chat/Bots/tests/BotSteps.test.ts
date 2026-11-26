@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { currentStep, parseBotSteps, readBotSteps, stepMore, stepsClock, tookWords, type BotStep } from "../BotSteps";
+import {
+    STEPS_STALE_AFTER_MS,
+    currentStep,
+    parseBotSteps,
+    readBotSteps,
+    stepMore,
+    stepsClock,
+    stoppedIfStale,
+    tookWords,
+    type BotStep,
+    type BotSteps,
+} from "../BotSteps";
 
 const BOT_CHAT_ID = "@bot_0b7c1d2e-1111-4222-8333-944455556666:matrix.bawes.net";
 const FIELD = {
@@ -195,5 +206,37 @@ describe("waiting, times and what a step did (#2061)", () => {
         expect(
             parseBotSteps({ ...base, steps: [{ ...step, state: "done", shows: [] }] })?.steps[0].shows
         ).toBeUndefined();
+    });
+});
+
+describe("a line that never ended (game #2131)", () => {
+    const working: BotSteps = {
+        state: "working",
+        line: "Writing the answer",
+        startedAt: 1_000_000,
+        steps: [
+            { doing: "Connecting Google Calendar", done: "Connected Google Calendar", state: "done", again: false },
+            { doing: "Using Fetch emails", done: "Used Fetch emails", state: "running", again: false },
+        ],
+    };
+
+    it("keeps a working line that began within the hour", () => {
+        const result = stoppedIfStale(working, working.startedAt + STEPS_STALE_AFTER_MS);
+        expect(result.stale).toBe(false);
+        expect(result.steps).toBe(working);
+    });
+
+    it("shows a line still working an hour on as stopped, naming what finished, keeping every step as it was", () => {
+        const result = stoppedIfStale(working, working.startedAt + STEPS_STALE_AFTER_MS + 1);
+        expect(result.stale).toBe(true);
+        expect(result.steps.state).toBe("stopped");
+        expect(result.steps.line).toBe("Connected Google Calendar");
+        expect(result.steps.steps).toEqual(working.steps);
+    });
+
+    it("never changes a line that ended or has no start time", () => {
+        const done = { ...working, state: "done" as const };
+        expect(stoppedIfStale(done, 99_999_999_999).stale).toBe(false);
+        expect(stoppedIfStale({ ...working, startedAt: 0 }, 99_999_999_999).stale).toBe(false);
     });
 });

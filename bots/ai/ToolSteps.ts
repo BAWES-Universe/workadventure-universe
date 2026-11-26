@@ -10,6 +10,7 @@ import { COMPUTER_TOOL } from './ComputerTools';
 import { COMPUTER_JOBS_TOOL } from './ComputerControlTools';
 import { CHANGE_TASK_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL } from './BrickTasks';
 import { instantSlugOf, isInstantTool } from './InstantTools';
+import { batchExtras, describeBatch, plainLabel, plainWords, withoutProvider } from '../mcp/AppBatch';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
 export type StepKind = 'read' | 'search' | 'write';
@@ -31,6 +32,8 @@ export interface ToolStep {
     group: string;
     /** What the call is about; the game shows it as the working emoji. */
     kind?: StepKind;
+    /** A batch call named by what its tools do. A call announced before its arguments were complete is not, and is renamed once they are. */
+    byActions?: boolean;
 }
 
 /** One labelled line of what a step sent or got back, for a step opened in a direct message (#2061). */
@@ -165,11 +168,25 @@ export function showsAsStep(name: string, fromToolServer: boolean): boolean {
  * ("generate_music" reads "Generate music"), after "Using" and "Used" so it never reads as an order. The words stay
  * the tool server's: "Used Generate music 6 times".
  */
-export function describeStep(call: { id: string; name: string; arguments?: unknown }, title?: string): ToolStep {
+export function describeStep(call: { id: string; name: string; arguments?: unknown }, title?: string, appName?: string): ToolStep {
     const args = parseArgs(call.arguments);
     const own = OWN_STEPS[call.name];
     if (own && !title) return { id: call.id, ...own(args) };
-    const words = oneLine(title, TITLE_MAX) ?? tidyName(instantSlugOf(call.name));
+    // A batch call ("run these tools") is named by what its tools do, once its arguments are complete (game #2131)
+    const batch = describeBatch(args, appName);
+    if (batch) {
+        const kinds = batch.calls.map((inner) => kindOf(inner.slug));
+        return {
+            id: call.id,
+            doing: `Using ${batch.title}`,
+            done: `Used ${batch.title}`,
+            group: `tool:${call.name}`,
+            kind: kinds.includes('write') ? 'write' : kinds.includes('search') ? 'search' : 'read',
+            byActions: true,
+        };
+    }
+    // The provider's name never shows in a tool's title
+    const words = withoutProvider(oneLine(title, TITLE_MAX) ?? tidyName(instantSlugOf(call.name))) || NO_NAME;
     const named = words !== NO_NAME;
     return {
         id: call.id,
@@ -251,6 +268,10 @@ export class ReplySteps {
             // fills in what it is about
             const begun = this.steps.find((s) => s.id === step.id && s.state === 'running');
             if (begun) {
+                // A batch call announced before its tools were known has the provider's title: it takes its real name now
+                if (step.byActions && !begun.byActions) {
+                    Object.assign(begun, { doing: step.doing, done: step.done, kind: step.kind, byActions: true });
+                }
                 if (!begun.detail && step.detail) {
                     begun.detail = step.detail;
                     if (this.steps.some((s) => s !== begun && s.group === begun.group && s.detail === begun.detail)) begun.again = true;
@@ -431,7 +452,8 @@ function plainValue(value: unknown): string | undefined {
     if (/^\s*[[{]/.test(value)) return undefined;
     const bare = bareLinks(value);
     if (TOKEN_LIKE.test(bare)) return undefined;
-    return oneLine(bare, LINE_TEXT_MAX);
+    // A word in capitals reads as a word ("INBOX" is "Inbox"); anything else stays as it ran
+    return oneLine(plainWords(bare), LINE_TEXT_MAX);
 }
 
 /** What a tool's answer says when it is plain text; an answer that is data (JSON) says nothing here. */
@@ -452,13 +474,29 @@ function plainAnswer(result: unknown): string | undefined {
  * whose reply it is reads this, so an address stays; a key, token or password never does, and data (JSON) is never shown.
  * What the tool answered is left out unless `resultIsSafeToShow` says its answer is an explicit safe summary.
  */
-export function stepDetails(rawArgs: unknown, result?: unknown, resultIsSafeToShow = false): StepLine[] | undefined {
+export function stepDetails(rawArgs: unknown, result?: unknown, resultIsSafeToShow = false, appName?: string): StepLine[] | undefined {
     const lines: StepLine[] = [];
-    for (const [key, value] of Object.entries(parseArgs(rawArgs))) {
+    const args = parseArgs(rawArgs);
+    const batch = describeBatch(args, appName);
+    // A batch call shows what each of its tools was asked; the model's own notes on it are never shown
+    const shownArgs = batch ? batchExtras(args) : args;
+    if (batch) {
+        batch.calls.forEach((inner, index) => {
+            if (lines.length >= LINES_MAX) return;
+            const parts: string[] = [];
+            for (const [key, value] of Object.entries(inner.args)) {
+                if (SECRET_KEY.test(key)) continue;
+                const text = plainValue(value);
+                if (text) parts.push(`${plainLabel(tidyName(key))} ${text}`);
+            }
+            lines.push({ label: batch.names[index], text: parts.length ? oneLine(parts.join(' · '), LINE_TEXT_MAX) ?? 'Nothing to fill in' : 'Nothing to fill in' });
+        });
+    }
+    for (const [key, value] of Object.entries(shownArgs)) {
         if (lines.length >= LINES_MAX) break;
         if (SECRET_KEY.test(key)) continue;
         const text = plainValue(value);
-        if (text) lines.push({ label: tidyName(key), text });
+        if (text) lines.push({ label: plainLabel(tidyName(key)), text });
     }
     // A tool server's answer is its own words and can carry a password or a code in plain text, so it is shown only for a tool
     // whose answer is known to be a safe summary (none of the tool servers' tools are, for now)

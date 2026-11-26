@@ -9,6 +9,7 @@
  */
 import type { RememberScope, SavedAction } from './OrbitActions';
 import type { ToolHeading } from './ToolCatalog';
+import { batchExtras, describeBatch, plainLabel, plainList, plainWords, withoutProvider } from './AppBatch';
 
 export const ASK_KEY = 'universe.ask';
 /** The event a tap sends to the room. */
@@ -66,19 +67,21 @@ export function tidyName(name: string): string {
     return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Use a tool';
 }
 
-/** The action in the tool's own words: its title when it gave one, else its name tidied. */
+/** The action in the tool's own words: its title when it gave one, else its name tidied. The provider's name never shows in it. */
 export function cardTitle(toolName: string, toolTitle?: string): string {
-    return clip((toolTitle?.trim() || tidyName(toolName)).replace(/\s+/g, ' '), TITLE_MAX);
+    const words = withoutProvider((toolTitle?.trim() || tidyName(toolName)).replace(/\s+/g, ' '));
+    return clip(words || tidyName(''), TITLE_MAX);
 }
 
 /* ------------------------------------ lines ------------------------------------ */
 
 const isPlain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
+/** A value as it will run, in plain words: a word in capitals reads as a word, a list of words joins with ", ". */
 function valueText(value: unknown): string {
-    if (typeof value === 'string') return value;
+    if (typeof value === 'string') return plainWords(value);
     if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    return JSON.stringify(value) ?? '';
+    return plainList(value) ?? JSON.stringify(value) ?? '';
 }
 
 /** The arguments in the order the tool names its inputs, then any others, each as a labelled line, exactly as they will run. */
@@ -91,14 +94,53 @@ export function argumentLines(args: Record<string, unknown>, inputSchema?: unkno
         if (value === undefined || value === null) continue;
         const text = valueText(value).trim();
         if (!text) continue;
-        lines.push({ label: clip(tidyName(key), LABEL_MAX), text: clip(text, TEXT_MAX) });
+        lines.push({ label: clip(plainLabel(tidyName(key)), LABEL_MAX), text: clip(text, TEXT_MAX) });
     }
-    if (lines.length > LINES_MAX) {
-        const more = lines.length - (LINES_MAX - 1);
-        lines.length = LINES_MAX - 1;
-        lines.push({ text: `…and ${more} more details` });
+    return capLines(lines);
+}
+
+/** At most the lines the game shows, the last one saying how many more there are. */
+function capLines(lines: AskLine[]): AskLine[] {
+    if (lines.length <= LINES_MAX) return lines;
+    const more = lines.length - (LINES_MAX - 1);
+    return [...lines.slice(0, LINES_MAX - 1), { text: `…and ${more} more details` }];
+}
+
+/** A tool's arguments for one action of a batch, on one line: "Query newer_than:7d · Max results 25", or that it needs none. */
+function inlineArguments(args: Record<string, unknown>): string {
+    const parts = argumentLines(args)
+        .map((line) => (line.label ? `${line.label} ${line.text}` : line.text))
+        .filter(Boolean);
+    return parts.length ? clip(parts.join(' · '), TEXT_MAX) : 'Nothing to fill in';
+}
+
+/** What a card says about a tool call: its title, its lines, and its buttons' words when they are not the title's. */
+export interface CardWords {
+    title: string;
+    lines: AskLine[];
+    buttons?: ButtonWords;
+}
+
+/**
+ * A call as its card shows it. A batch call (the App link's "run these tools") is named by what its tools do: one action
+ * shows that action's inputs as lines, several show one line each ("Fetch emails": its inputs), then any input of the batch
+ * itself that changes what runs. Everything else is the tool's own title and inputs. `appName` is the App's name in Orbit,
+ * which is dropped from the front of each action ("GMAIL_FETCH_EMAILS" with "Gmail" is "Fetch emails").
+ */
+export function cardWords(toolName: string, toolTitle: string | undefined, args: Record<string, unknown>, inputSchema?: unknown, appName?: string): CardWords {
+    const batch = describeBatch(args, appName);
+    if (!batch) return { title: cardTitle(toolName, toolTitle), lines: argumentLines(args, inputSchema) };
+    const title = clip(batch.title, TITLE_MAX);
+    const own = argumentLines(batchExtras(args), inputSchema);
+    if (batch.calls.length === 1) {
+        return { title, lines: capLines([...argumentLines(batch.calls[0].args), ...own]) };
     }
-    return lines;
+    const actions = batch.calls.map((call, index) => ({ label: clip(batch.names[index], LABEL_MAX), text: inlineArguments(call.args) }));
+    return {
+        title,
+        lines: capLines([...actions, ...own]),
+        buttons: { approve: batch.calls.length === 2 ? 'Allow both' : 'Allow all', decline: "Don't do it" },
+    };
 }
 
 /* ------------------------------ what "allow more" keeps ------------------------------ */
@@ -248,13 +290,17 @@ export function outcomeOf(result: unknown): 'succeeded' | 'failed' | 'notSent' |
     return 'succeeded';
 }
 
-/** What the tool gave back, on one short line for the card: its first text, or nothing. */
+/**
+ * What the tool gave back, on one short line for the card: its first text in words, or nothing. An answer that is data
+ * (it starts with `{` or `[`) is never a line: it reads as code, and the bot says what came back in its own words.
+ */
 export function resultLine(result: unknown): string | undefined {
     const items = Array.isArray(result) ? result : [result];
     for (const item of items) {
         const text = typeof item === 'string' ? item : isPlain(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : undefined;
         const line = text?.replace(/\s+/g, ' ').trim();
-        if (line) return clip(line, RESULT_MAX);
+        if (!line || /^[[{]/.test(line)) continue;
+        return clip(line, RESULT_MAX);
     }
     return undefined;
 }

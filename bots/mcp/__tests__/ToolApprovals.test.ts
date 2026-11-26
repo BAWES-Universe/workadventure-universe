@@ -182,7 +182,7 @@ describe('showing the card', () => {
         expect(saved.rememberScope).toEqual({ fixed: { team: 'WEB' }, varies: ['title'] });
         const card = field(s.sent[0].content);
         expect(card).toMatchObject({ id: 'act_1', revision: 1, title: 'Create issue', actsAs: 'Linear', waitMinutes: 10 });
-        expect(card.lines).toEqual([{ label: 'Team', text: 'WEB' }, { label: 'Title', text: 'Fix login' }]);
+        expect(card.lines).toEqual([{ label: 'Team', text: 'Web' }, { label: 'Title', text: 'Fix login' }]);
         expect(s.run).not.toHaveBeenCalled();
     });
 

@@ -2257,7 +2257,7 @@ export class AIService {
                                     const ended = { ...resultOf(tr.id, tr.result), ...(tr.endedAt ? { at: tr.endedAt } : {}) };
                                     // In a direct message only the person reads it: a step can open to what it sent (#2061)
                                     if (channel !== 'dm' || forOthers || !toolServerMap.has(tr.name)) return ended;
-                                    const shows = stepDetails(pendingToolCalls.find((call) => call.id === tr.id)?.arguments, ended.ok ? tr.result : undefined);
+                                    const shows = stepDetails(pendingToolCalls.find((call) => call.id === tr.id)?.arguments, ended.ok ? tr.result : undefined, false, toolServerMap.get(tr.name)?.serverName);
                                     return shows ? { ...ended, shows } : ended;
                                 });
                             if (toolStepResults.length) yield {content: '', done: false, toolStepResults};
@@ -6214,7 +6214,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
      */
     private beginSteps(
         calls: Map<string, { id: string; name: string; arguments: string; announced?: boolean }>,
-        toolServerMap: Map<string, { title?: string }>
+        toolServerMap: Map<string, { title?: string; serverName?: string }>
     ): ToolStep[] {
         const fresh = Array.from(calls.values()).filter((call) => call.name && !call.announced);
         for (const call of fresh) call.announced = true;
@@ -6224,11 +6224,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     /** The calls a reset starts, as the steps line shows them: tool servers' tools and our own work tools (#1545). */
     private stepsOf(
         calls: Array<{ id: string; name: string; arguments?: unknown }>,
-        toolServerMap: Map<string, { title?: string }>
+        toolServerMap: Map<string, { title?: string; serverName?: string }>
     ): ToolStep[] {
         return calls
             .filter((call) => call.name && showsAsStep(call.name, toolServerMap.has(call.name)))
-            .map((call) => describeStep(call, toolServerMap.get(call.name)?.title));
+            .map((call) => describeStep(call, toolServerMap.get(call.name)?.title, toolServerMap.get(call.name)?.serverName));
     }
 
     /**

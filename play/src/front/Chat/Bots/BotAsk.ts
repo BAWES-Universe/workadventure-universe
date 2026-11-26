@@ -345,3 +345,11 @@ export function chatAsks<M extends MessageWithAsk>(messages: Readable<readonly M
         [] as Array<AskedMessage<M>>
     );
 }
+
+/**
+ * An answer that is data (it starts with `{` or `[`) reads as code and is never drawn. Cards already in people's chats
+ * may carry one from before the bot server stopped sending them (game #2131).
+ */
+export function looksLikeData(text: string): boolean {
+    return /^\s*[[{]/.test(text);
+}

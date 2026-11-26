@@ -179,3 +179,76 @@ describe("the steps line: waiting, times and what a step did (#2061)", () => {
         expect(shows).toContain("Draft updated");
     });
 });
+
+describe("a steps line still working over an hour after it began (game #2131)", () => {
+    let target: HTMLElement;
+    let component: { $destroy(): void } | undefined;
+
+    beforeEach(() => {
+        target = document.createElement("div");
+        document.body.appendChild(target);
+    });
+    afterEach(() => {
+        component?.$destroy();
+        component = undefined;
+        target.remove();
+    });
+
+    function mount(steps: BotSteps) {
+        component = new BotStepsLine({ target, props: { steps: readable<BotSteps | undefined>(steps) } });
+    }
+    const hoursAgo = (hours: number) => Date.now() - hours * 3_600_000;
+
+    it("shows a lone finished step as stopped: its tick, no spinner, no clock, and no red", () => {
+        mount({
+            state: "working",
+            line: "Writing the answer",
+            startedAt: hoursAgo(15),
+            steps: [
+                { doing: "Connecting Google Calendar", done: "Connected Google Calendar", state: "done", again: false },
+            ],
+        });
+        expect(target.querySelector('[data-testid="botStepsLive"]')).toBeNull();
+        expect(target.querySelector(".bot-steps-spin")).toBeNull();
+        const row = target.querySelector('[data-testid="botStepsSingle"]');
+        expect(row?.textContent).toContain("Connected Google Calendar");
+        expect(target.querySelector(".bad")).toBeNull();
+        expect(target.querySelector(".bot-steps-icon.bad")).toBeNull();
+    });
+
+    it("shows a step that never finished with the neutral minus, in a grey header", () => {
+        mount({
+            state: "working",
+            line: "Using Fetch emails",
+            startedAt: hoursAgo(2),
+            steps: [
+                { doing: "Connecting", done: "Connected Gmail", state: "done", again: false },
+                { doing: "Using Fetch emails", done: "Used Fetch emails", state: "running", again: false },
+            ],
+        });
+        expect(target.querySelector('[data-testid="botStepsLive"]')).toBeNull();
+        expect(target.querySelector('[data-testid="botStepsSummary"]')).not.toBeNull();
+        expect(target.querySelector(".bad")).toBeNull();
+        expect(target.querySelector(".bot-steps-icon.bad")).toBeNull();
+    });
+
+    it("keeps a line that began minutes ago working", () => {
+        mount({
+            state: "working",
+            line: "Using Fetch emails",
+            startedAt: Date.now() - 5 * 60_000,
+            steps: [{ doing: "Using Fetch emails", done: "Used Fetch emails", state: "running", again: false }],
+        });
+        expect(target.querySelector('[data-testid="botStepsLive"]')).not.toBeNull();
+    });
+
+    it("still shows a reply that failed part-way in the game's coral", () => {
+        mount({
+            state: "stopped",
+            line: "Connected Gmail",
+            startedAt: hoursAgo(0.1),
+            steps: [read, { ...read, state: "failed" }],
+        });
+        expect(target.querySelector(".bad")).not.toBeNull();
+    });
+});

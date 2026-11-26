@@ -123,6 +123,24 @@ export function currentStep(steps: BotSteps): BotStep | undefined {
     return [...steps.steps].reverse().find((step) => step.state === "running");
 }
 
+/**
+ * A line still "working" this long after it started is not working any more: the longest single step is 10 minutes, so an hour
+ * means the bot server never said how it ended (a stale copy kept in the chat's cache, or a reply cut off). It shows as stopped.
+ */
+export const STEPS_STALE_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * The line as it should be drawn at `nowMs`: a working line that began over an hour ago reads as stopped, with a summary of
+ * what finished, so no clock counts on and nothing spins. `stale` says it was changed, so the game shows it quietly (grey, not red).
+ */
+export function stoppedIfStale(steps: BotSteps, nowMs: number): { steps: BotSteps; stale: boolean } {
+    if (steps.state !== "working" || steps.startedAt <= 0 || nowMs - steps.startedAt <= STEPS_STALE_AFTER_MS) {
+        return { steps, stale: false };
+    }
+    const finished = [...new Set(steps.steps.filter((step) => step.state === "done").map((step) => step.done))];
+    return { steps: { ...steps, state: "stopped", line: finished.join(" · ") }, stale: true };
+}
+
 /** "1:05" for 65 seconds, "12:03" for longer; the clock beside a working line. */
 export function stepsClock(seconds: number): string {
     const s = Math.max(0, Math.floor(seconds));

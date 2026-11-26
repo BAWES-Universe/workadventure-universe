@@ -16,7 +16,7 @@
  * The card and where it sits are kept in this process; after a restart the saved action still takes its tap, and the card
  * is shown again as a new notice instead of being edited.
  */
-import { askEdit, askNotice, argumentLines, buildAsk, cardTitle, outcomeOf, rememberOffer, resultLine, type AskAnswer, type AskDecision, type AskField, type CardFacts, type ParsedTap } from './ApprovalCard';
+import { askEdit, askNotice, buildAsk, cardTitle, cardWords, outcomeOf, rememberOffer, resultLine, type AskAnswer, type AskDecision, type AskField, type CardFacts, type ParsedTap } from './ApprovalCard';
 import { acceptLine, fallbackLine, nameForLine, WORDS_SYSTEM, wordsPrompt, type Moment } from './NearbyWords';
 import type { GateCall, GateDecision, ToolGate } from './ToolGate';
 import type { ToolServerEntry } from './MCPConnector';
@@ -298,15 +298,18 @@ export class ToolApprovals {
                     reviewMinutes: wait,
                 });
             }
+            // A batch call of the App link ("run these tools") is named by what its tools do. The card before making more than the
+            // limit keeps its own title and buttons.
+            const said = cardWords(toolName, words ? words.title : input.toolTitle, args, entry.inputSchema, entry.serverName);
             const facts: CardFacts = {
                 action,
-                title: cardTitle(toolName, words ? words.title : input.toolTitle),
+                title: words ? cardTitle(toolName, words.title) : said.title,
                 ...(entry.serverName ? { actsAs: entry.serverName } : {}),
-                lines: [...(words?.lines ?? []), ...argumentLines(args, entry.inputSchema)],
+                lines: [...(words?.lines ?? []), ...said.lines],
                 offer,
                 notReviewed: decision.notReviewed,
                 waitMinutes: wait,
-                ...(words ? { buttons: { approve: words.approve, decline: words.decline } } : {}),
+                ...(words ? { buttons: { approve: words.approve, decline: words.decline } } : said.buttons ? { buttons: said.buttons } : {}),
             };
             const card: Card = { botId, roomId, person, facts, waiting: true, nearby, ...(input.batch ? { batch: input.batch, lineTitle: cardTitle(toolName, input.toolTitle) } : {}) };
             if (nearby) {
@@ -498,11 +501,13 @@ export class ToolApprovals {
                       .then((verdict) => verdict.kind === 'ask' && verdict.notReviewed)
                       .catch(() => false)
                 : false;
+        const said = cardWords(action.toolName, entry?.title, action.arguments, entry?.inputSchema, entry?.serverName);
         const facts: CardFacts = {
             action,
-            title: cardTitle(action.toolName, entry?.title),
+            title: said.title,
             ...(entry?.serverName ? { actsAs: entry.serverName } : {}),
-            lines: argumentLines(action.arguments, entry?.inputSchema),
+            lines: said.lines,
+            ...(said.buttons ? { buttons: said.buttons } : {}),
             offer: action.rememberScope ? { scope: action.rememberScope, phrase: '' } : null,
             notReviewed,
             waitMinutes: wait,

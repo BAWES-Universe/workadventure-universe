@@ -14,6 +14,7 @@ import {
     buildAsk,
     cardOptions,
     cardTitle,
+    cardWords,
     outcomeOf,
     parseTap,
     rememberOffer,
@@ -65,7 +66,7 @@ describe('argumentLines', () => {
     it('shows every argument exactly as it will run, in the order the tool names its inputs', () => {
         const lines = argumentLines({ title: 'Fix login', team: 'WEB', priority: 2 }, { properties: { team: {}, title: {}, priority: {} } });
         expect(lines).toEqual([
-            { label: 'Team', text: 'WEB' },
+            { label: 'Team', text: 'Web' },
             { label: 'Title', text: 'Fix login' },
             { label: 'Priority', text: '2' },
         ]);
@@ -77,7 +78,40 @@ describe('argumentLines', () => {
     });
 
     it('shows nested values whole, as JSON', () => {
-        expect(argumentLines({ labels: ['a', 'b'] })).toEqual([{ label: 'Labels', text: '["a","b"]' }]);
+        expect(argumentLines({ filter: { a: 1 }, mixed: [{ a: 1 }, 'b'] })).toEqual([
+            { label: 'Filter', text: '{"a":1}' },
+            { label: 'Mixed', text: '[{"a":1},"b"]' },
+        ]);
+    });
+
+    it('reads a list of words as words, joined', () => {
+        expect(argumentLines({ labels: ['a', 'b'], codes: [1, 2] })).toEqual([
+            { label: 'Labels', text: 'a, b' },
+            { label: 'Codes', text: '1, 2' },
+        ]);
+    });
+
+    it('reads labels and capital words plainly and leaves everything else as it will run', () => {
+        const lines = argumentLines({
+            label_ids: ['INBOX', 'CATEGORY_UPDATES'],
+            user_id: 'me',
+            message_id: '1a2123335638b975',
+            query: 'newer_than:7d (is:unread OR is:important)',
+            status: 'IN_PROGRESS',
+            code: 'ABC123',
+            letter: 'A',
+            max_results: 25,
+        });
+        expect(lines).toEqual([
+            { label: 'Labels', text: 'Inbox, Category updates' },
+            { label: 'User', text: 'me' },
+            { label: 'Message', text: '1a2123335638b975' },
+            { label: 'Query', text: 'newer_than:7d (is:unread OR is:important)' },
+            { label: 'Status', text: 'In progress' },
+            { label: 'Code', text: 'ABC123' },
+            { label: 'Letter', text: 'A' },
+            { label: 'Max results', text: '25' },
+        ]);
     });
 
     it('keeps to the lines the game shows, and says how many more there are', () => {
@@ -211,6 +245,10 @@ describe('how a call ended', () => {
         expect(resultLine('plain')).toBe('plain');
         expect(resultLine([{ type: 'image' }])).toBeUndefined();
         expect(resultLine({ ok: true })).toBeUndefined();
+        // an answer that is data never shows as a line
+        expect(resultLine('{"successful":true,"data":{"messages":[]}}')).toBeUndefined();
+        expect(resultLine([{ type: 'text', text: '  [1, 2, 3]' }])).toBeUndefined();
+        expect(resultLine([{ type: 'text', text: '{"a":1}' }, { type: 'text', text: 'Created 2 events' }])).toBe('Created 2 events');
         expect(resultLine([{ type: 'text', text: 'x'.repeat(500) }])!.length).toBeLessThanOrEqual(300);
     });
 });
@@ -237,5 +275,64 @@ describe('parseTap', () => {
         expect(parseTap({ v: 1, ask: 'a', revision: 1, action: 'decide', option: 'yes' })).toBeNull();
         expect(parseTap({ v: 1, ask: 'a', revision: 1, action: 'run' })).toBeNull();
         expect(parseTap({ v: 1, ask: 'a', revision: 1, action: 'decide', option: 'approve', arguments: { x: 1 } })?.tap).toEqual({ action: 'decide', option: 'approve' });
+    });
+});
+
+
+describe('card words for a batch call', () => {
+    const fetch = { tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { query: 'newer_than:7d (is:unread OR is:important)', max_results: 25, label_ids: ['INBOX'] } };
+    const labels = { tool_slug: 'GMAIL_LIST_LABELS', arguments: {} };
+    const extra = { thought: 'Look at the inbox', current_step: 'FETCHING_EMAILS', session_id: 'abc', sync_response_to_workbench: false };
+
+    it('names one action by what it does and shows its inputs as lines', () => {
+        const words = cardWords('COMPOSIO_MULTI_EXECUTE_TOOL', 'Multi Execute Composio Tools', { tools: [fetch], ...extra }, undefined, 'Gmail');
+        expect(words.title).toBe('Fetch emails');
+        expect(words.lines).toEqual([
+            { label: 'Query', text: 'newer_than:7d (is:unread OR is:important)' },
+            { label: 'Max results', text: '25' },
+            { label: 'Labels', text: 'Inbox' },
+        ]);
+        expect(words.buttons).toBeUndefined();
+        expect(cardOptions(words.title, null, words.buttons).map((o) => o.label)).toEqual(['Fetch emails', "Don't fetch"]);
+    });
+
+    it('names two actions, one line each, with "Allow both"', () => {
+        const words = cardWords('COMPOSIO_MULTI_EXECUTE_TOOL', 'Multi Execute Composio Tools', { tools: [fetch, labels], ...extra }, undefined, 'Gmail');
+        expect(words.title).toBe('Fetch emails and list labels');
+        expect(words.lines).toEqual([
+            { label: 'Fetch emails', text: 'Query newer_than:7d (is:unread OR is:important) · Max results 25 · Labels Inbox' },
+            { label: 'List labels', text: 'Nothing to fill in' },
+        ]);
+        expect(cardOptions(words.title, null, words.buttons).map((o) => o.label)).toEqual(['Allow both', "Don't do it"]);
+    });
+
+    it('names three or more as "and N more" with "Allow all"', () => {
+        const words = cardWords('COMPOSIO_MULTI_EXECUTE_TOOL', undefined, { tools: [fetch, labels, labels] }, undefined, 'Gmail');
+        expect(words.title).toBe('Fetch emails and 2 more');
+        expect(words.lines).toHaveLength(3);
+        expect(words.buttons).toEqual({ approve: 'Allow all', decline: "Don't do it" });
+    });
+
+    it('keeps an input of the batch itself that people may care about, after the actions, and never the model\'s own notes', () => {
+        const words = cardWords('x', undefined, { tools: [fetch, labels], thought: 'note', limit: 5 }, undefined, 'Gmail');
+        expect(words.lines.at(-1)).toEqual({ label: 'Limit', text: '5' });
+        expect(words.lines.some((line) => /thought|note/i.test(`${line.label} ${line.text}`))).toBe(false);
+    });
+
+    it('tidies the whole slug when it does not start with the App\'s name', () => {
+        expect(cardWords('x', undefined, { tools: [{ tool_slug: 'SLACK_SEND_MESSAGE', arguments: {} }] }, undefined, 'Gmail').title).toBe('Slack send message');
+        expect(cardWords('x', undefined, { tools: [{ tool_slug: 'GOOGLECALENDAR_FIND_EVENT', arguments: {} }] }, undefined, 'Google Calendar').title).toBe('Find event');
+    });
+
+    it('is not a batch unless every tool has a slug', () => {
+        expect(cardWords('create_issue', 'Create issue', { tools: [{ tool_slug: '' }] }).title).toBe('Create issue');
+        expect(cardWords('create_issue', 'Create issue', { tools: 'nope' }).title).toBe('Create issue');
+        expect(cardWords('create_issue', 'Create issue', { tools: [] }).title).toBe('Create issue');
+    });
+
+    it('never shows the provider in a title', () => {
+        expect(cardTitle('x', 'Multi Execute Composio Tools')).toBe('Multi Execute Tools');
+        expect(cardTitle('composio_search_tools')).toBe('Search tools');
+        expect(cardTitle('x', 'Composio')).toBe('Use a tool');
     });
 });
