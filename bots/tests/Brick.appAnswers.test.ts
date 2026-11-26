@@ -141,6 +141,11 @@ describe('routing headers are only taken from the headers of a mail', () => {
         // HTTP lets any name be a header, Subject included: without a mail's own part around them they are data
         const subject = { headers: [{ name: 'Subject', value: 'report' }, { name: 'X-Request-Id', value: 'abc' }] };
         expect(fitAppAnswer(subject)).toBe(JSON.stringify(subject));
+        // A mimeType alone is any App's field: with no body or parts of a mail beside it, the headers stay
+        const typed = { mimeType: 'application/json', headers: [{ name: 'Subject', value: 'report' }, { name: 'X-Request-Id', value: 'abc' }] };
+        expect(fitAppAnswer(typed)).toBe(JSON.stringify(typed));
+        const typedAnswer = JSON.parse(fitAppAnswer({ ...typed, junk: base64url(prose(30_000)) })) as typeof typed;
+        expect(typedAnswer.headers.map((header) => header.name)).toEqual(['Subject', 'X-Request-Id']);
         const http = { headers: [{ name: 'X-Request-Id', value: 'abc' }, { name: 'X-Trace', value: 'def' }] };
         expect(fitAppAnswer(http)).toBe(JSON.stringify(http));
     });
@@ -148,7 +153,7 @@ describe('routing headers are only taken from the headers of a mail', () => {
     it('takes them from a mail whose headers are under `headers`, in any case', () => {
         const headers = [{ name: 'Subject', value: 'Hi' }, { name: 'Received', value: 'from x' }, { name: 'X-Mailer', value: 'y' }];
         for (const key of ['headers', 'Headers']) {
-            const read = JSON.parse(fitAppAnswer({ payload: { mimeType: 'multipart/alternative', [key]: headers } })) as { payload: Record<string, { name: string }[]> };
+            const read = JSON.parse(fitAppAnswer({ payload: { mimeType: 'multipart/alternative', body: { size: 0 }, [key]: headers } })) as { payload: Record<string, { name: string }[]> };
             expect(read.payload[key].map((header) => header.name)).toEqual(['Subject']);
         }
     });

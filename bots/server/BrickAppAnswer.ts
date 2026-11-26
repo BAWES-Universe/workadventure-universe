@@ -97,6 +97,12 @@ function isMailHeaders(value: unknown[]): value is { name: string; value: string
     return pairs && value.some((one) => MAIL_HEADER.test((one as { name: string }).name));
 }
 
+/** A message part of a mail: a `mimeType` with the body or the parts of the message beside it, or the ids a mail service gives its messages. A `mimeType` alone is any App's field. */
+function isMailPart(value: Record<string, unknown>): boolean {
+    if (typeof value.mimeType !== 'string') return false;
+    return isObject(value.body) || Array.isArray(value.parts) || Array.isArray(value.labelIds) || typeof value.threadId === 'string';
+}
+
 /** What was taken out, so an answer that lost nothing can be given exactly as it came. */
 interface Taken {
     count: number;
@@ -164,7 +170,7 @@ function tidy(value: unknown, taken: Taken, html: boolean): unknown {
                 out[key] = file;
             } else if (file !== null && key === 'encoding') {
                 out[key] = 'utf-8';
-            } else if (key.toLowerCase() === 'headers' && Array.isArray(inner) && typeof value.mimeType === 'string' && isMailHeaders(inner)) {
+            } else if (key.toLowerCase() === 'headers' && Array.isArray(inner) && isMailPart(value) && isMailHeaders(inner)) {
                 const kept = inner.filter((header) => !ROUTING_HEADER.test(header.name));
                 if (kept.length < inner.length) taken.count++;
                 out[key] = kept;
