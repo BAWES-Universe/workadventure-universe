@@ -1,0 +1,26 @@
+{
+  "name": "voice-engine-test",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Side-by-side test of a Pipecat voice engine and a thin TypeScript voice engine (issue #1701). Fakes only: no paid calls.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@evan/opus": "1.0.3",
+    "ajv": "8.17.1",
+    "onnxruntime-node": "1.31.1",
+    "werift": "0.22.2",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "@types/ws": "8.18.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}
