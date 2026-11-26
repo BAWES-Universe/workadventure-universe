@@ -1631,7 +1631,7 @@ export class AIService {
                         // Nothing looked at it (the pick is "this model" and it can't see, or the one picked failed just now): say so
                         // to the model, so it tells the person plainly instead of asking them to describe what they sent. When the
                         // place picked is another model or Universe AI and it failed, the link must not reach the main model either.
-                        if (lookWith === 'another' || lookWith === 'universe-ai') message = withoutImageLinks(message);
+                        if (plan && (lookWith === 'another' || lookWith === 'universe-ai')) message = withoutImageLinks(message);
                         message = `${message}\n[The image could not be looked at, so what is in it is not known. Say so in one short line. Do not ask the person to describe it or to do anything else for it.]`;
                     }
                     // Images are NOT passed to a text-only main model (it would 400 on

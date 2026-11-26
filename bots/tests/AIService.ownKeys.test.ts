@@ -474,6 +474,18 @@ describe("AIService – finding a bot's AI by bot id", () => {
                             expect(mockGenerateStream.mock.calls[0][2]).toContain("Do not ask the person to describe it");
                         });
 
+                        it("no plan from Orbit, a bot on Universe AI with no default Vision provider: the link stays, as before", async () => {
+                            const { admin, memory } = buildMocks();
+                            mockSupportsVision.mockReturnValue(false);
+                            admin.getBotAiCredentials.mockResolvedValue(ownKey({ source: "universe-ai", providerId: "universe-ai-default" }));
+                            admin.getAvailableAIProviders.mockResolvedValue([]);
+                            mockGenerateStream.mockImplementation(answer);
+                            const service = new AIService(memory, admin, "http://admin.local");
+                            await withLink(service);
+                            expect(mockGenerateStream.mock.calls[0][2]).toContain(link);
+                            expect(mockGenerateStream.mock.calls[0][2]).toContain("Do not ask the person to describe it");
+                        });
+
                         it("This model that can't see: the link stays, because the bot's own model is the place picked", async () => {
                             const { admin, memory } = buildMocks();
                             mockSupportsVision.mockReturnValue(false);
