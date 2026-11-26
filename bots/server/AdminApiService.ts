@@ -16,6 +16,7 @@ import { brickLimitFrom } from '../ai/BrickLimit';
 import { computerReportOf, type ComputerReport, type UndeliverableWhy } from './ComputerReports';
 import { dueRunOf, failedNoticeOf, heldNoticeOf, type DueRun, type FailedNotice, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 import { retryJobOf, type RetryJob } from '../ai/ComputerTryAgain';
+import { computerJobsNowOf, type ComputerJobsNow } from '../ai/ComputerJobsNow';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -1843,14 +1844,16 @@ export class AdminApiService {
      * The same read, with the job "try again" would carry on (piece 8, `retry=1`): the person's latest ended job on this Brick that failed as ours or that we ended, or null (none, or an
      * Orbit that does not say). One request. Read only. Off and no job when Orbit cannot be asked.
      */
-    async computerState(viaBotId: string, userId: string): Promise<{ on: boolean; retry: RetryJob | null }> {
+    async computerState(viaBotId: string, userId: string): Promise<{ on: boolean; retry: RetryJob | null; available?: boolean; jobs?: ComputerJobsNow | null; read?: boolean }> {
         try {
-            const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1' });
-            const on = response.data?.available === true && response.data?.on === true;
-            return { on, retry: on ? retryJobOf(response.data?.retry) : null };
+            // `jobs=1` (the Brick chat audit, 26 Nov): the person's jobs on this Brick, live and lately ended, for the note the Brick gets with every message. An Orbit without it sends none
+            const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown; jobs?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1', jobs: '1' });
+            const available = response.data?.available === true;
+            const on = available && response.data?.on === true;
+            return { on, retry: on ? retryJobOf(response.data?.retry) : null, available, jobs: on ? computerJobsNowOf(response.data?.jobs) : null, read: true };
         } catch (error) {
             console.warn("[AdminApiService] Could not read a Brick's computer:", error instanceof Error ? error.message : error);
-            return { on: false, retry: null };
+            return { on: false, retry: null, available: false, jobs: null, read: false };
         }
     }
 

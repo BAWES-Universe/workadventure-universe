@@ -21,6 +21,7 @@ import { v5 as uuidv5 } from 'uuid';
 import type { ComputerControlAnswer, ComputerControlAsk, ComputerControlJob, ComputerControlView, AdminApiService } from '../server/AdminApiService';
 import type { ConfirmationQueue } from './ComputerTools';
 import { CONTROL_REFUSALS, CONTROL_WORDS, lineOf, othersOf, quotedTitles, whichDated } from './ComputerControlWords';
+import { endedJobWords, type EndedJobNow } from './ComputerJobsNow';
 
 export const COMPUTER_JOBS_TOOL = 'computer_jobs';
 export const PAUSE_JOB_TOOL = 'pause_computer_job';
@@ -391,6 +392,11 @@ export interface ComputerControlContext {
      * again, an answer that was lost, the whole event delivered again) is done once. Without it a control has a random id, as before: it is done once per request only.
      */
     inbound?: { eventId: string };
+    /**
+     * The jobs of this person on this Brick that ended lately, newest first, read fresh from Orbit (the Brick chat audit, 26 Nov): `computer_jobs` lists them beside the live ones, so a job that
+     * finished is never read as "no job". Null when Orbit could not say; without it the list is only the live jobs, as before.
+     */
+    endedLately?: () => Promise<EndedJobNow[] | null>;
 }
 
 /** The name the ids of controls are made under: a fixed name of our own, so the same message and control always make the same id, here and after a restart. */
@@ -980,11 +986,21 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
 
 /** "How is it going?": the jobs as Orbit has them, in words for the model (no fixed line: it changes nothing), and the steps a named job took so far when Orbit keeps them. */
 async function seeJobs(words: string, args: Record<string, unknown>, context: ComputerControlContext, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>, shown?: ControlState['shown']): Promise<Record<string, unknown>> {
+    // The jobs that ended lately are listed too: a job that ran and finished is not "no job" (the Brick chat audit, 26 Nov). Never in the way of the live list
+    const ended = context.endedLately ? await context.endedLately().catch(() => null) : null;
+    const now = Date.now();
+    const endedLately = ended?.length ? ended.map((job) => endedJobWords(job, now)) : null;
     const result: Record<string, unknown> = {
         jobs: jobs.map((job) => shownJob(job, view)),
+        ...(endedLately ? { endedLately } : {}),
         note: jobs.length
-            ? 'Tell them in a sentence or two how it is going, in plain words, from these states and steps only. Say what needs them, if anything. Never a price, how much time is left or how long it will take.'
-            : 'There are no jobs on your computer right now. Say so in one plain sentence.',
+            ? 'Tell them in a sentence or two how it is going, in plain words, from these states and steps only. Say what needs them, if anything. Never a price, how much time is left or how long it will take.' +
+              (endedLately ? ' The jobs in endedLately ran and ended as they say: never say they did not happen.' : '')
+            : endedLately
+              ? 'Nothing is working, waiting or in line on your computer right now. The jobs in endedLately ran and ended as they say: never say there was no job. Say so in one or two plain sentences.'
+              : ended
+                ? 'Nothing is working, waiting or in line on your computer right now, and no job ended lately. Say so in one plain sentence.'
+                : 'Nothing is working, waiting or in line on your computer right now. Say so in one plain sentence, and never say that no job ran.',
     };
     if ((!words && (args.pick === undefined || args.pick === null)) || !jobs.length) return result;
     const hasPick = args.pick !== undefined && args.pick !== null;
