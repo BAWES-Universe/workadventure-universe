@@ -151,6 +151,11 @@ export interface ToolServerEntry {
      * and it runs as a batch of one through `batchTool`.
      */
     appAction?: { slug: string; batchTool: string };
+    /**
+     * The same link tool on the Brick's other ready-made Apps (game "Ask, Do, Ignore" for Bricks): every App's link has the same tool
+     * names, so the model is offered the first one, and each action of a batch is sent through the App it belongs to.
+     */
+    otherApps?: ToolServerEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -996,6 +1001,9 @@ export class MCPConnector {
             // The name is taken by another App. The owner keeps the first, as always; but a job another App's owner shared under this name is kept
             // aside, so someone else asking is still offered it and does not lose it to an App that shares nothing (#2006)
             const first = toolServerMap.get(tool.function.name);
+            if (first?.readyMade && server.readyMade === true && server.orbitUrl && first.serverId !== server.id && !first.otherApps?.some((other) => other.serverId === server.id)) {
+                (first.otherApps ??= []).push(entryFor(tool, server, title, raw));
+            }
             const shared = server.connectionId ? entryFor(tool, server, title, raw) : undefined;
             if (first && !first.sharedJob && !first.sharedAlt && shared?.sharedJob) first.sharedAlt = { tool, entry: shared };
         }

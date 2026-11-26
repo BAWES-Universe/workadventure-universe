@@ -301,6 +301,56 @@ describe('what the model is told was done', () => {
     });
 });
 
+describe('a Brick with several ready-made Apps', () => {
+    const CALENDAR: ToolServerEntry = { ...GMAIL, serverId: 'cal1', serverName: 'Google Calendar', connectionId: 'c2', fingerprint: 'fp-cal' };
+    function calendarPolicy(own: Record<string, ToolSetting> = {}): ServerPolicy {
+        const rows: Array<[string, ToolHeading, string]> = [
+            ['GOOGLECALENDAR_FIND_EVENT', 'looksUp', 'Find event'],
+            ['GOOGLECALENDAR_DELETE_EVENT', 'deletesOrSends', 'Delete event'],
+        ];
+        const tools = new Map<string, PolicyTool>(rows.map(([name, heading, title]) => [name, { name, title, heading, fingerprint: `row-${name}`, suggestedHeading: heading, confirmed: true, setting: own[name] ?? null }]));
+        return { serverId: 'cal1', kind: 'appActions', state: 'confirmed', policyRevision: 3, settings: { ...DEFAULTS, deletesOrSends: 'rightAway' }, tools };
+    }
+    function twoApps(gmail: ServerPolicy, calendar: ServerPolicy) {
+        const made = brickService(gmail);
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? calendar : gmail));
+        made.service['toolGate'] = new ToolGate({ read } as never, { check: made.check } as never, { canManageBotTools: async () => false });
+        const servers = new Map<string, ToolServerEntry>([[BATCH, { ...GMAIL, otherApps: [CALENDAR] }], ['COMPOSIO_SEARCH_TOOLS', { ...GMAIL, fingerprint: 'fp-search', otherApps: [{ ...CALENDAR, fingerprint: 'fp-cal-search' }] }]]);
+        const run = (args: unknown) => made.service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify(args) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+        const sentTo = () => made.execute.mock.calls.map((args: unknown[]) => [args[0], (args[3] as { tools: Array<{ tool_slug: string }> }).tools.map((t) => t.tool_slug)]);
+        return { ...made, run, sentTo, servers };
+    }
+
+    it('sends each action through its own App and judges it by that App’s choices', async () => {
+        const { run, sentTo } = twoApps(gmailPolicy({}, { ...DEFAULTS, deletesOrSends: 'off' }), calendarPolicy());
+        const [result] = await run(batchArgs('GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_FIND_EVENT', 'GOOGLECALENDAR_DELETE_EVENT'));
+        // Gmail's "Off" for deleting never reaches Calendar's own actions, and Calendar's "Right away" never reaches Gmail's
+        expect(sentTo()).toEqual(expect.arrayContaining([['g1', ['GMAIL_FETCH_EMAILS']], ['cal1', ['GOOGLECALENDAR_FIND_EVENT']], ['cal1', ['GOOGLECALENDAR_DELETE_EVENT']]]));
+        expect(sentTo()).toHaveLength(3);
+        expect(result.result.summary).toContain('Done now: Fetch emails, Find event, Delete event.');
+    });
+
+    it('never lets another App’s looser choice run an action that is Off in its own App', async () => {
+        const { run, execute } = twoApps(gmailPolicy({ GMAIL_DELETE_MESSAGE: 'off' }), calendarPolicy());
+        const [result] = await run(batchArgs('GMAIL_DELETE_MESSAGE'));
+        expect(execute).not.toHaveBeenCalled();
+        expect(result.result.error).toContain('Delete message is off for Sam in Gmail.');
+    });
+
+    it('sends nothing for an action no App says is its own', async () => {
+        const { run, execute } = twoApps(gmailPolicy(), calendarPolicy());
+        const [result] = await run(batchArgs('SLACK_SEND_MESSAGE', 'GMAIL_FETCH_EMAILS'));
+        expect(execute.mock.calls.map((args: unknown[]) => args[0])).toEqual(['g1']);
+        expect(result.result.summary).toContain("isn't clear which of your Apps it belongs to");
+    });
+
+    it('tells the Brick what is Off in every App, and finds a saved action in the App it was saved for', async () => {
+        const { service, servers } = twoApps(gmailPolicy(), calendarPolicy({ GOOGLECALENDAR_DELETE_EVENT: 'off' }));
+        const note = await service['appsOffNote']('b1', servers);
+        expect(note).toContain('Off in Google Calendar: Delete event.');
+    });
+});
+
 describe('an action approved on its own card', () => {
     it('runs as its App’s batch of one', async () => {
         const { service, execute } = brickService(gmailPolicy());
@@ -318,5 +368,13 @@ describe('an action approved on its own card', () => {
         expect(await service.findToolEntry('b1', 'GMAIL_REPLY_TO_THREAD', 'other')).toBeNull();
         expect(await service.findToolEntry('b1', BATCH, 'other')).toBeNull();
         expect(await service.findToolEntry('b1', BATCH, 'g1')).toBe(GMAIL);
+    });
+
+    it('is found in the Brick’s other ready-made App it was saved for, alone or on a card of several', async () => {
+        const service = new AIService(null!, { adminApiToken: 't' } as never, '');
+        const calendar: ToolServerEntry = { ...GMAIL, serverId: 'cal1', serverName: 'Google Calendar' };
+        vi.spyOn(MCPConnector, 'discoverToolsWithMapping').mockResolvedValue({ tools: [], toolServerMap: new Map([[BATCH, { ...GMAIL, otherApps: [calendar] }]]) } as never);
+        expect(await service.findToolEntry('b1', 'GOOGLECALENDAR_DELETE_EVENT', 'cal1')).toMatchObject({ serverId: 'cal1', appAction: { slug: 'GOOGLECALENDAR_DELETE_EVENT', batchTool: BATCH } });
+        expect(await service.findToolEntry('b1', BATCH, 'cal1')).toBe(calendar);
     });
 });
