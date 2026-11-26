@@ -55,6 +55,8 @@ const chat: DeepPartial<Translation["chat"]> = {
             screenControlRunningLine:
                 "Estàs escrivint a l'ordinador de {name}. Un programa que ha instal·lat {name} encara s'executa i podria veure el que escrius.",
             notReady: "No s'ha pogut preparar l'ordinador. No s'ha canviat res. Torna-ho a provar.",
+            takeOverShared:
+                "{name} està fent més d'una feina en aquest ordinador. Podràs prendre el control quan només en quedi una, o posa en pausa les altres primer.",
         },
         files: {
             artifactsMade: "{count} {{artefacte creat|artefactes creats}}",

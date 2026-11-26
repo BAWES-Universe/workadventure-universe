@@ -681,6 +681,8 @@ const chat: DeepPartial<Translation["chat"]> = {
             screenControlRunningLine:
                 "Vous tapez sur l'ordinateur de {name}. Un programme installé par {name} tourne encore et pourrait voir ce que vous tapez.",
             notReady: "Impossible de préparer l'ordinateur. Rien n'a été modifié. Réessayez.",
+            takeOverShared:
+                "{name} fait plus d'une tâche sur cet ordinateur. Vous pourrez prendre la main quand il n'en restera qu'une, ou mettez d'abord les autres en pause.",
         },
         files: {
             artifactsMade: "{count} {{artefact créé|artefacts créés}}",

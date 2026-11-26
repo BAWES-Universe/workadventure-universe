@@ -1734,6 +1734,8 @@ const chat: BaseTranslation = {
             screenControlRunningLine:
                 "You're typing on {name}'s computer. A program {name} installed is still running and could see what you type.",
             notReady: "Couldn't get the computer ready. Nothing was changed on it. Try again.",
+            takeOverShared:
+                "{name} is doing more than one job on this computer. You can take over when it's down to one, or pause the others first.",
         },
         // Usage (#1999): one bar and plain words, never a count and never a price
         usage: {

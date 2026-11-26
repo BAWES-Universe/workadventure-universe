@@ -116,9 +116,10 @@ export async function brickComputerAction(
  * - ok: the person has the screen (or the computer was restarted).
  * - still-running: the check found a program still running; the person is asked (the page is read again and shows the block).
  * - not-ready: the computer could not be made ready; nothing was changed on it, try again.
+ * - shared: more than one job is on the computer, so the keyboard is not handed over (only one job may be on it while the person has it); nothing was changed.
  * - failed: Orbit could not be reached or said something else.
  */
-export type TakeOverResult = "ok" | "still-running" | "not-ready" | "failed";
+export type TakeOverResult = "ok" | "still-running" | "not-ready" | "shared" | "failed";
 
 /**
  * "Take over", or "Take over anyway" (the person's choice to go on with a program still running), and "Restart first". Each reads the computer again, so the page and
@@ -142,6 +143,7 @@ export async function brickTakeOver(
         await loadBrickComputer(brickId);
         if (refused?.status === 409 && refused.reason === "still_running") return "still-running";
         if (refused?.status === 409 && refused.reason === "not_secured") return "not-ready";
+        if (refused?.status === 409 && refused.reason === "shared") return "shared";
         return "failed";
     }
 }

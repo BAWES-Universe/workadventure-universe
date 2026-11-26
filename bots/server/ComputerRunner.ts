@@ -134,9 +134,13 @@ export interface RunnerTiming {
     leaseMs?: number;
     /** The longest a job that another worker holds is left alone before this runner asks for it again (the holder may have given it back): the answer to a live lease writes nothing. */
     heldRecheckMs?: number;
+    /** How long to wait before asking again for a handover Orbit answered `browser_shared` (another job is on the computer, so the person cannot be given it yet). */
+    sharedWaitMs?: number;
+    /** How long a handover may keep being answered `browser_shared` before the job is ended as ours (nothing charged). */
+    sharedGiveUpMs?: number;
 }
 
-export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000], poolCheckMs: 5000, poolGiveUpMs: 90_000, cleanupMs: 10_000, beatMs: 30_000, leaseMs: 90_000, heldRecheckMs: 15_000 };
+export const RUNNER_TIMING: RunnerTiming = { waitMs: 5000, progressMs: 4000, reconnectMs: [1000, 3000, 8000, 20_000], prepareMs: [2000, 6000], poolCheckMs: 5000, poolGiveUpMs: 90_000, cleanupMs: 10_000, beatMs: 30_000, leaseMs: 90_000, heldRecheckMs: 15_000, sharedWaitMs: 30_000, sharedGiveUpMs: 10 * 60_000 };
 
 export const RUNNER_GUARDS = {
     /** Jobs the runner works on at once. */
@@ -336,6 +340,22 @@ export interface RelayProbeResult {
 
 /** The one line said to the person when the machine could not reach our own model service: nothing was taken. */
 export const RELAY_UNREACHABLE_WHY = "We couldn't reach our own service, you weren't charged.";
+
+/** What the person was to be handed the computer for, as the ending line says it (`answer` is never refused for a shared computer, so it has no line of its own). */
+const SHARED_FOR: Record<'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer', string> = {
+    signin: 'to sign in',
+    details: 'for your details',
+    upload: 'for your document',
+    pay: 'to pay',
+    submit: 'for your OK to submit',
+    answer: 'for your part',
+};
+
+/**
+ * The one line said to the person when a job that asked for them was answered `browser_shared` until the bound: other work stayed on the computer, so it could never be
+ * handed to them. Brick says it in its own words ("I couldn't finish …"); it names no other job, no title and no person, and the try is given back.
+ */
+export const sharedBusyWhy = (waitingFor: keyof typeof SHARED_FOR): string => `The computer stayed busy with other work, so I couldn't hand it to you ${SHARED_FOR[waitingFor]}.`;
 
 /** What opening a turn's stream answers when the turn was stopped here while it was being opened. */
 const STOPPED_HERE = Symbol('stopped here');
@@ -637,9 +657,19 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
     async function finish(
         job: RunnableJob,
         outcome: 'done' | 'failed',
-        options: { cause?: FinishCause; generation?: number; why?: string | null; turns?: number[]; run?: string; epoch?: number; signal?: AbortSignal } = {}
+        options: {
+            cause?: FinishCause;
+            generation?: number;
+            why?: string | null;
+            turns?: number[];
+            run?: string;
+            epoch?: number;
+            signal?: AbortSignal;
+            /** What a failure as ours rests on, for Orbit to check itself: `browser_shared` = Orbit kept answering the handover with `browser_shared` until the bound (an Orbit that does not know the word ignores it). */
+            basis?: 'browser_shared';
+        } = {}
     ): Promise<'ended' | 'stale' | 'stopped' | 'unsent'> {
-        const { cause, generation, why, turns, run, epoch, signal } = options;
+        const { cause, generation, why, turns, run, epoch, signal, basis } = options;
         let stale = false;
         let unsent = false;
         // Orbit judges a failure from the call rows it holds, so what the relay recorded for this job reaches it BEFORE the finish does (a moment of
@@ -653,6 +683,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             outcome,
             ...(outcome === 'failed' && cause ? { cause } : {}),
             ...(outcome === 'failed' && why ? { why } : {}),
+            ...(outcome === 'failed' && basis ? { basis } : {}),
             // The turns this runner judged failed (the ones the streak was made of), which Orbit reads against the call rows of each
             // `run` says which run of this runner they were numbered in: turns start again from 1 after a restart, so Orbit reads a named turn
             // only against the rows of that run
@@ -1755,9 +1786,17 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 let stale = false;
                 // Orbit answered no at least once: then it is not Orbit that could not be reached, and the failure is not ours to answer for
                 let refusedHandover = false;
-                for (let attempt = 0; attempt < RUNNER_GUARDS.maxBadTurns && !handed && !stale; attempt++) {
+                // Orbit answered `browser_shared`: another job is on the computer, so it cannot be handed to the person now. That is neither a no nor stale: no turn is
+                // started, the same handover is asked again after a wait, and it does not count as a try. When it is still shared at the bound, the job ends as ours
+                // (nothing charged), never as the agent's. An Orbit that never says it behaves exactly as before
+                let shared = false;
+                let sharedSince: number | null = null;
+                let sharedTooLong = false;
+                for (let attempt = 0; attempt < RUNNER_GUARDS.maxBadTurns && !handed && !stale && !sharedTooLong; attempt++) {
                     if (signal.aborted) return;
-                    if (attempt > 0) await sleep(timing.waitMs, signal);
+                    if (shared) await sleep(timing.sharedWaitMs ?? 30_000, signal);
+                    else if (attempt > 0) await sleep(timing.waitMs, signal);
+                    shared = false;
                     // The wait ends when the worker is stopped: a handover is never sent after that (Orbit would put the job in waiting for a worker that was stopped)
                     if (signal.aborted) return;
                     handed = await orbit
@@ -1789,6 +1828,10 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                                 stale = true;
                                 return false;
                             }
+                            if (answer.ok === false && answer.reason === 'browser_shared') {
+                                shared = true;
+                                return false;
+                            }
                             if (answer.ok === false) refusedHandover = true;
                             return answer.ok !== false;
                         })
@@ -1804,11 +1847,25 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                             if (orbitSaidNo(error)) refusedHandover = true;
                             return false;
                         });
+                    if (shared && !handed && !stale) {
+                        const at = now();
+                        sharedSince ??= at;
+                        if (at - sharedSince >= (timing.sharedGiveUpMs ?? 10 * 60_000)) sharedTooLong = true;
+                        // A shared answer is no try: the tries left stay for the answers that are a no or that could not get through
+                        else attempt--;
+                    }
                 }
                 if (superseded.has(run)) return;
                 if (stale) {
                     await readAgain();
                     continue;
+                }
+                if (sharedTooLong) {
+                    if ((await finish(job, 'failed', { signal, cause: 'ours', generation, run, ...held(), why: sharedBusyWhy(ending.waitingFor), basis: 'browser_shared' })) === 'stale') {
+                        await readAgain();
+                        continue;
+                    }
+                    return;
                 }
                 if (!handed) {
                     if ((await finish(job, 'failed', { signal, cause: refusedHandover ? 'agent' : 'ours', generation, run, ...held() })) === 'stale') {

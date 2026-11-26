@@ -73,6 +73,8 @@
                 if (result === "failed") warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
                 else if (result === "not-ready")
                     warningMessageStore.addWarningMessage($LL.chat.brick.computer.notReady());
+                else if (result === "shared")
+                    warningMessageStore.addWarningMessage($LL.chat.brick.computer.takeOverShared({ name: brick.name }));
                 if (gone || brick.id !== brickAtTap) return;
             })
             .catch((error) => console.error(error))

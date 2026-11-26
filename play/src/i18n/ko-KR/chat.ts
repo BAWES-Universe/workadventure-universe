@@ -532,6 +532,8 @@ const chat: DeepPartial<Translation["chat"]> = {
             screenControlRunningLine:
                 "{name}의 컴퓨터에 입력하고 있어요. {name}이(가) 설치한 프로그램이 아직 실행 중이라 입력하는 내용을 볼 수 있어요.",
             notReady: "컴퓨터를 준비하지 못했어요. 아무것도 바뀌지 않았어요. 다시 시도해 주세요.",
+            takeOverShared:
+                "{name}이(가) 이 컴퓨터에서 여러 작업을 하고 있어요. 작업이 하나만 남으면 직접 조작할 수 있어요. 먼저 다른 작업을 일시 정지해도 돼요.",
         },
         files: {
             artifactsMade: "만든 아티팩트 {count}개",

@@ -180,6 +180,22 @@ describe("the Bricks' computers store (#2000)", () => {
             expect(await brickTakeOver(BRICK, "take-over")).toBe("failed");
             warn.mockRestore();
         });
+
+        it("a computer with more than one job on it (Orbit's 409 shared) gets its own result, not the generic failure, and the page is read again", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.getBrickComputer.mockResolvedValue(computer());
+            game.getBrickComputer.mockClear();
+            game.brickComputerAction.mockRejectedValue(refused("shared"));
+            expect(await brickTakeOver(BRICK, "take-over")).toBe("shared");
+            expect(await brickTakeOver(BRICK, "take-over-anyway")).toBe("shared");
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(2);
+            // only a 409 says it: the same word with another status is still a failure
+            game.brickComputerAction.mockRejectedValue(
+                Object.assign(new Error("refused"), { status: 400, reason: "shared" })
+            );
+            expect(await brickTakeOver(BRICK, "take-over")).toBe("failed");
+            warn.mockRestore();
+        });
     });
 
     it("follows quickly while a job runs, slowly when idle, and stops when asked", async () => {
