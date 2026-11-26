@@ -215,6 +215,19 @@ describe('a mail answer through a run', () => {
         expect(read.map((one) => [one.sender, one.subject, one.preview.body])).toEqual(messages.map((one) => [one.sender, one.subject, one.preview.body]));
     });
 
+    it('takes the routing headers out only for a mail App, by the tool it called', async () => {
+        const part = { payload: { mimeType: 'text/plain', body: { size: 3, data: 'abc' }, headers: [{ name: 'Subject', value: 'Hi' }, { name: 'Received', value: 'from x' }] } };
+        const blocks = [{ type: 'text', text: JSON.stringify(part) }];
+        const names = (text: string) => {
+            const inner = JSON.parse(text)[0].text;
+            return ((typeof inner === 'string' ? JSON.parse(inner) : inner).payload.headers as { name: string }[]).map((header) => header.name);
+        };
+        const gmail = setUp({ GMAIL_FETCH_EMAILS: RUN('looksUp') }, { call: async () => blocks });
+        const other = setUp({ search: RUN('looksUp') }, { call: async () => blocks });
+        expect(names(await (await gmail.apps.open(run()))!.call('GMAIL_FETCH_EMAILS', {}))).toEqual(['Subject']);
+        expect(names(await (await other.apps.open(run()))!.call('search', {}))).toEqual(['Subject', 'Received']);
+    });
+
     it('says "Showing 20 of 50" when even without the bodies there is more than fits, and never cuts a message in half', async () => {
         const messages = Array.from({ length: 50 }, (_, n) => ({ ...mail(n + 1, 10), messageText: `Message ${n + 1}. `.repeat(200) }));
         const { apps } = setUp({ search: RUN('looksUp') }, { call: async () => answerOf(messages) });

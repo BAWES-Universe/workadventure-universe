@@ -97,6 +97,13 @@ function isMailHeaders(value: unknown[]): value is { name: string; value: string
     return pairs && value.some((one) => MAIL_HEADER.test((one as { name: string }).name));
 }
 
+const MAIL_TOOL = /(?:^|[^a-z])(?:gmail|googlemail|outlook|imap)(?:[^a-z]|$)/i;
+
+/** Whether a tool is a mail App's, by its own name or its App's (GMAIL_FETCH_EMAILS, "Outlook"): the real names, not a loose word that chat or Slack tools share. */
+export function isMailTool(toolName: string, serverName?: string): boolean {
+    return MAIL_TOOL.test(toolName) || (serverName !== undefined && MAIL_TOOL.test(serverName));
+}
+
 /** A message part of a mail: a `mimeType` with the body or the parts of the message beside it, or the ids a mail service gives its messages. A `mimeType` alone is any App's field. */
 function isMailPart(value: Record<string, unknown>): boolean {
     if (typeof value.mimeType !== 'string') return false;
@@ -144,21 +151,21 @@ function decodedFile(value: Record<string, unknown>): string | null {
  * raw HTML into its text: it is only asked for when the answer does not fit otherwise, because markup can be what an App was asked for
  * (a page's source, a component) and what fits is never changed.
  */
-function tidy(value: unknown, taken: Taken, html: boolean): unknown {
+function tidy(value: unknown, taken: Taken, html: boolean, mail: boolean): unknown {
     if (typeof value === 'string') {
         if (isEncoded(value)) {
             taken.count++;
             return leftOut(value);
         }
         const json = readJson(value);
-        if (json.ok) return tidy(json.value, taken, html);
+        if (json.ok) return tidy(json.value, taken, html, mail);
         if (html && looksLikeHtml(value)) {
             taken.count++;
             return htmlAsText(value);
         }
         return value;
     }
-    if (Array.isArray(value)) return value.map((one) => tidy(one, taken, html));
+    if (Array.isArray(value)) return value.map((one) => tidy(one, taken, html, mail));
     if (isObject(value)) {
         // A file is its text, not its base64
         const file = decodedFile(value);
@@ -170,12 +177,12 @@ function tidy(value: unknown, taken: Taken, html: boolean): unknown {
                 out[key] = file;
             } else if (file !== null && key === 'encoding') {
                 out[key] = 'utf-8';
-            } else if (key.toLowerCase() === 'headers' && Array.isArray(inner) && isMailPart(value) && isMailHeaders(inner)) {
+            } else if (mail && key.toLowerCase() === 'headers' && Array.isArray(inner) && isMailPart(value) && isMailHeaders(inner)) {
                 const kept = inner.filter((header) => !ROUTING_HEADER.test(header.name));
                 if (kept.length < inner.length) taken.count++;
                 out[key] = kept;
             } else {
-                out[key] = tidy(inner, taken, html);
+                out[key] = tidy(inner, taken, html, mail);
             }
         }
         return out;
@@ -225,18 +232,19 @@ function showFirst(root: unknown, place: Place, shown: number): unknown {
 }
 
 /**
- * An App's answer as the text the model reads in a run, in at most `max` characters (and a notice when it was cut). Throws only for
+ * An App's answer as the text the model reads in a run, in at most `max` characters (and a notice when it was cut). `mail`: the answer is
+ * from a mail App (see isMailTool), the only answers whose routing headers are taken out. Throws only for
  * a value JSON cannot write; the caller turns that into a plain error.
  */
-export function fitAppAnswer(value: unknown, max: number = RUN_ANSWER_MAX): string {
+export function fitAppAnswer(value: unknown, max: number = RUN_ANSWER_MAX, mail = false): string {
     const asText = (answer: unknown) => (typeof answer === 'string' ? answer : JSON.stringify(answer ?? null));
     const asIs = asText(value);
     const taken: Taken = { count: 0 };
-    let answer = tidy(value, taken, false);
+    let answer = tidy(value, taken, false, mail);
     // Nothing to take out and it fits: exactly as it came
     if (taken.count === 0 && asIs.length <= max) return asIs;
     // Still too long: raw HTML is read as its text too
-    if (asText(answer).length > max) answer = tidy(value, { count: 0 }, true);
+    if (asText(answer).length > max) answer = tidy(value, { count: 0 }, true, mail);
     // Whole items out of the longest list, then of the next longest, until it fits or no list can be shortened
     for (let round = 0; round < 12 && asText(answer).length > max; round++) {
         const place = longestList(answer);

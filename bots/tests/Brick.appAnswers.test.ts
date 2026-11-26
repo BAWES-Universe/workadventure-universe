@@ -4,7 +4,7 @@
  * too long (and it says "Showing 20 of 50"), and only what cannot be shortened is cut, with the notice a chat reply gives.
  */
 import { describe, expect, it } from 'vitest';
-import { cutWithNote, fitAppAnswer, RUN_ANSWER_MAX } from '../server/BrickAppAnswer';
+import { cutWithNote, fitAppAnswer, isMailTool, RUN_ANSWER_MAX } from '../server/BrickAppAnswer';
 
 const base64url = (text: string) => Buffer.from(text, 'utf8').toString('base64url');
 /** Readable filler of an exact length, with spaces and full stops as a message has. */
@@ -73,7 +73,7 @@ describe('an answer that fits and has nothing to take out', () => {
 describe('an encoded body is taken out, and what the Brick reads a mail by stays', () => {
     it('drops the base64 of every part and the routing headers, and keeps sender, subject, date, snippet and the plain text', () => {
         const one = message(1, 20_000);
-        const text = fitAppAnswer(asBlocks({ data: { messages: [one] }, successful: true }));
+        const text = fitAppAnswer(asBlocks({ data: { messages: [one] }, successful: true }), undefined, true);
         const read = JSON.parse(text)[0].text.data.messages[0];
         expect(text.length).toBeLessThan(3_000);
         expect(read.sender).toBe(one.sender);
@@ -150,10 +150,28 @@ describe('routing headers are only taken from the headers of a mail', () => {
         expect(fitAppAnswer(http)).toBe(JSON.stringify(http));
     });
 
+    it('takes them only from the answer of a mail App: the same answer from any other tool keeps every header', () => {
+        const part = { mimeType: 'multipart/alternative', body: { size: 0 }, headers: [{ name: 'Subject', value: 'Hi' }, { name: 'Received', value: 'from x' }, { name: 'X-Mailer', value: 'y' }] };
+        const names = (text: string) => (JSON.parse(text) as { headers: { name: string }[] }).headers.map((header) => header.name);
+        expect(names(fitAppAnswer(part, undefined, true))).toEqual(['Subject']);
+        expect(names(fitAppAnswer(part))).toEqual(['Subject', 'Received', 'X-Mailer']);
+        // A response with a mimeType and a body that is not a mail's keeps X-Request-Id, even in a long answer
+        const response = { mimeType: 'application/json', body: { status: 'ok' }, headers: [{ name: 'Subject', value: 'report' }, { name: 'X-Request-Id', value: 'abc' }], junk: base64url(prose(30_000)) };
+        expect(names(fitAppAnswer(response))).toEqual(['Subject', 'X-Request-Id']);
+    });
+
+    it('knows a mail App by the names the Apps layer uses, not by a loose word', () => {
+        for (const name of ['GMAIL_FETCH_EMAILS', 'gmail_list_messages', 'OUTLOOK_LIST_MESSAGES', 'imap-search']) expect(isMailTool(name)).toBe(true);
+        expect(isMailTool('search', 'Gmail')).toBe(true);
+        expect(isMailTool('list', 'Microsoft Outlook')).toBe(true);
+        for (const name of ['SLACK_LIST_MESSAGES', 'send_message', 'list_mailboxes_of_the_office', 'MAILCHIMP_GET_CAMPAIGNS', 'search']) expect(isMailTool(name)).toBe(false);
+        expect(isMailTool('search', 'Slack')).toBe(false);
+    });
+
     it('takes them from a mail whose headers are under `headers`, in any case', () => {
         const headers = [{ name: 'Subject', value: 'Hi' }, { name: 'Received', value: 'from x' }, { name: 'X-Mailer', value: 'y' }];
         for (const key of ['headers', 'Headers']) {
-            const read = JSON.parse(fitAppAnswer({ payload: { mimeType: 'multipart/alternative', body: { size: 0 }, [key]: headers } })) as { payload: Record<string, { name: string }[]> };
+            const read = JSON.parse(fitAppAnswer({ payload: { mimeType: 'multipart/alternative', body: { size: 0 }, [key]: headers } }, undefined, true)) as { payload: Record<string, { name: string }[]> };
             expect(read.payload[key].map((header) => header.name)).toEqual(['Subject']);
         }
     });
