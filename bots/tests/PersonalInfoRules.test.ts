@@ -389,6 +389,25 @@ describe('what the bot keeps from a chat', () => {
         }
     });
 
+    it('forgetting a short like or dislike takes the lines where the person puts it first ("Tea is my favorite drink", "Tea? I hate it"), and not "steam"', () => {
+        for (const [verb, said, again] of [['like', 'Tea is my favorite drink', 'I like tea'], ['dislike', 'Tea? I hate it', 'I hate tea']]) {
+            const memory = new ConversationMemory();
+            const say = (text: string, at: number) => {
+                memory.addMessage(BOT, PERSON, text, 'person', 'dm', false);
+                memory.getMemory(BOT, PERSON)!.conversationHistory.at(-1)!.timestamp = at;
+                memory.extractPersonalInfo(BOT, PERSON, text, 'dm', at);
+            };
+            say(said, 1000);
+            say('Steam is my favorite room', 2000);
+            say(again, 3000);
+            const stored = memory.getMemory(BOT, PERSON)!;
+            const target = memoryItemsOf(stored).find((item) => item.value === 'tea')!;
+            expect(target, verb).toBeDefined();
+            expect(dropItems(stored, new Set([target.id]))).toBe(1);
+            expect(stored.conversationHistory.map((line) => line.message), verb).toEqual(['Steam is my favorite room']);
+        }
+    });
+
     it('forgetting a short like said twice takes the first line too', () => {
         const memory = new ConversationMemory();
         const say = (text: string, at: number, sender: 'person' | 'bot' = 'person') => {

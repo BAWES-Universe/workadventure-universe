@@ -147,6 +147,14 @@ function saidBackToThem(text: string, words = LIKE_WORDS): RegExp {
     return new RegExp(`${person}[^.!?\\n]{0,40}?${likes}[^.!?\\n]{0,25}?${word}|${word}[^.!?\\n]{0,40}?${person}[^.!?\\n]{0,40}?${likes}`, 'iu');
 }
 
+/** A line where the person puts the value first and then says it is theirs ("Tea is my favorite drink", "Tea? I hate it"), with the words of liking or not liking. */
+function saidFirstByThem(text: string, words: string): RegExp {
+    const word = `(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`;
+    const mine = `(?<![\\p{L}\\p{N}])(i|my)(?![\\p{L}\\p{N}])`;
+    const likes = `(?<![\\p{L}\\p{N}])(${words})(?![\\p{L}\\p{N}])`;
+    return new RegExp(`${word}[^.!?\\n]{0,25}?${mine}[^.!?\\n]{0,25}?${likes}`, 'iu');
+}
+
 /**
  * Takes these things out of a person's memory, with what was built from them. Changes the memory it is given and returns
  * how many things went. With `forgotAt`, a thing the person said again after they forgot it (it carries when it was
@@ -175,8 +183,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         if (info.drawnFrom) delete info.drawnFrom[key];
     };
     // Short dislikes ("tea"): the person's lines that say they do not like it, found by what they say and not by the bare word
-    const shortDislikes: Array<{ value: string; owner: number }> = [];
-    const shortLikes: Array<{ value: string; owner: number }> = [];
+    const shortDislikes: Array<{ value: string; first: RegExp; owner: number }> = [];
+    const shortLikes: Array<{ value: string; first: RegExp; owner: number }> = [];
     // Short names ("Ali"): the person's lines that give it ("my name is Ali", "I'm Ali", "call me Ali")
     const shortNames: Array<{ words: RegExp; owner: number }> = [];
     const takeLines = (at: number | null, phrase: string, ownName = false, taste: 'like' | 'dislike' | null = null) => {
@@ -200,8 +208,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
             const short = phrase.trim();
             echoes.push({ owner: mine, at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short, dislike ? DISLIKE_WORDS : LIKE_WORDS) });
             if (ownName) shortNames.push({ owner: mine, words: givenAs(short) });
-            if (taste === 'dislike') shortDislikes.push({ value: short.toLowerCase(), owner: mine });
-            else if (taste === 'like') shortLikes.push({ value: short.toLowerCase(), owner: mine });
+            if (taste === 'dislike') shortDislikes.push({ value: short.toLowerCase(), first: saidFirstByThem(short, DISLIKE_WORDS), owner: mine });
+            else if (taste === 'like') shortLikes.push({ value: short.toLowerCase(), first: saidFirstByThem(short, LIKE_WORDS), owner: mine });
         }
     };
 
@@ -268,8 +276,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
             for (const name of shortNames) if (name.words.test(line.message)) owners.add(name.owner);
             if (shortDislikes.length > 0 || shortLikes.length > 0) {
                 const tastes = tastesIn(line.message);
-                for (const dislike of shortDislikes) if (tastes.dislikes.some((one) => one.toLowerCase() === dislike.value)) owners.add(dislike.owner);
-                for (const like of shortLikes) if (tastes.likes.some((one) => plainThing(one).toLowerCase() === like.value)) owners.add(like.owner);
+                for (const dislike of shortDislikes) if (tastes.dislikes.some((one) => one.toLowerCase() === dislike.value) || dislike.first.test(line.message)) owners.add(dislike.owner);
+                for (const like of shortLikes) if (tastes.likes.some((one) => plainThing(one).toLowerCase() === like.value) || like.first.test(line.message)) owners.add(like.owner);
             }
             return owners;
         };
