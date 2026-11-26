@@ -31,6 +31,7 @@
     import PinnedSummary from "../Details/PinnedSummary.svelte";
     import { gameSceneStore } from "../../../../Stores/GameSceneStore";
     import { botApiService } from "../../../../external-modules/bots/services/BotApiService";
+    import { botIdFromChatId } from "../../../Bots/BotChatStatus";
     import { botHomeRoom } from "../../../Bots/BotHomeRoom";
     import { visitBotRoom } from "../../../Bots/visitBotRoom";
     import { profileStatusLine } from "../../Status/ChatStatus";
@@ -400,7 +401,7 @@
 
         <PinnedSummary {room} />
 
-        <ArtifactsSummary {room} botName={partner.isBot ? name : undefined} />
+        <ArtifactsSummary {room} botName={partner.isBot ? name : undefined} botId={botIdFromChatId(partner.chatId)} />
 
         <SharedSummary {room} />
 
