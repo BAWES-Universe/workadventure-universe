@@ -405,4 +405,34 @@ describe('what the bot keeps from a chat', () => {
         expect(dropItems(stored, new Set([target.id]))).toBe(1);
         expect(stored.conversationHistory.map((line) => line.message)).toEqual(['I like steam rooms', 'Steam rooms are great']);
     });
+    it("takes the bot's reply after a taken line only for the words of the thing that took it, when several are forgotten at once", () => {
+        const memory = new ConversationMemory();
+        const say = (text: string, at: number, sender: 'person' | 'bot' = 'person') => {
+            memory.addMessage(BOT, PERSON, text, sender, 'dm', false);
+            memory.getMemory(BOT, PERSON)!.conversationHistory.at(-1)!.timestamp = at;
+            if (sender === 'person') memory.extractPersonalInfo(BOT, PERSON, text, 'dm', at);
+        };
+        say('I like tea', 1000);
+        say('Jam is nice too', 1500, 'bot');
+        say('I like jam', 3000);
+        const stored = memory.getMemory(BOT, PERSON)!;
+        const ids = new Set(memoryItemsOf(stored).filter((item) => item.value === 'tea' || item.value === 'jam').map((item) => item.id));
+        expect(dropItems(stored, ids)).toBe(2);
+        expect(stored.conversationHistory.map((line) => line.message)).toEqual(['Jam is nice too']);
+    });
+    it('forgetting a name takes the lines that give it in other capitals, and keeps "I will travel" when "Will" is forgotten', () => {
+        const memory = new ConversationMemory();
+        const say = (text: string, at: number, sender: 'person' | 'bot' = 'person') => {
+            memory.addMessage(BOT, PERSON, text, sender, 'dm', false);
+            memory.getMemory(BOT, PERSON)!.conversationHistory.at(-1)!.timestamp = at;
+            if (sender === 'person') memory.extractPersonalInfo(BOT, PERSON, text, 'dm', at);
+        };
+        say('my name is sara', 1000);
+        say('I walk a lot', 2000);
+        say('My name is Sara', 3000);
+        const stored = memory.getMemory(BOT, PERSON)!;
+        const target = memoryItemsOf(stored).find((item) => item.kind === 'name')!;
+        expect(dropItems(stored, new Set([target.id]))).toBe(1);
+        expect(stored.conversationHistory.map((line) => line.message)).toEqual(['I walk a lot']);
+    });
 });

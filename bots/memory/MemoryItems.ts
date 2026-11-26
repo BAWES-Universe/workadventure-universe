@@ -133,6 +133,11 @@ function escapeRegExp(text: string): string {
 const LIKE_WORDS = `likes?|loves?|loved|enjoys?|enjoyed|prefer|prefers|preferred|adores?|favou?rite|fan of|into|go-to`;
 const DISLIKE_WORDS = `hates?|hated|dislikes?|disliked|despises?|detests?|loathes?|avoid|avoids|(?:can['’]?t|cannot|can not) stand|(?:don['’]?t|do not|doesn['’]?t|does not) (?:like|enjoy|love)|not a fan of|not into|sick of|tired of`;
 
+/** How a person gives their name, in any capitals: "my name is sara", "call me Ali", "I'm ali". Said again lower case, it is still their name. */
+function givenAs(name: string): RegExp {
+    return new RegExp(`(?:my name(?:['’]s| is)|call me|(?<![\\p{L}\\p{N}])i(?:['’]m| am)(?: called| named)?)\\s+${escapeRegExp(name)}(?![\\p{L}\\p{N}])`, 'iu');
+}
+
 /** A bot line that tells the person what they like (or, with the dislike words, do not like) back ("You love tea", "You hate tea"), not one that only has the word. */
 function saidBackToThem(text: string, words = LIKE_WORDS): RegExp {
     const word = `(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`;
@@ -151,9 +156,12 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     if (keys.size === 0) return 0;
     const info = memory.personalInfo;
     const history = memory.conversationHistory;
-    const doomedLines = new Set<object>();
-    const phrases: RegExp[] = [];
-    const echoes: Array<{ at: number | null; ownName: boolean; words: RegExp; toldBack: RegExp }> = [];
+    // Each thing being forgotten is an owner: a line it took remembers which thing took it, so the bot's reply after it is only
+    // looked at for the words of that same thing
+    let owner = 0;
+    const doomedLines = new Map<object, Set<number>>();
+    const phrases: Array<{ words: RegExp; owner: number }> = [];
+    const echoes: Array<{ owner: number; at: number | null; ownName: boolean; words: RegExp; toldBack: RegExp }> = [];
     let removed = 0;
 
     const goes = (id: string, at: number | null) => {
@@ -167,23 +175,31 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         if (info.drawnFrom) delete info.drawnFrom[key];
     };
     // Short dislikes ("tea"): the person's lines that say they do not like it, found by what they say and not by the bare word
-    const shortDislikes: string[] = [];
-    const shortLikes: string[] = [];
+    const shortDislikes: Array<{ value: string; owner: number }> = [];
+    const shortLikes: Array<{ value: string; owner: number }> = [];
     // Short names ("Ali"): the person's lines that give it ("my name is Ali", "I'm Ali", "call me Ali")
-    const shortNames: RegExp[] = [];
+    const shortNames: Array<{ words: RegExp; owner: number }> = [];
     const takeLines = (at: number | null, phrase: string, ownName = false, taste: 'like' | 'dislike' | null = null) => {
         const dislike = taste === 'dislike';
-        if (at !== null) for (const line of history) if (line.timestamp === at && line.sender === 'person') doomedLines.add(line);
+        owner++;
+        const mine = owner;
+        if (at !== null) {
+            for (const line of history) {
+                if (line.timestamp === at && line.sender === 'person') doomedLines.set(line, (doomedLines.get(line) ?? new Set<number>()).add(mine));
+            }
+        }
         // The lines that say it back go too, the bot's and the person's: only the last line it was said in is noted, and a thing
         // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
-        if (phrase.trim().length >= MIN_PHRASE) phrases.push(wholeWords(phrase.trim(), ownName && sameCaseAsWritten(phrase.trim())));
+        if (phrase.trim().length >= MIN_PHRASE) phrases.push({ words: wholeWords(phrase.trim(), ownName && sameCaseAsWritten(phrase.trim())), owner: mine });
+        // The lines that give a name are found in any capitals, for a long name too: "my name is sara" for "Sara"
+        if (ownName && phrase.trim().length >= MIN_PHRASE) phrases.push({ words: givenAs(phrase.trim()), owner: mine });
         // A value too short to match everywhere ("Amy") is still said back in the reply right after the line it came from
         else if (phrase.trim().length > 0) {
             const short = phrase.trim();
-            echoes.push({ at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short, dislike ? DISLIKE_WORDS : LIKE_WORDS) });
-            if (ownName) shortNames.push(new RegExp(`(?:my name(?:['’]s| is)|call me|(?<![\\p{L}\\p{N}])i(?:['’]m| am)(?: called| named)?)\\s+${escapeRegExp(short)}(?![\\p{L}\\p{N}])`, 'iu'));
-            if (taste === 'dislike') shortDislikes.push(short.toLowerCase());
-            else if (taste === 'like') shortLikes.push(short.toLowerCase());
+            echoes.push({ owner: mine, at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short, dislike ? DISLIKE_WORDS : LIKE_WORDS) });
+            if (ownName) shortNames.push({ owner: mine, words: givenAs(short) });
+            if (taste === 'dislike') shortDislikes.push({ value: short.toLowerCase(), owner: mine });
+            else if (taste === 'like') shortLikes.push({ value: short.toLowerCase(), owner: mine });
         }
     };
 
@@ -231,7 +247,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         // The bot's reply right after the line this fact came from, when it says the value back, goes with it (a general fact's
         // value is never taken out of every line, so only that one reply is looked for)
         if (name !== 'current_state' && !dislike && String(value).trim() && at !== null) {
-            echoes.push({ at, ownName: false, words: wholeWords(String(value).trim()), toldBack: NEVER });
+            echoes.push({ owner, at, ownName: false, words: wholeWords(String(value).trim()), toldBack: NEVER });
         }
         forgetPlace(key);
         info.facts.delete(name);
@@ -241,27 +257,34 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     }
 
     if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0 || shortDislikes.length > 0 || shortLikes.length > 0 || shortNames.length > 0) {
-        // The person's lines this takes: the one it came from, the ones that hold its words, and the ones that say it as a taste or a name
-        const takesPersonLine = (line: BotPlayerMemory['conversationHistory'][number]): boolean => {
-            if (line.sender !== 'person') return false;
-            if (doomedLines.has(line) || phrases.some((phrase) => phrase.test(line.message))) return true;
-            if (shortNames.some((name) => name.test(line.message))) return true;
-            if (shortDislikes.length === 0 && shortLikes.length === 0) return false;
-            const tastes = tastesIn(line.message);
-            return tastes.dislikes.some((one) => shortDislikes.includes(one.toLowerCase())) || tastes.likes.some((one) => shortLikes.includes(plainThing(one).toLowerCase()));
+        // The things that take a person's line: the one it came from, the ones whose words it holds, and the ones it says as a taste or a name
+        const takenBy = (line: BotPlayerMemory['conversationHistory'][number]): Set<number> => {
+            const owners = new Set<number>();
+            if (line.sender !== 'person') return owners;
+            for (const one of doomedLines.get(line) ?? []) owners.add(one);
+            for (const phrase of phrases) if (phrase.words.test(line.message)) owners.add(phrase.owner);
+            for (const name of shortNames) if (name.words.test(line.message)) owners.add(name.owner);
+            if (shortDislikes.length > 0 || shortLikes.length > 0) {
+                const tastes = tastesIn(line.message);
+                for (const dislike of shortDislikes) if (tastes.dislikes.some((one) => one.toLowerCase() === dislike.value)) owners.add(dislike.owner);
+                for (const like of shortLikes) if (tastes.likes.some((one) => plainThing(one).toLowerCase() === like.value)) owners.add(like.owner);
+            }
+            return owners;
         };
         memory.conversationHistory = history.filter((line, index) => {
-            if (takesPersonLine(line)) return false;
+            if (takenBy(line).size > 0) return false;
             if (line.sender === 'person') return true;
             const text = line.message;
-            if (phrases.some((phrase) => phrase.test(text))) return false;
+            if (phrases.some((phrase) => phrase.words.test(text))) return false;
             // The person's own name is not said back by the bot in any later line either: it is the person who forgot it
             if (echoes.some((echo) => echo.ownName && echo.words.test(text))) return false;
             // A later bot line that tells the person what they like back ("You love tea") goes too; one that only has the word stays
             if (echoes.some((echo) => echo.toldBack.test(text))) return false;
-            // The bot's reply right after any line this took, when it says a short value back ("I like tea" / "Tea it is!")
+            // The bot's reply right after a line a thing took, when it says that same thing's short value back ("I like tea" / "Tea it is!")
             const before = history[index - 1];
-            return !(before && takesPersonLine(before) && echoes.some((echo) => echo.words.test(text)));
+            if (!before) return true;
+            const owners = takenBy(before);
+            return !(owners.size > 0 && echoes.some((echo) => owners.has(echo.owner) && echo.words.test(text)));
         });
     }
     if (removed > 0) info.lastInfoUpdate = Date.now();
