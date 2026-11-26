@@ -12,6 +12,7 @@ import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
+import { brickLimitFrom } from '../ai/BrickLimit';
 import { computerReportOf, type ComputerReport, type UndeliverableWhy } from './ComputerReports';
 import { dueRunOf, failedNoticeOf, heldNoticeOf, type DueRun, type FailedNotice, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 import { retryJobOf, type RetryJob } from '../ai/ComputerTryAgain';
@@ -1440,10 +1441,13 @@ export class AdminApiService {
     /**
      * A person asks their Brick for another Brick (#1996). Orbit makes it only for the owner of the Brick that asks
      * (`userId` is their game uuid), and answers the one they already have when its name is taken. Throws when Orbit
-     * says no or cannot be reached: the caller tells the person it did not work.
+     * says no or cannot be reached: the caller tells the person it did not work. When they have made too many new Bricks this
+     * hour ("New Bricks per hour") it throws BrickLimitReached, whose `line` is Orbit's kind answer with the time to say as it is.
      */
     async makeBrickFor(viaBotId: string, userId: string, ask: NewBrickAsk): Promise<{ made: boolean; brick: BrickCard }> {
-        const response = await this.brickCall<{ made?: unknown; brick?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/bricks`, { userId, ...ask });
+        const response = await this.brickCall<{ made?: unknown; brick?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/bricks`, { userId, ...ask }).catch((error: unknown) => {
+            throw brickLimitFrom(error) ?? error;
+        });
         const brick = brickCardOf(response.data?.brick);
         if (!brick) throw new Error('Orbit answered without a Brick');
         return { made: response.data?.made === true, brick };

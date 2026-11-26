@@ -2,12 +2,13 @@
     import { onDestroy, onMount } from "svelte";
     import { fly } from "svelte/transition";
     import { closeAllModals, closeModal } from "svelte-modals";
-    import LL from "../../../../i18n/i18n-svelte";
+    import LL, { locale } from "../../../../i18n/i18n-svelte";
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import { openBrickChat } from "../BrickChat";
     import { keepFocusInside } from "../keepFocusInside";
     import { makeMyBrickFromTemplate } from "../MyBricksStore";
+    import { newBricksLimitLine, newBricksLimitOf } from "../NewBrick";
     import { openBrickPage } from "./OpenBrick";
     import { missingNeeds, type TemplatePreview } from "./Template";
     import { readTemplatePreview, setTemplateStar } from "./Templates";
@@ -96,7 +97,11 @@
             }
         } catch (error) {
             console.warn("Could not make a Brick from a template", error);
-            if ((error as { status?: number } | null)?.status === 404) {
+            const limit = newBricksLimitOf(error);
+            if (limit) {
+                // Over "New Bricks per hour": nothing was made, and they are told when they can make another
+                warningMessageStore.addWarningMessage(newBricksLimitLine(limit.retryAt, $locale, $LL.chat.brick));
+            } else if ((error as { status?: number } | null)?.status === 404) {
                 phase = "gone";
             } else {
                 warningMessageStore.addWarningMessage($LL.chat.brick.makeFailed());
