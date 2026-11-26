@@ -89,6 +89,9 @@ describe('The send_to_universe_team tool', () => {
         expect(repeatsThePerson(['you cannot add links to'], ['why you cannot add links to the listings'])).toBe(false);
         // A short name part is not a name ("Al", "Bo")
         expect(repeatsThePerson(['A link on a page'], [], 'Al B')).toBe(false);
+        // A name that is also a common word counts only where it is written as a name
+        expect(repeatsThePerson(['The page will not open, mark it as broken'], [], 'Will Mark')).toBe(false);
+        expect(repeatsThePerson(['Will could not open the page'], [], 'Will Mark')).toBe(true);
     });
 
     it('sends one note per problem and at most two in a reply', async () => {
@@ -129,6 +132,29 @@ describe('The send_to_universe_team tool', () => {
         noteWhatWasRead(long, [{ name: 'files_read', result: 'x'.repeat(50_000) }]);
         noteWhatWasRead(long, [{ name: 'files_read', result: 'y'.repeat(15_000) }]);
         expect(long.read.reduce((sum, text) => sum + text.length, 0)).toBeLessThanOrEqual(20_000);
+    });
+
+    it('counts a note being sent beside it: calls of one round never pass the limit or send one note twice', async () => {
+        const where = context();
+        const waiting: Array<() => void> = [];
+        where.admin.sendBrickReport.mockImplementation(
+            (note: { title: string }) => new Promise((resolve) => waiting.push(() => resolve(kept({ id: note.title, note: { ...kept().note, title: note.title } }))))
+        );
+        const first = runReportTool(args, where);
+        expect(await runReportTool(args, where)).toMatchObject({ note: expect.stringContaining('Already sent') });
+        const second = runReportTool({ ...args, title: 'Voice cuts out', area: 'voice' }, where);
+        expect(await runReportTool({ ...args, title: 'Something else' }, where)).toMatchObject({ sent: false, note: expect.stringContaining('Enough notes') });
+        expect(where.admin.sendBrickReport).toHaveBeenCalledTimes(2);
+        waiting.forEach((resolve) => resolve());
+        expect(await Promise.all([first, second])).toMatchObject([{ sent: true }, { sent: true }]);
+        expect(where.notes).toHaveLength(2);
+    });
+
+    it('never asks for the note again when Orbit\'s answer is unknown: it may have been kept', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const where = context();
+        where.admin.sendBrickReport.mockRejectedValueOnce(new Error('Orbit answered the note in a way it does not know'));
+        expect(await runReportTool(args, where)).toMatchObject({ sent: false, note: expect.stringContaining('Do not send it again') });
     });
 
     it('lets the Brick write a refused note again once in a reply, and no more', async () => {
@@ -184,6 +210,9 @@ describe('What the bot server asks Orbit', () => {
         );
         request.mockResolvedValue({ status: 200, data: { sent: false, reason: 'limit' } });
         expect(await service.sendBrickReport(send)).toEqual({ sent: false, reason: 'limit' });
+        // An answer it does not know may be a note Orbit kept: it throws, never reads as a refusal to send again
+        request.mockResolvedValue({ status: 200, data: { ok: true } });
+        await expect(service.sendBrickReport(send)).rejects.toThrow();
     });
 });
 

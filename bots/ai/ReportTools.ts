@@ -86,15 +86,24 @@ const segmenter = Segmenter ? new Segmenter('und', { granularity: 'word' }) : un
 /** Lower case, the same forms of each character, and no invisible characters (a zero-width space never splits a word). */
 const plain = (value: string): string => value.normalize('NFKC').replace(/\p{Cf}+/gu, '').toLowerCase();
 
-/** The words of a text, in any language: Thai, Chinese and Japanese are split into words too. */
-const wordsOf = (value: string): string[] =>
-    segmenter
-        ? Array.from(segmenter.segment(plain(value)))
+/** The words of a text as written (capitals kept), in any language: Thai, Chinese and Japanese are split into words too. */
+const writtenWordsOf = (value: string): string[] => {
+    const clean = value.normalize('NFKC').replace(/\p{Cf}+/gu, '');
+    return segmenter
+        ? Array.from(segmenter.segment(clean))
               .filter((part) => part.isWordLike)
               .map((part) => part.segment)
-        : plain(value)
-              .split(/[^\p{L}\p{N}]+/u)
-              .filter(Boolean);
+        : clean.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+};
+
+/** The words of a text in lower case. */
+const wordsOf = (value: string): string[] => writtenWordsOf(value).map((word) => word.toLowerCase());
+
+/** A word written as a name is: with a capital first, or in a script without capitals. */
+const writtenAsName = (word: string): boolean => {
+    const first = Array.from(word)[0] ?? '';
+    return first !== first.toLowerCase() || first.toLowerCase() === first.toUpperCase();
+};
 
 /** Only the letters and digits of a text, for the character check. */
 const charsOf = (value: string): string[] => Array.from(plain(value).replace(/[^\p{L}\p{N}]+/gu, ''));
@@ -102,8 +111,8 @@ const charsOf = (value: string): string[] => Array.from(plain(value).replace(/[^
 /**
  * Whether the note repeats the person: six words in a row from anything they wrote in this chat, ten characters in a row from a line in a
  * language written without spaces, or their name as a word of its own (two characters is enough in those languages). `read` (what Apps and
- * files gave back) is checked the same way, but for quotes only. Words are compared in lower case without punctuation or invisible
- * characters, so a quote with other commas or capitals is still a quote.
+ * files gave back) is checked the same way, but for quotes only. Quotes are compared in lower case without punctuation or invisible
+ * characters, so a quote with other commas or capitals is still a quote; a name counts only where it is written with a capital.
  */
 export function repeatsThePerson(note: string[], said: string[], name?: string, read: string[] = []): boolean {
     const runs = new Set<string>();
@@ -120,9 +129,12 @@ export function repeatsThePerson(note: string[], said: string[], name?: string, 
     // A name written without spaces (王伟) may be split into single characters: it is looked for whole, as it is written
     const nameRuns = name ? plain(name).split(/[^\p{L}\p{N}]+/u).filter((part) => NOSPACE.test(part) && Array.from(part).length >= 2) : [];
     for (const field of note) {
-        const words = wordsOf(field);
+        const written = writtenWordsOf(field);
+        const words = written.map((word) => word.toLowerCase());
         const flat = plain(field);
-        if (nameWords.some((word) => words.includes(word)) || nameRuns.some((run) => flat.includes(run))) return true;
+        // A name that is also a common word (Will, Mark, Grace) counts only where it is written as a name, with a capital
+        const named = written.filter(writtenAsName).map((word) => word.toLowerCase());
+        if (nameWords.some((word) => named.includes(word)) || nameRuns.some((run) => flat.includes(run))) return true;
         for (let i = 0; i + QUOTE_WORDS <= words.length; i++) if (runs.has(words.slice(i, i + QUOTE_WORDS).join(' '))) return true;
         if (charRuns.size > 0) {
             const chars = charsOf(field);
@@ -172,6 +184,9 @@ export interface ReportToolContext {
     context?: BrickReportSend['context'];
 }
 
+/** Per reply (its list of notes), the titles of notes being sent this moment. */
+const sending = new WeakMap<BrickNote[], Set<string>>();
+
 /** Runs send_to_universe_team. Never throws: the Brick is told in plain words what happened. */
 export async function runReportTool(args: Record<string, unknown>, context: ReportToolContext): Promise<Record<string, unknown>> {
     const kind = oneOf(args.kind, KINDS);
@@ -182,10 +197,12 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     const stopped = text(args.stopped, TEXT_MAX);
     const idea = text(args.idea, TEXT_MAX);
     if (!kind || !title) return { sent: false, error: 'Say what kind of note it is and give it a short title in general words.' };
-    // The notes this reply already sent, where the chat shows them (a direct message); on the map Orbit's daily count is the only bound
+    // The notes this reply already sent, and the ones being sent right now (tool calls of one round run side by side)
     const already = (context.notes ?? []).filter((note): note is ReportSentNote => note.kind === 'report');
-    if (already.some((note) => note.title.toLowerCase() === title.toLowerCase())) return { sent: true, note: 'Already sent in this reply. Do not send it again.' };
-    if (already.length >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
+    const flying = context.notes ? (sending.get(context.notes) ?? new Set<string>()) : new Set<string>();
+    const same = title.toLowerCase();
+    if (already.some((note) => note.title.toLowerCase() === same) || flying.has(same)) return { sent: true, note: 'Already sent in this reply. Do not send it again.' };
+    if (already.length + flying.size >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
     // One rewrite after a refusal, then no more in this reply: each try costs a round
     const refused = (error: string): Record<string, unknown> => {
         const turn = context.turn;
@@ -196,6 +213,8 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
         return refused('Not sent: the note repeats the person\'s own words or name, or words from what Apps or files gave back. Write it again in general words about Universe, with no quotes and no names, and send it again.');
     }
     let outcome: Awaited<ReturnType<AdminApiService['sendBrickReport']>>;
+    // Held before Orbit is asked, so a call beside this one sees it; let go once the answer is in
+    if (context.notes) sending.set(context.notes, flying.add(same));
     try {
         outcome = await context.admin.sendBrickReport({
             botId: context.botId,
@@ -211,7 +230,10 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
         });
     } catch (error) {
         console.warn('[ReportTools] Could not send a note to the Universe team:', error instanceof Error ? error.message : error);
-        return { sent: false, note: 'The note could not be sent right now. Do not say it was sent; carry on helping.' };
+        // Orbit may have kept it (an answer lost on the way): never sent again in this reply
+        return { sent: false, note: 'The note could not be sent right now. Do not send it again in this reply. Do not say it was sent; carry on helping.' };
+    } finally {
+        flying.delete(same);
     }
     if (outcome.sent === false) {
         if (outcome.reason === 'limit') return { sent: false, note: 'You sent enough notes today. Do not say it was sent; carry on helping.' };

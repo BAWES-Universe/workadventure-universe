@@ -1506,7 +1506,7 @@ export class AdminApiService {
     /**
      * A Brick's note to the Universe team (mock "Brick reports inbox"): Orbit cleans it (no emails, phone numbers, links, @names or long numbers),
      * counts it into a problem and answers it as kept, with the key the chat holds to take it back. A refusal (`empty`, `limit`, `unknown_brick`)
-     * is an answer, not an error. Throws only when Orbit cannot be reached or says something else.
+     * is an answer, not an error. Throws when Orbit cannot be reached or says anything else (then the note is never sent again).
      */
     async sendBrickReport(report: BrickReportSend): Promise<BrickReportOutcome> {
         const response = await this.brickCall<Record<string, unknown>>('post', 'api/bricks/reports', report);
@@ -1521,8 +1521,9 @@ export class AdminApiService {
                 note: { kind: report.kind, area: report.area, effect: report.effect, title: words(note.title), tried: words(note.tried), stopped: words(note.stopped), idea: words(note.idea) },
             };
         }
-        const reason = data.reason === 'limit' || data.reason === 'empty' || data.reason === 'unknown_brick' ? data.reason : 'empty';
-        return { sent: false, reason };
+        if (data.sent === false && (data.reason === 'limit' || data.reason === 'empty' || data.reason === 'unknown_brick')) return { sent: false, reason: data.reason };
+        // Anything else may be a note Orbit kept: never read as a refusal, so the Brick is not asked to send it again
+        throw new Error('Orbit answered the note in a way it does not know');
     }
 
     /** May the suggestion for this topic be shown now? Orbit says yes once per person and topic, on every device (#1996). */
