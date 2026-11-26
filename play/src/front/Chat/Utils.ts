@@ -107,8 +107,19 @@ export function showRoom(room: ChatRoom): void {
     openChat("person");
 }
 
+/** How a caller takes over what happens when a direct chat is opened: the Bricks' chats show a screen of their own first. */
+export interface OpenDirectChatOptions {
+    /** Shows the room that was opened (the chat screen). Defaults to showing it as the open chat. */
+    show?: (room: ChatRoom) => void | Promise<void>;
+    /** Says what to do when the room could not be opened, instead of the usual warning to the person. */
+    onFailure?: (error: unknown) => void;
+}
+
 /** Opens the direct chat with this person or bot, and answers with it (nothing when it could not be opened). */
-export const openDirectChatRoom = async (chatID: string): Promise<ChatRoom | undefined> => {
+export const openDirectChatRoom = async (
+    chatID: string,
+    options?: OpenDirectChatOptions
+): Promise<ChatRoom | undefined> => {
     try {
         if (!get(userIsConnected)) {
             openModal(RequiresLoginForChatModal);
@@ -116,11 +127,21 @@ export const openDirectChatRoom = async (chatID: string): Promise<ChatRoom | und
         }
         // There is no chat with yourself (another of your tabs or devices has your chat id).
         if (chatID === localUserStore.getChatId()) return undefined;
-        const room = await findDirectChatRoom(chatID, false);
-        showRoom(room);
+        // A caller with a screen of its own (a Brick's chat) sends into the room as soon as it is shown: the room is joined first
+        const room = await findDirectChatRoom(chatID, options?.show !== undefined);
+        if (options?.show) await options.show(room);
+        else showRoom(room);
         return room;
     } catch (error) {
-        showDirectChatFailure(error, chatID);
+        if (options?.onFailure) {
+            if (!(error instanceof ChatsStillLoadingError)) {
+                console.error(error);
+                Sentry.captureException(error);
+            }
+            options.onFailure(error);
+        } else {
+            showDirectChatFailure(error, chatID);
+        }
         return undefined;
     }
 };

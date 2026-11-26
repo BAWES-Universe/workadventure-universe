@@ -511,6 +511,21 @@ describe("ArtifactsService", () => {
         expect(answer.artifacts[0]).not.toHaveProperty("makerBotId");
     });
 
+    it("names the bot of a direct chat so its list also holds what the bot made elsewhere", async () => {
+        const http = {
+            put: vi.fn(),
+            post: vi.fn(() => Promise.resolve({ data: { artifacts: [], total: 0, next: null } })),
+        };
+        const service = new ArtifactsService("https://orbit.test", "secret", http);
+        const chat = { kind: "dm" as const, ref: "!room:chat.example" };
+        await service.listInChat({ ...viewer, inChat: false, chat }, 0, "bot-1");
+        expect(http.post).toHaveBeenCalledWith(
+            "https://orbit.test/api/artifacts/chat",
+            { viewer: { ...viewer, inChat: false, chat }, offset: 0, botId: "bot-1" },
+            { headers: { Authorization: "secret" } }
+        );
+    });
+
     it("lists every artifact the person owns a page at a time, naming only the person", async () => {
         const row = { ...opened.artifact, updatedAt: "2026-10-28T09:00:00.000Z" };
         const http = {

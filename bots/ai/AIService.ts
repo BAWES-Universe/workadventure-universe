@@ -4279,7 +4279,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // The job "try again" carries on in this turn, when the person asked for it (piece 8)
             ...(memory?.computerRetry ? { retry: memory.computerRetry } : {}),
             // The same ask again in this turn (the reply written again, a tool call retried) sends the first ask's key: one job, never two
-            ...(memory ? { startKeys: (memory.computerStarts ??= new Map()) } : {}),
+            ...(memory ? { startKeys: (memory.computerStarts ??= new Map()), endedShown: (memory.computerEndedShown ??= {}) } : {}),
             ...(this.computerStartKeys ? { startKeyStore: this.computerStartKeys } : {}),
             // Orbit refused to carry a job on: the reply carries a "Start a new job" button for it, and nothing is started here (finding 6)
             ...(memory ? { offerNewJob: (title: string) => void (memory.pendingNewJob = { title }) } : {}),
@@ -4378,7 +4378,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const resolved = await this.resolveProvider(opts.providerId, opts.botId);
         if (resolved.resting) return { ended: 'resting' };
         const config = resolved.config;
-        const rounds: ReplySteps = { steps: [] };
+        // The rounds of a run keep the room a chat reply's steps have ("Room for tool results in one reply"): older results are set aside
+        // to a line and what still passes the room together is cut from the newest answer, saying so, so eight rounds of long answers never outgrow the model's context
+        const room = new StepRoom((config.limits ?? BOT_LIMIT_DEFAULTS).roomChars, true);
+        const rounds: ReplySteps = { steps: room.steps };
         // A model that answers in words instead of calling a tool is asked once more, then it is a no
         let user = opts.user;
         let nudged = false;
@@ -4458,7 +4461,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 }
             }
             if (finished) return { ended: 'final' };
-            rounds.steps.push(stepOf(round, content, pending, results, reasoning));
+            room.add(stepOf(round, content, pending, results, reasoning));
         }
         return { ended: 'steps' };
     }

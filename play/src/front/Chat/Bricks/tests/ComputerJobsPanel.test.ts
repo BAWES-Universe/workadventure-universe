@@ -240,6 +240,7 @@ describe("the job controls on a Brick's computer", () => {
         expect(inSheet("computerEndAsk")).toBeNull();
         expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "hotel", "cancel", {
             commandId: expect.any(String),
+            expected: "not_started",
         });
         // Back to the jobs: the other two carry on
         expect(row("hotel")).toBeNull();
@@ -446,6 +447,7 @@ describe("the job controls on a Brick's computer", () => {
         await settle();
         expect(game.brickComputerJobAction).toHaveBeenCalledWith(BRICK, "hotel", "cancel", {
             commandId: expect.any(String),
+            expected: "not_started",
         });
         expect(sheet()).toBeNull();
     });

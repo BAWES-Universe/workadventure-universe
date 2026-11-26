@@ -248,6 +248,8 @@ export interface ChatMessage {
     guestKeep?: boolean;
     /** Set on a message the game drew itself on this device (#1997): nothing was sent, so there is nothing to react to, reply to, edit or delete. */
     local?: boolean;
+    /** Set on a message that is still being sent: drawn faded until the chat server has it, and normal from then on. */
+    sending?: Readable<boolean>;
     /** Set on a Brick's suggestion of a Brick for a job that keeps coming back (#1996): while it is the newest message
      * it is a card above the message box, afterwards its question stays in the chat. */
     brickOffer?: BrickOffer;
@@ -367,6 +369,12 @@ export interface ChatConnectionInterface {
     createDirectRoom(userChatId: string): Promise<(ChatRoom & ChatRoomMembershipManagement) | undefined>;
     roomCreationInProgress: Readable<boolean>;
     getDirectRoomFor(userChatId: string): (ChatRoom & ChatRoomMembershipManagement) | undefined;
+    /**
+     * The people this account lists a direct chat with on the chat server, shared by every device (Matrix `m.direct`);
+     * a person stays in it after the chat was left or cleared. Undefined until the chats are loaded. A connection that
+     * has no such list leaves it out.
+     */
+    directChatPartners?: Readable<ReadonlySet<string> | undefined>;
     searchAccessibleRooms(searchText: string): Promise<
         {
             id: string;

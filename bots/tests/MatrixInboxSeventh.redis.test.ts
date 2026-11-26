@@ -40,6 +40,8 @@ describe.runIf(!!URL)('the durable inbox, GPT seventh note G (a real Redis)', ()
         const mine = keys.filter((key) => used.some((id) => key.endsWith(id)) || rooms.some((room) => key.endsWith(room)));
         if (mine.length > 0) await client.del(mine);
         for (const id of used) await client.zRem(INBOX_KEY, id);
+        // the outbox's index (its notices went with the keys above: GPT's eighth note G)
+        for (const id of used) await client.zRem('matrix:outbox', id);
         used.length = 0;
         rooms.length = 0;
     });

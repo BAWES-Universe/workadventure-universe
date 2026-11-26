@@ -200,6 +200,25 @@ vi.mock("../OpenGoals", async () => {
         openGoalsPage: () => requested.set(true),
     };
 });
+// Opening a Brick's page from its chat leaves the chat first, which this test has no chat for: only the request is real
+vi.mock("../Templates/OpenBrick", async () => {
+    const store = await import("svelte/store");
+    const requested = store.writable<string | undefined>(undefined);
+    let fromChat = false;
+    return {
+        brickPageRequest: { subscribe: requested.subscribe },
+        takeBrickPageRequest: () => {
+            const backToChat = fromChat;
+            fromChat = false;
+            requested.set(undefined);
+            return { backToChat };
+        },
+        openBrickPage: (id: string, options: { backToChat?: boolean } = {}) => {
+            fromChat = options.backToChat === true;
+            requested.set(id);
+        },
+    };
+});
 vi.mock("../BrickChat", async () => {
     const store = await import("svelte/store");
     return { openBrickChat: game.openBrickChat, openingBrickChats: store.writable(new Set<string>()) };
@@ -216,7 +235,9 @@ import { forgetMyUsage } from "../UsageStore";
 import { openUsagePage } from "../OpenUsage";
 import { openGoalsPage } from "../OpenGoals";
 import { forgetMyApps } from "../Apps/AppsStore";
+import { openBrickPage } from "../Templates/OpenBrick";
 import BricksPage from "../BricksPage.svelte";
+import BrickVisitCard from "../BrickVisitCard.svelte";
 
 const BRICK = "0b7c1d2e-1111-4222-8333-944455556666";
 const MADE = "1c8d2e3f-2222-4333-8444-a55566667777";
@@ -1249,6 +1270,118 @@ describe("the Bricks page (#1995)", () => {
             expect(byId("brickVisitBlocked")?.textContent).toContain("Universe doesn't take visiting Bricks.");
         });
     });
+    describe("a Brick's page opened from its chat", () => {
+        it('says "Chat with {name}" at the top, and Back returns to that chat', async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
+            openBrickPage(MADE, { backToChat: true });
+            await open();
+            expect(byId("brickPage")).not.toBeNull();
+            expect(target.querySelector(".em-title")?.textContent).toBe("Chat with Recipe Brick");
+            expect(byId("edit-panel-back")?.getAttribute("aria-label")).toBe("Chat with Recipe Brick");
+
+            byId("edit-panel-back")?.click();
+            await settle();
+            expect(get(bricksPageOpenStore)).toBe(false);
+            expect(game.openBrickChat).toHaveBeenCalledWith(MADE);
+        });
+
+        it("goes back to the Bricks list, as it always did, when it was opened from the list", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made()], deleted: [], undoDays: 7 });
+            await open();
+            rows()[1].click();
+            await settle();
+            expect(target.querySelector(".em-title")?.textContent).toBe("Bricks");
+
+            byId("edit-panel-back")?.click();
+            await settle();
+            expect(byId("bricksPage")).not.toBeNull();
+            expect(game.openBrickChat).not.toHaveBeenCalled();
+            expect(get(bricksPageOpenStore)).toBe(true);
+        });
+    });
+
+    describe("the visit card on a Brick's profile in the chat", () => {
+        let card2: { $destroy: () => void } | undefined;
+        afterEach(() => card2?.$destroy());
+        const mountCard = async (brick: { enabled: boolean }) => {
+            card2 = new BrickVisitCard({
+                target,
+                props: { brick: { id: MADE, name: "Recipe Brick", ...brick }, framed: true, showOff: true },
+            });
+            await settle();
+        };
+
+        it("offers Bring along in a card of its own, with the same line as the Brick page", async () => {
+            await mountCard({ enabled: true });
+            expect(byId("brickBringAlong")?.textContent?.trim()).toBe("Bring along");
+            expect(byId("brickBringAlong")?.classList.contains("go")).toBe(true);
+            expect(target.querySelector(".bvc-block.framed")).not.toBeNull();
+            expect(text()).toContain("Recipe Brick walks beside you at Universe.");
+            expect(byId("brickOff")).toBeNull();
+        });
+
+        it("brings it along from there, and then offers End visit", async () => {
+            game.startBrickVisit.mockResolvedValue({ state: "visiting", place: "Universe" });
+            await mountCard({ enabled: true });
+            byId("brickBringAlong")?.click();
+            await settle();
+            expect(game.startBrickVisit).toHaveBeenCalledWith(MADE, "/@/team/universe/room");
+            expect(byId("brickVisiting")?.textContent).toContain("Visiting Universe with you");
+            expect(byId("brickEndVisit")).not.toBeNull();
+            expect(target.querySelector(".bvc-block.framed.violet")).not.toBeNull();
+        });
+
+        it("says a place that does not take visiting Bricks, in a card", async () => {
+            game.getBrickVisit.mockResolvedValue({ state: "blocked", place: "Studio" });
+            await mountCard({ enabled: true });
+            expect(byId("brickVisitBlocked")?.textContent?.trim()).toBe(
+                "Studio doesn't take visiting Bricks. Recipe Brick still answers in your direct messages here."
+            );
+            expect(byId("brickBringAlong")).toBeNull();
+        });
+
+        it("says where a Brick lives, with Take it out, instead of Bring along", async () => {
+            game.getBrickHome.mockResolvedValue({
+                home: { roomUrl: "/@/team/universe/lobby", roomName: "Lobby", worldName: "Team", spot: { x: 1, y: 2 } },
+            });
+            await mountCard({ enabled: true });
+            expect(byId("brickBringAlong")).toBeNull();
+            expect(byId("brickHomeLine")?.textContent?.trim()).toContain("Lives in Lobby.");
+            expect(byId("brickTakeOut")?.textContent?.trim()).toBe("Take it out of Lobby");
+        });
+
+        it("says a Brick is off, with Turn on, and offers no Bring along while it is", async () => {
+            game.changeMyBrick.mockResolvedValue({});
+            await mountCard({ enabled: false });
+            expect(byId("brickOff")?.textContent).toContain("Recipe Brick is off");
+            expect(byId("brickOff")?.textContent).toContain(
+                "It doesn't answer or work on anything until you turn it on."
+            );
+            expect(byId("brickBringAlong")).toBeNull();
+
+            byId("brickTurnOn")?.click();
+            await settle();
+            expect(game.changeMyBrick).toHaveBeenCalledWith(MADE, { enabled: true });
+        });
+
+        it("tells the person when it could not be turned on", async () => {
+            game.changeMyBrick.mockRejectedValue(new Error("offline"));
+            await mountCard({ enabled: false });
+            byId("brickTurnOn")?.click();
+            await settle();
+            expect(game.warn).toHaveBeenCalledWith("Couldn't change that. Try again.");
+        });
+
+        it("does not say a Brick is off on its own page, which has its own switch", async () => {
+            game.listMyBricks.mockResolvedValue({ bricks: [card(), made({ enabled: false })], deleted: [] });
+            await open();
+            rows()[1].click();
+            await settle();
+            expect(byId("brickOff")).toBeNull();
+            expect(target.querySelector(".bvc-block.framed")).toBeNull();
+        });
+    });
+
     describe("a Brick that lives in a room (#2005)", () => {
         const HOME = {
             roomUrl: "/@/team/universe/room",

@@ -9,7 +9,7 @@
     import { botStatusColour } from "../Bots/BotChatStatus";
     import { botStatusCache } from "../Bots/BotStatusStore";
     import { minuteClock } from "../Components/OneList/MinuteClock";
-    import { formatRowTime } from "../Components/OneList/OneListOrder";
+    import { formatRowTime, formatUnreadCount } from "../Components/OneList/OneListOrder";
     import StatusDot from "../Components/Status/StatusDot.svelte";
     import TopRowAvatar from "../Components/TopRow/TopRowAvatar.svelte";
     import { chatSearchBarValue } from "../Stores/ChatStore";
@@ -17,16 +17,17 @@
     import type { PersonColourOf } from "../Stores/ChatUserWokaStore";
     import { brickChatId, brickMadeAt, type BrickCard } from "./Brick";
     import { brickHello } from "./BrickHello";
-    import { openBrickChat, openingBrickChats } from "./BrickChat";
+    import { openBrickChat, openingBrickChats, unopenedBricksOf } from "./BrickChat";
     import { brickPicture } from "./MyBricksStore";
     import { GUEST_BRICK_ID } from "./GuestBrick";
     import { guestBrickOnline, guestBrickRoom } from "./GuestBrickStore";
-    import { IconLoader } from "@wa-icons";
 
     /**
-     * A person's own Brick in Chats before they ever opened its chat (game #1995): the Brick is just there, with its
-     * hello as the line under its name and no unread badge, and nothing was sent to anyone. Laid out as a direct chat's
-     * row (Room.svelte), which takes its place once the chat exists. A tap opens the chat. The Brick for guests (#1997)
+     * A person's own Brick in Chats before this device has its chat (game #1995): the Brick is just there, with its hello
+     * as the line under its name, and nothing was sent to anyone. While the person never opened it, its hello counts as one
+     * unread message like any other: a bold name, the time in colour and a "1", the same count the Chats tab and the chat
+     * button carry. Laid out as a direct chat's row (Room.svelte), which takes its place once the chat exists. A tap opens
+     * the chat at once, on a screen that is the Brick's own. The Brick for guests (#1997)
      * is drawn the same way: always online, and the line under its name is the last thing said in the chat their device keeps.
      */
     export let brick: BrickCard;
@@ -39,7 +40,10 @@
         : readable(() => undefined);
     const myChatId = localUserStore.getChatId();
 
+    const unopened = unopenedBricksOf(gameManager.chatConnection);
+
     $: state = forGuest ? guestBrickOnline : botStatusCache.store(brick.id);
+    $: isNew = !forGuest && $unopened.has(brick.id);
     $: opening = $openingBrickChats.has(brick.id);
     $: preview = forGuest
         ? $guestLast?.text ?? $LL.chat.brick.guest.hello()
@@ -87,22 +91,29 @@
         <div class="flex min-w-0 items-baseline gap-2">
             <div class="min-w-0 grow truncate">
                 {#each chunks as chunk (chunk.key)}
-                    <span class="{chunk.match ? 'text-light-blue' : ''} text-white/85 cursor-default text-sm"
-                        >{chunk.text}</span
+                    <span
+                        class="{chunk.match ? 'text-light-blue' : ''} {isNew
+                            ? 'text-white font-bold'
+                            : 'text-white/85'} cursor-default text-sm">{chunk.text}</span
                     >
                 {/each}
             </div>
             {#if timeLabel}
-                <span class="shrink-0 text-[11px] text-white/50" data-testid="roomRowTime">{timeLabel}</span>
+                <span
+                    class="shrink-0 text-[11px] {isNew ? 'text-secondary-400 font-semibold' : 'text-white/50'}"
+                    data-testid="roomRowTime">{timeLabel}</span
+                >
             {/if}
         </div>
         <div class="flex min-w-0 items-center gap-2 text-xs text-white/60">
             <span class="min-w-0 grow truncate" data-testid="roomRowPreview">{preview}</span>
+            {#if isNew}
+                <span
+                    class="shrink-0 min-w-5 h-5 px-1.5 rounded-full u-badge text-white text-[11px] font-bold flex items-center justify-center"
+                    data-testid="roomRowUnread"
+                    aria-label={$LL.chat.areaRow.unread({ count: 1 })}>{formatUnreadCount(1)}</span
+                >
+            {/if}
         </div>
     </div>
-    {#if opening}
-        <span class="flex h-8 w-8 shrink-0 items-center justify-center text-white/60" data-testid="brickRowOpening">
-            <IconLoader class="animate-[spin_2s_linear_infinite]" font-size="18" />
-        </span>
-    {/if}
 </div>

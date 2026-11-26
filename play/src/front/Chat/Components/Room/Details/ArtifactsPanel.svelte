@@ -9,6 +9,7 @@
     import { localUserStore } from "../../../../Connection/LocalUserStore";
     import type { ChatArtifact } from "../../../../Artifacts/ArtifactApi";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../../Artifacts/artifactChatContext";
+    import { botIdFromChatId } from "../../../Bots/BotChatStatus";
     import { chatArtifactsList, type ChatArtifactsState } from "../../../../Artifacts/chatArtifactsList";
     import { openYourArtifacts } from "../../../../Artifacts/openYourArtifacts";
     import ArtifactRow from "./ArtifactRow.svelte";
@@ -31,9 +32,20 @@
         ? getContext(ARTIFACT_CHAT_CONTEXT)
         : () => undefined;
     const chat = chatOf();
-    const list = chat ? chatArtifactsList(chat) : undefined;
-    const state: Readable<ChatArtifactsState> =
-        list ?? readable({ artifacts: [], total: 0, next: null, loading: false, failed: false, loaded: true });
+    const noList: Readable<ChatArtifactsState> = readable({
+        artifacts: [],
+        total: 0,
+        next: null,
+        loading: false,
+        failed: false,
+        loaded: true,
+    });
+    // The partner's chat id arrives with the chat's details: in a chat with a bot the list follows it, and so does the
+    // summary, which reads the same one
+    $: list = chat ? chatArtifactsList(chat, botIdFromChatId(partnerChatId)) : undefined;
+    $: state = list ?? noList;
+    // The newest page again whenever this is another list (the summary has usually read it already)
+    $: list?.refresh().catch((error) => console.error(error));
     const roomName = room.name;
     const nameByChatId: Readable<Map<string, string>> = hasContext(NAME_BY_CHAT_ID_CONTEXT)
         ? getContext(NAME_BY_CHAT_ID_CONTEXT)
@@ -81,7 +93,6 @@
     let sentinel: HTMLDivElement | undefined;
     let observer: IntersectionObserver | undefined;
     onMount(() => {
-        if (list && !$state.loaded) list.refresh().catch((error) => console.error(error));
         if (typeof IntersectionObserver === "undefined") return;
         observer = new IntersectionObserver((entries) => {
             if (entries.some((entry) => entry.isIntersecting) && !$state.failed) more();

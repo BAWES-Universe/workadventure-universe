@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { EvidenceRedis } from '../server/ComputerEvidenceStore';
 import { withoutKeys } from './KeyInChat';
+import { OUTBOX_KEY, OUTBOX_PREFIX, WRITE_NOTICE, createNoticeOutbox, type NoticeOutbox } from './MatrixNoticeOutbox';
 
 /**
  * The durable inbox of Matrix events (GPT's sixth answer, finding 9; Opus's design of 23 Nov, section 9).
@@ -216,7 +217,7 @@ return 1
  * (`|$`: a write of the fence that the store did not confirm to this server, so the work was never started) is taken off with it, and the tries counted are kept.
  */
 const RELEASE = `
-local held = redis.call('GET', KEYS[1])
+${WRITE_NOTICE}local held = redis.call('GET', KEYS[1])
 -- This acquisition's own earlier give-back already closed the entry (its answer was lost): said again as closed, so the caller can report it. The mark is left in the event's slot when it closes
 if held == 'd' and redis.call('GET', KEYS[3]) == '!closed|' .. ARGV[1] then
   return 2
@@ -228,6 +229,8 @@ local tries = tonumber(string.match(held, '|(%d+)$')) or tonumber(string.match(h
 redis.call('DEL', KEYS[4])
 redis.call('DEL', KEYS[10])
 if tries >= tonumber(ARGV[3]) then
+  -- The person is told it was not answered: the notice is written in this same step, before the entry closes (GPT's eighth note G), and closing never deletes it
+  notice('tries', redis.call('GET', KEYS[3]), ARGV[4], ARGV[5])
   redis.call('SET', KEYS[1], 'd', 'EX', tonumber(ARGV[2]))
   redis.call('ZREM', KEYS[2], ARGV[4])
   redis.call('ZREM', KEYS[5], ARGV[4])
@@ -284,7 +287,7 @@ return redis.call('GET', KEYS[3])
  * the person is told once, by whoever got this answer.
  */
 const TAKEOVER = `
-${ADM}${AGE}local held = redis.call('GET', KEYS[1])
+${ADM}${AGE}${WRITE_NOTICE}local held = redis.call('GET', KEYS[1])
 if held == 'd' or held == 'u' then
   -- A closed entry keeps what is in the event's slot: it is the mark of the acquisition whose give-back closed it, which a retry of that give-back (its first answer was lost) still has to find
   redis.call('ZREM', KEYS[2], ARGV[4])
@@ -292,7 +295,9 @@ if held == 'd' or held == 'u' then
   redis.call('DEL', KEYS[10])
   return nil
 end
-local function unanswered(gone)
+local function unanswered(gone, why)
+  -- The notice to the person is written in this same step, before the entry closes (GPT's eighth note G): closing never deletes it, and it is sent until Matrix takes it
+  notice(why, gone, ARGV[4], ARGV[3])
   redis.call('SET', KEYS[1], 'u', 'EX', tonumber(ARGV[8]))
   redis.call('ZREM', KEYS[2], ARGV[4])
   redis.call('ZREM', KEYS[5], ARGV[4])
@@ -319,7 +324,7 @@ if not held then
     redis.call('ZREM', KEYS[5], ARGV[4])
     return nil
   end
-  unanswered(gone)
+  unanswered(gone, 'lost')
   return '!lost|' .. (gone or '')
 end
 local paid = string.sub(held, -2) == '|$'
@@ -352,23 +357,23 @@ if paid then
     redis.call('DEL', KEYS[10])
     return '!answered|' .. (gone or '')
   end
-  unanswered(gone)
+  unanswered(gone, 'paid')
   return '!paid|' .. (gone or '')
 end
 if tries >= tonumber(ARGV[6]) then
   local gone = redis.call('GET', KEYS[3])
-  unanswered(gone)
+  unanswered(gone, 'tries')
   return '!tries|' .. (gone or '')
 end
 local payload = redis.call('GET', KEYS[3])
 if not payload then
-  unanswered(nil)
+  unanswered(nil, 'lost')
   return '!lost|'
 end
 -- When it was taken in: the stamp kept with the event (microseconds), or the time Matrix gave it (an entry kept bare)
 local at = takenAt(payload)
 if at and at < tonumber(ARGV[7]) then
-  unanswered(payload)
+  unanswered(payload, 'stale')
   return '!stale|' .. payload
 end
 -- A new acquisition: a try the one before gave back while it waited is counted again here (it is given back again if this one waits too)
@@ -401,7 +406,7 @@ return 1
  * asks again (or gives the entry back at shutdown) and is told `3` again, so it can still tell the person (CodeRabbit on ea88b4c1, finding 9). Any other acquisition is told `2`.
  */
 const TURN = `
-${AGE}local held = redis.call('GET', KEYS[1])
+${AGE}${WRITE_NOTICE}local held = redis.call('GET', KEYS[1])
 if held == 'u' and redis.call('GET', KEYS[10]) == '!stale|' .. ARGV[1] then
   return 3
 end
@@ -424,6 +429,8 @@ local function go()
     local payload = redis.call('GET', KEYS[3])
     local at = takenAt(payload)
     if at and at < tonumber(ARGV[6]) then
+      -- The person is told to send it again: the notice is written in this same step, before the entry closes (GPT's eighth note G)
+      notice('stale', payload, ARGV[2], ARGV[8])
       redis.call('SET', KEYS[1], 'u', 'EX', tonumber(ARGV[7]))
       redis.call('ZREM', KEYS[2], ARGV[2])
       redis.call('ZREM', KEYS[5], ARGV[2])
@@ -565,6 +572,11 @@ export interface EventInbox {
     recover(): Promise<Recovered>;
     /** The name this server holds its entries under (for the tests). */
     readonly owner: string;
+    /**
+     * The notices to people whose message will not be handled (GPT's eighth note G): every closure that tells the person writes its notice there in the same step, and it is sent until
+     * Matrix takes it. Absent: there is no shared store to keep them, and the notice is sent once, as before.
+     */
+    readonly notices?: NoticeOutbox;
 }
 
 type Client = Pick<EvidenceRedis, 'eval'> & { zRangeByScore?: (key: string, min: number | string, max: number | string, options?: { LIMIT?: { offset: number; count: number } }) => Promise<string[]> };
@@ -589,6 +601,11 @@ export function createEventInbox(
         unfinishedMaxMs?: number;
         /** How long an UNANSWERED entry is kept with its event (for the tests; `UNANSWERED_SECONDS`). */
         unansweredSeconds?: number;
+        /** The outbox of notices (for the tests; see MatrixNoticeOutbox): the first wait after a failed send, the longest wait, the lease of one send, and when one not out is reported. */
+        noticeRetryMs?: number;
+        noticeRetryMaxMs?: number;
+        noticeLeaseMs?: number;
+        noticeOverdueMs?: number;
         log?: (message: string, detail?: unknown) => void;
     } = {}
 ): EventInbox {
@@ -611,7 +628,7 @@ export function createEventInbox(
     /** An entry that holds nothing: the store is not connected, so the event is handled and nothing is remembered. */
     const nothing: InboxEntry = { durable: false, admit: async () => undefined, done: async () => undefined, release: async () => 'closed', undo: async () => 'undone', paid: async () => undefined };
 
-    /** The keys of an entry: its state, the inbox, its event, its open mark, its room's order (a key that holds nothing when the room is not known), its answer link, the store-wide count, its admitted mark, its resend mark. */
+    /** The keys of an entry: its state, the inbox, its event, its open mark, its room's order (a key that holds nothing when the room is not known), its answer link, the store-wide count, its admitted mark, its resend mark, its waited mark, its notice and the outbox (see MatrixNoticeOutbox). */
     const keysOf = (eventId: string, room?: string) => [
         `${EVENT_SEEN_PREFIX}${eventId}`,
         INBOX_KEY,
@@ -623,6 +640,8 @@ export function createEventInbox(
         `${INBOX_ADMITTED_PREFIX}${eventId}`,
         `${INBOX_RESEND_PREFIX}${eventId}`,
         `${INBOX_WAITED_PREFIX}${eventId}`,
+        `${OUTBOX_PREFIX}${eventId}`,
+        OUTBOX_KEY,
     ];
     /** Any single call to the store against the same deadline. */
     const within = async <T>(call: Promise<T>): Promise<T> => {
@@ -689,7 +708,7 @@ export function createEventInbox(
             const attempt = (): Promise<'again' | 'closed' | undefined> => {
                 // Every call counts, whether the store answered or not: a retry after a failed first call is a retry
                 attempts += 1;
-                return step(redis, RELEASE, eventId, [token, String(ttlSeconds), String(maxTries), eventId], room).then(
+                return step(redis, RELEASE, eventId, [token, String(ttlSeconds), String(maxTries), eventId, String(Date.now())], room).then(
                     (answer) => {
                         if (answer === 2 || answer === '2') return 'closed' as const;
                         // Not this server's any more (taken by another, or finished): nothing is left to give back, and nothing of it is reported from here
@@ -783,7 +802,7 @@ export function createEventInbox(
                     redis,
                     TURN,
                     eventId,
-                    [token, eventId, EVENT_SEEN_PREFIX, String(ROOM_LOOK), INBOX_RESEND_PREFIX, String(Date.now() - unfinishedMaxMs), String(unansweredSeconds)],
+                    [token, eventId, EVENT_SEEN_PREFIX, String(ROOM_LOOK), INBOX_RESEND_PREFIX, String(Date.now() - unfinishedMaxMs), String(unansweredSeconds), String(Date.now())],
                     room
                 );
                 if (answer === 1 || answer === '1') return 'go';
@@ -837,8 +856,17 @@ export function createEventInbox(
         };
     };
 
+    const notices = createNoticeOutbox(client, {
+        deadlineMs,
+        ...(options.noticeRetryMs === undefined ? {} : { retryMs: options.noticeRetryMs }),
+        ...(options.noticeRetryMaxMs === undefined ? {} : { retryMaxMs: options.noticeRetryMaxMs }),
+        ...(options.noticeLeaseMs === undefined ? {} : { leaseMs: options.noticeLeaseMs }),
+        ...(options.noticeOverdueMs === undefined ? {} : { overdueMs: options.noticeOverdueMs }),
+    });
+
     return {
         owner,
+        notices,
         take: async (eventId, event) => {
             if (!eventId) return nothing;
             const redis = client();
@@ -897,6 +925,9 @@ export function createEventInbox(
                             event = undefined;
                         }
                         found.closed!.push({ why: closure[1] as ClosedWhy, eventId, ...(event === undefined ? {} : { event }) });
+                        // GPT's seventh note (item 0): an entry whose server went away after paid work began fails closed (never run again, so no second charge, and the person is told).
+                        // The take-over itself says so, with the event and its room, so the loss is visible where it happens and not only to the router that reports it
+                        if (closure[1] === 'paid') say('An event whose server went away after paid work began was closed as unanswered; it is not run again (no second charge):', `${eventId}${room ? ` in ${room}` : ''}`);
                         continue;
                     }
                     try {

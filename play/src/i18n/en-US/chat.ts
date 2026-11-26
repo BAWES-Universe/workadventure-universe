@@ -450,6 +450,16 @@ const chat: BaseTranslation = {
             cancel: "Cancel",
             notification: "Deleted your chat with {name:string}",
         },
+        // A Brick's chat starts again from empty: it still remembers what it learned about the person
+        clearChat: {
+            label: "Clear chat",
+            hint: "Starts an empty chat. {name:string} still remembers what it learned about you.",
+            confirm: "Clear this chat?",
+            confirmHint: "You start again with an empty chat. {name:string} still remembers what it learned about you.",
+            confirmButton: "Clear",
+            failed: "The chat could not be cleared. Check your connection and try again.",
+            notification: "Cleared your chat with {name:string}",
+        },
         profile: {
             title: "Profile",
             fullProfile: "Full profile",
@@ -459,6 +469,8 @@ const chat: BaseTranslation = {
             unblockHint: "You'll see their messages again.",
             report: "Report {name:string}",
             reportHint: "Tell the Universe team what happened.",
+            settings: "Settings",
+            settingsHint: "Mind, personality, apps and more",
         },
     },
     details: {
@@ -1116,6 +1128,12 @@ const chat: BaseTranslation = {
         bringAlongLivesIn: "It lives in {room}. Take it out first, or place it elsewhere.",
         bringAlongNotYet: "{name} isn't on the map yet. It joins you when you walk into the next room.",
         endVisitFailed: "Couldn't end the visit. Try again.",
+        // A Brick that is switched off, on its profile in the chat
+        isOff: "{name} is off",
+        offLine: "It doesn't answer or work on anything until you turn it on.",
+        turnOn: "Turn on",
+        // The Brick's page opened from its chat: Back returns there
+        backToChat: "Chat with {name}",
         visitingWith: "Visiting with {name}",
         madeBy: "Made by {name}",
         visitingCardLine:
@@ -1680,7 +1698,7 @@ const chat: BaseTranslation = {
             gettingReady: "getting it ready",
             screenWatching: "Working · you're watching",
             screenWatchLine: "{name} types nothing of yours. Your details, paying and submitting are yours.",
-            screenInControl: "You're in control · {name} can't see or type",
+            screenInControl: "You're in control · {name} is waiting",
             screenNone: "The screen isn't available now.",
             screenBack: "Back to the chat",
             readyFor: "Ready for this page",
@@ -1691,7 +1709,31 @@ const chat: BaseTranslation = {
             filledLine: "Check them, then carry on. Each page after this asks again, one tap a page.",
             handBack: "Hand back to {name}",
             lastStepYours: "The last step is yours",
-            lastStepLine: "Pay and submit, then hand back. {name} can't see your card or what you type.",
+            lastStepLine: "Pay and submit, then hand back. {name} waits until you do.",
+            // The computer is Brick's to use fully: said as what Brick can do on it and what you control, never as what cannot happen there (post 0.5.0)
+            trustTitle: "{name} has full use of it",
+            trustLine:
+                "{name} can install and run anything on it and can get to everything there. A sign-in made on it can be used in any job {name} does.",
+            screenControlLine: "You're typing on {name}'s computer. {name} can get to anything on it.",
+            // The honest check before you take over (post 0.5.0): said only when something found would not close by itself
+            gettingItReady: "Getting it ready…",
+            runningTitle: "Something is still running",
+            runningLine:
+                "A program {name} installed is still running on this computer. It could see what you type. A restart closes it.",
+            restartFirst: "Restart first",
+            takeOverAnyway: "Take over anyway",
+            restartingHead: "Restarting · {name} will ask you again",
+            restartingLine:
+                "Restarting {name}'s computer. Everything on it closes, then {name} gets the page ready again and asks you.",
+            restartingBar: "{job} · restarting the computer",
+            runningAgainTitle: "It's still running",
+            runningAgainLine:
+                "It started again after the restart, so it could still see what you type. Go on only if that's fine for this step.",
+            notNow: "Not now",
+            screenInControlRunning: "You're in control · a program is still running",
+            screenControlRunningLine:
+                "You're typing on {name}'s computer. A program {name} installed is still running and could see what you type.",
+            notReady: "Couldn't get the computer ready. Nothing was changed on it. Try again.",
         },
         // Usage (#1999): one bar and plain words, never a count and never a price
         usage: {

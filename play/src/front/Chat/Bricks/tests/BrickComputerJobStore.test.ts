@@ -15,7 +15,7 @@ const game = vi.hoisted(() => ({
                 brickId: string,
                 jobId: string,
                 action: string,
-                options?: { pauseRunning?: boolean; commandId?: string }
+                options?: { pauseRunning?: boolean; commandId?: string; expected?: string }
             ) => Promise<unknown>
         >(),
     noteToBrickComputerJob:
@@ -98,6 +98,25 @@ describe("calls on one job of a Brick's computer", () => {
             [BRICK, "j1", "resume", { commandId: expect.any(String) }],
             [BRICK, "j2", "cancel", { commandId: expect.any(String) }],
         ]);
+    });
+
+    it("sends a Cancel of a job shown as never started with expected, and says started when Orbit found it started and cancelled nothing", async () => {
+        game.getBrickComputer.mockResolvedValue(computer({ job: running, queued: [] }));
+        game.brickComputerJobAction.mockResolvedValue({ ok: false, reason: "started" });
+        expect(await brickComputerJobAction(BRICK, "j2", "cancel", { expected: "not_started" })).toEqual({
+            ok: false,
+            why: "started",
+        });
+        expect(game.brickComputerJobAction.mock.calls).toEqual([
+            [BRICK, "j2", "cancel", { commandId: expect.any(String), expected: "not_started" }],
+        ]);
+        // the page is read again, since it showed a job that never started
+        expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
+        // an ordinary Cancel carries no expected, and an accepted one is done
+        game.brickComputerJobAction.mockClear();
+        game.brickComputerJobAction.mockResolvedValue(computer({ job: running }));
+        expect(await brickComputerJobAction(BRICK, "j1", "cancel")).toEqual({ ok: true });
+        expect(game.brickComputerJobAction.mock.calls[0][3]).toEqual({ commandId: expect.any(String) });
     });
 
     it("moves a job first in line, or first now by pausing what runs, in one call", async () => {
@@ -197,6 +216,15 @@ describe("calls on one job of a Brick's computer", () => {
             expect(await brickComputerJobAction(BRICK, "j1", "pause")).toEqual({ ok: false, why: "taken-over" });
             expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
             expect(brickComputerOf(BRICK)?.job?.control).toBe("person");
+        });
+
+        it("says started for a Cancel of a never-started job that Orbit found started (409 with that reason), and reads the computer again", async () => {
+            game.brickComputerJobAction.mockRejectedValue(refused(409, "started"));
+            expect(await brickComputerJobAction(BRICK, "j2", "cancel", { expected: "not_started" })).toEqual({
+                ok: false,
+                why: "started",
+            });
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
         });
 
         it("says it is already ending when a stop or a finish got there first", async () => {
