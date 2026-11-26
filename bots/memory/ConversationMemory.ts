@@ -423,10 +423,11 @@ export class ConversationMemory {
         spaceName?: string
     ): void {
         const memory = this.getOrCreateMemory(botId, playerId);
-        // Find the most recent person message (the message the image came with)
+        // Find the most recent person message (the message the image came with): one said in the same space, so a summary
+        // of a picture sent in a private talk is never put on a line said in a group while the picture was being read
         for (let i = memory.conversationHistory.length - 1; i >= 0; i--) {
             const entry = memory.conversationHistory[i];
-            if (entry.sender === 'person') {
+            if (entry.sender === 'person' && (spaceName === undefined || entry.spaceName === spaceName)) {
                 // A short summary with no contact details: a picture may hold other people's e-mail addresses and numbers, and
                 // its whole text is not something to keep in what the bot reads back every turn
                 const kept = visionNoteOf(description);
@@ -561,8 +562,10 @@ export class ConversationMemory {
         // Extract likes and dislikes. What they like and then say they do not (or the other way round) moves to the other list.
         const { likes, dislikes } = tastesIn(message);
         for (const like of likes) {
-            const known = (info.preferences ?? []).some((kept) => kept.toLowerCase() === like.toLowerCase());
-            this.stampInfo(info, `pref:${like}`, heard, !known, at);
+            // Said again with other capitals: it is the same thing, and it is stamped under the spelling that is kept
+            const kept = (info.preferences ?? []).find((one) => one.toLowerCase() === like.toLowerCase());
+            const known = kept !== undefined;
+            this.stampInfo(info, `pref:${kept ?? like}`, heard, !known, at);
             if (!known) {
                 (info.preferences ??= []).push(like);
                 info.lastInfoUpdate = Date.now();

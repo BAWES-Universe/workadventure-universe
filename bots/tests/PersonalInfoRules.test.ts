@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ConversationMemory } from '../memory/ConversationMemory';
 import { birthdayDateIn, birthdayIsToday, nameIn, stateIn, tastesIn, visionNoteOf, withoutContactDetails } from '../memory/PersonalInfoRules';
-import { memoryItemsOf } from '../memory/MemoryItems';
+import { dropItems, memoryItemsOf } from '../memory/MemoryItems';
 import { FORGET_MEMORY_TOOL, runMemoryTool } from '../ai/MemoryTools';
 import { vi } from 'vitest';
 import { heardInDm } from '../memory/Heard';
@@ -165,6 +165,25 @@ describe('what an image leaves in the history', () => {
     });
 });
 
+describe('where an image summary goes', () => {
+    it('is put on the line said in the same space, never on one said elsewhere while the picture was read', () => {
+        const memory = new ConversationMemory();
+        memory.addMessage(BOT, PERSON, 'look at this', 'person', 'dm');
+        memory.addMessage(BOT, PERSON, 'hi all', 'person', 'bubble');
+        memory.appendVisionDescription(BOT, PERSON, 'A bank statement', 'dm');
+        const [dm, bubble] = memory.getMemory(BOT, PERSON)!.conversationHistory;
+        expect(dm.message).toContain('[Image description: A bank statement]');
+        expect(bubble.message).toBe('hi all');
+    });
+
+    it('is dropped when the space has no line of theirs', () => {
+        const memory = new ConversationMemory();
+        memory.addMessage(BOT, PERSON, 'hi all', 'person', 'bubble');
+        memory.appendVisionDescription(BOT, PERSON, 'A bank statement', 'dm');
+        expect(memory.getMemory(BOT, PERSON)!.conversationHistory[0].message).toBe('hi all');
+    });
+});
+
 describe('what the bot keeps from a chat', () => {
     it('keeps the real examples right', () => {
         const memory = learnFrom("I don't like how slow you are", 'Please connect my Google mail', 'my friend Omar likes tea');
@@ -231,5 +250,28 @@ describe('what the bot keeps from a chat', () => {
         expect(kept).not.toContain('thinga');
         expect(kept).toContain('thingl');
         expect(Object.keys(info.drawnFrom ?? {}).filter((key) => key.startsWith('fact:dislike_'))).toHaveLength(10);
+    });
+
+    it('forgetting a dislike takes every line that says it, as a like does', () => {
+        const memory = new ConversationMemory();
+        const say = (text: string, at: number) => {
+            memory.addMessage(BOT, PERSON, text, 'person', 'dm', false);
+            memory.getMemory(BOT, PERSON)!.conversationHistory.at(-1)!.timestamp = at;
+            memory.extractPersonalInfo(BOT, PERSON, text, 'dm', at);
+        };
+        say("I don't like coffee", 1000);
+        say('I like walking', 2000);
+        say("honestly I don't like coffee", 3000);
+        const target = memoryItemsOf(memory.getMemory(BOT, PERSON)!).find((item) => item.value === 'coffee')!;
+        expect(dropItems(memory.getMemory(BOT, PERSON)!, new Set([target.id]))).toBe(1);
+        const lines = memory.getMemory(BOT, PERSON)!.conversationHistory.map((line) => line.message);
+        expect(lines).toEqual(['I like walking']);
+    });
+
+    it('stamps a like said again with other capitals under the spelling that is kept', () => {
+        const memory = learnFrom('I like Jazz', 'I like jazz');
+        const info = memory.getMemory(BOT, PERSON)!.personalInfo;
+        expect(info.preferences).toEqual(['Jazz']);
+        expect(Object.keys(info.drawnFrom ?? {}).filter((key) => key.startsWith('pref:'))).toEqual(['pref:Jazz']);
     });
 });

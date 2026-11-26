@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto';
 import type { BotPlayerMemory } from './ConversationMemory';
 import { mayUse, type Heard, type MemoryView } from './Heard';
+import { DISLIKE_LABEL } from './PersonalInfoRules';
 
 export const MEMORY_ITEM_KINDS = ['name', 'birthday', 'pref', 'fact'] as const;
 export type MemoryItemKind = (typeof MEMORY_ITEM_KINDS)[number];
@@ -210,10 +211,12 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         const key = `fact:${name}`;
         const at = factAt(info, name, String(value));
         if (!goes(memoryItemKey('fact', name, String(value)), at)) continue;
-        takeLines(at, name === 'current_state' ? String(value) : '');
+        // How someone feels, and what they do not like, go with every line that says it, as a like does
+        const dislike = name.startsWith(DISLIKE_LABEL);
+        takeLines(at, name === 'current_state' || dislike ? String(value) : '');
         // The bot's reply right after the line this fact came from, when it says the value back, goes with it (a general fact's
         // value is never taken out of every line, so only that one reply is looked for)
-        if (name !== 'current_state' && String(value).trim() && at !== null) {
+        if (name !== 'current_state' && !dislike && String(value).trim() && at !== null) {
             echoes.push({ at, ownName: false, words: wholeWords(String(value).trim()), toldBack: NEVER });
         }
         forgetPlace(key);
