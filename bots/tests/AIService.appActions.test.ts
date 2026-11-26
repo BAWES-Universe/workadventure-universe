@@ -224,6 +224,14 @@ describe('the same gate on every surface', () => {
         expect(propose).toHaveBeenCalledWith(expect.objectContaining({ roomId: '!dm:matrix.test', person: { uuid: 'uuid-khalid', name: 'Khalid' } }));
     });
 
+    it('someone else never gets a ready-made App’s tool, even one marked as a shared job', async () => {
+        const { service, execute } = brickService(gmailPolicy());
+        const shared = new Map<string, ToolServerEntry>([['COMPOSIO_SEARCH_TOOLS', { ...GMAIL, sharedJob: { inputs: ['query'] } }]]);
+        const results = await service['executeToolCalls']([{ id: 'c1', name: 'COMPOSIO_SEARCH_TOOLS', arguments: JSON.stringify({ query: 'x' }) }], undefined, undefined, shared as never, 'uuid-guest', undefined, 'b1', 8, undefined, undefined, false, undefined, undefined, undefined, false, true);
+        expect(execute).not.toHaveBeenCalled();
+        expect(results[0].result.error).toBeTruthy();
+    });
+
     it('someone else is never offered the owner’s App, and a forged call is not run', async () => {
         const { service, execute } = brickService(gmailPolicy());
         const results = await service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify(batchArgs('GMAIL_FETCH_EMAILS')) }], undefined, undefined, SERVERS as never, 'uuid-guest', undefined, 'b1', 8, undefined, undefined, false, undefined, undefined, undefined, false, true);
@@ -242,6 +250,54 @@ describe('the actions that make new things', () => {
         expect((checkHowMany.mock.calls[0] as unknown[])[1]).toBe('GMAIL_CREATE_EMAIL_DRAFT');
         expect(sentSlugs(execute)).toEqual([['GMAIL_FETCH_EMAILS']]);
         expect(result.result.status).toBe('waiting_for_ok');
+    });
+});
+
+describe('what runs is what the card showed', () => {
+    it('sends each action as its slug and its inputs only, never other keys the model added', async () => {
+        const { service, execute, propose } = brickService(gmailPolicy());
+        const args = { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { id: 'a' }, parameters: { to: 'boss@x' } }, { tool_slug: 'GMAIL_REPLY_TO_THREAD', arguments: { body: 'hi' }, extra: 1 }, { tool_slug: 'GMAIL_ADD_LABEL_TO_EMAIL', arguments: { label: 'x' } }] };
+        await call(service, args);
+        expect(execute.mock.calls[0][3]).toEqual({ tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { id: 'a' } }] });
+        // Several wait: the card's batch holds only what it shows
+        expect((propose.mock.calls[0] as unknown[])[0]).toMatchObject({
+            args: { tools: [{ tool_slug: 'GMAIL_REPLY_TO_THREAD', arguments: { body: 'hi' } }, { tool_slug: 'GMAIL_ADD_LABEL_TO_EMAIL', arguments: { label: 'x' } }] },
+        });
+    });
+
+    it('refuses a batch whose inputs are not an object (the card could not show them), and sends nothing', async () => {
+        const { service, execute, propose } = brickService(gmailPolicy());
+        const [result] = await call(service, { tools: [{ tool_slug: 'GMAIL_REPLY_TO_THREAD', arguments: '{"to":"boss@x","body":"I quit"}' }] });
+        expect(execute).not.toHaveBeenCalled();
+        expect(propose).not.toHaveBeenCalled();
+        expect(result.result.error).toBeTruthy();
+    });
+});
+
+describe('what the model is told was done', () => {
+    it('never says a part was done when its call failed, or proved it made nothing', async () => {
+        const { service, execute } = brickService(gmailPolicy({}, { ...DEFAULTS, changesThings: 'rightAway' }));
+        execute.mockImplementation((async (...args: unknown[]) => {
+            const slugs = (args[3] as { tools: Array<{ tool_slug: string }> }).tools.map((t) => t.tool_slug);
+            if (slugs.includes('GMAIL_ADD_LABEL_TO_EMAIL')) throw new Error('boom');
+            return [{ type: 'text', text: 'ok' }];
+        }) as never);
+        const [result] = await call(service, batchArgs('GMAIL_FETCH_EMAILS', 'GMAIL_ADD_LABEL_TO_EMAIL'));
+        expect(result.result.summary).toContain('Done now: Fetch emails.');
+        expect(result.result.summary).not.toContain('Done now: Fetch emails, Add label');
+        expect(result.result.summary).toMatch(/Add label to email/);
+    });
+
+    it('gives the things it would have made back to the limit when only their call made nothing', async () => {
+        const release = vi.fn();
+        const { service, execute } = brickService(gmailPolicy());
+        service['checkHowMany'] = vi.fn(async () => ({ kind: 'run', release })) as never;
+        execute.mockImplementation((async (...args: unknown[]) => {
+            const slugs = (args[3] as { tools: Array<{ tool_slug: string }> }).tools.map((t) => t.tool_slug);
+            return slugs.includes('GMAIL_CREATE_EMAIL_DRAFT') ? { error: 'refused', outcome: 'not_sent' } : [{ type: 'text', text: 'ok' }];
+        }) as never);
+        await call(service, batchArgs('GMAIL_FETCH_EMAILS', 'GMAIL_CREATE_EMAIL_DRAFT'));
+        expect(release).toHaveBeenCalledTimes(1);
     });
 });
 

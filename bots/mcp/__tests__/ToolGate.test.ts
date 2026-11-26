@@ -262,7 +262,20 @@ describe("a ready-made App's actions on a Brick (Ask, Do, Ignore)", () => {
         expect(await gate.decide(appCall({ toolName: 'COMPOSIO_SEARCH_TOOLS' }))).toMatchObject({ kind: 'run', heading: 'looksUp' });
         expect(await gate.decide(appCall({ toolName: 'UNIVERSE_CODE_JOB_START' }))).toMatchObject({ kind: 'run', heading: 'looksUp' });
         expect(await gate.decide(appCall({ toolName: 'COMPOSIO_MANAGE_CONNECTIONS' }))).toMatchObject({ kind: 'run', heading: 'changesThings' });
-        expect(check).not.toHaveBeenCalled();
+        // Lookups need no permission; changing the App's connection needs the person's "change"
+        expect(check).toHaveBeenCalledTimes(1);
+        expect(check.mock.calls[0][1]).toBe('change');
+    });
+
+    it('holds the link’s own tools to their heading: Off and the person’s permissions still count', async () => {
+        const off = gateFor(gmail([], { ...APP_SETTINGS, changesThings: 'off' }));
+        expect(await off.gate.decide(appCall({ toolName: 'COMPOSIO_MANAGE_CONNECTIONS' }))).toMatchObject({ kind: 'refuse', why: 'off' });
+        expect(await off.gate.decide(appCall({ toolName: 'COMPOSIO_SEARCH_TOOLS' }))).toMatchObject({ kind: 'run' });
+        const lookupsOff = gateFor(gmail([], { ...APP_SETTINGS, looksUp: 'off' }));
+        expect(await lookupsOff.gate.decide(appCall({ toolName: 'UNIVERSE_CODE_JOB_START' }))).toMatchObject({ kind: 'refuse', why: 'off' });
+        const { gate, check } = gateFor(gmail());
+        check.mockResolvedValue({ allowed: false, kind: 'refused', code: 'not_allowed', line: 'Sam may not change things for you.' });
+        expect(await gate.decide(appCall({ toolName: 'COMPOSIO_MANAGE_CONNECTIONS' }))).toMatchObject({ kind: 'refuse', why: 'no_permission' });
     });
 
     it('judges any other tool of the provider on the link as an unknown action: its name, else Deletes or sends out', async () => {

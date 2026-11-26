@@ -199,7 +199,13 @@ export class ToolGate {
      */
     private async decideApp(call: GateCall, policy: ServerPolicy): Promise<GateDecision> {
         const linkHeading = linkToolHeading(call.toolName);
-        if (linkHeading) return { kind: 'run', heading: linkHeading, policyRevision: policy.policyRevision, ...(call.fingerprint ? { fingerprint: call.fingerprint } : {}) };
+        if (linkHeading) {
+            // The link's own tools run no action of the App, but their heading still counts: Off and the person's permissions hold
+            if (policy.settings[linkHeading] === 'off') return refusal('off', `${nameOf(call)} is turned off for this bot.`);
+            const refused = await this.missingPermission(call, linkHeading);
+            if (refused) return refused;
+            return { kind: 'run', heading: linkHeading, policyRevision: policy.policyRevision, ...(call.fingerprint ? { fingerprint: call.fingerprint } : {}) };
+        }
         if (isBatchTool(call.toolName)) {
             // Only offered: the call itself brings the actions to judge
             if (call.args === undefined) return { kind: 'run', policyRevision: policy.policyRevision, ...(call.fingerprint ? { fingerprint: call.fingerprint } : {}) };

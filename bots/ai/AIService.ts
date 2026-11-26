@@ -297,6 +297,13 @@ const DM_NAVIGATION_FOLLOW_UP = `- For "take me to X" questions: You can't walk 
 /** The same for a bot with no room, a Brick (game #1995): there is nowhere to invite anyone. */
 const DM_NO_ROOM_FOLLOW_UP = `- For "take me to X" questions: You can't walk anywhere, and you have no room: you live in this person's chats. Say so in one plain sentence`;
 
+/**
+ * A tool someone other than its owner may be offered (#2006): a job its owner shared, on an App with a connection. Never a
+ * ready-made App's: its actions are judged one by one for the owner only (game "Ask, Do, Ignore" for Bricks), so nothing of it
+ * reaches anyone else.
+ */
+const sharedForOthers = (entry: ToolServerEntry | undefined): boolean => !!entry?.sharedJob && !!entry.connectionId && !entry.readyMade;
+
 export class AIService {
     private adminApiService: AdminApiService;
     private conversationMemory: ConversationMemory;
@@ -1736,13 +1743,13 @@ export class AIService {
                 for (let at = tools.length - 1; at >= 0; at--) {
                     const name: string = tools[at]?.function?.name ?? '';
                     const sharedJob = toolServerMap.get(name)?.sharedJob;
-                    if (sharedJob && toolServerMap.get(name)?.connectionId) {
+                    if (sharedJob && sharedForOthers(toolServerMap.get(name))) {
                         tools[at] = narrowedToInputs(tools[at], sharedJob.inputs);
                         continue;
                     }
                     if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isComputerTool(name) || isKeyTool(name)) tools.splice(at, 1);
                 }
-                for (const [name, entry] of [...toolServerMap]) if (!entry.sharedJob || !entry.connectionId) toolServerMap.delete(name);
+                for (const [name, entry] of [...toolServerMap]) if (!sharedForOthers(entry)) toolServerMap.delete(name);
             }
             if (taskSettings && !forOthers) this.offerTaskTools(tools, toolServerMap);
             // A tool whose sign-in expired, or that did not answer: the bot is told which, and the people who manage it get the card (#1819).
@@ -5339,7 +5346,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         // (a visitor's turn has no Apps: its list is empty, and a name from it is refused here as well)
                         // Someone else is offered only what its owner shared (#2006); the check with Orbit at the call holds it again
                         const found = toolServerMap?.get(toolCall.name);
-                        const mcpServerConfig = forOthers ? (found?.sharedJob && found.connectionId ? found : undefined) : found;
+                        const mcpServerConfig = forOthers ? (sharedForOthers(found) ? found : undefined) : found;
                         if (mcpServerConfig) {
                             const parsedArgs = typeof toolCall.arguments === 'string'
                                 ? this.safeParseToolArgs(toolCall.arguments)
@@ -5664,8 +5671,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 return { group, answer };
             })
         );
-        // A call that proved it made nothing doesn't count toward the limit
-        if (results.length > 0 && results.every(({ answer }) => ['failed', 'notSent'].includes(outcomeOf(answer)))) for (const release of releases) release();
+        // The things it made go back to the limit when the call that would have made them proved it made nothing
+        const outcomes = results.map(({ group, answer }) => ({ group, outcome: outcomeOf(answer) }));
+        const madeNothing = outcomes.find(({ group }) => group[0]?.heading === 'makesNew');
+        if (madeNothing && (madeNothing.outcome === 'failed' || madeNothing.outcome === 'notSent')) for (const release of releases) release();
         if (!asked && heldBack.length === 0 && notDone.length === 0 && results.length === 1) return results[0].answer;
         // A card that could not be shown is a part not done, never the whole call failing when other parts ran
         const cardProblem = (value: Record<string, unknown> | undefined) => (value && typeof value.error === 'string' ? value.error : undefined);
@@ -5675,8 +5684,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // The first card shown carries what a bubble reads: one line, the bot's whole reply there
         const card = shown[0];
         const titles = (parts: readonly JudgedPart[]) => parts.map((part) => part.title).join(', ');
+        // Each heading's call says for its own actions whether they were done: a failed call never reads as done
+        const partsWhere = (test: (outcome: string) => boolean) => outcomes.filter(({ outcome }) => test(outcome)).flatMap(({ group }) => group);
+        const doneParts = partsWhere((outcome) => outcome === 'succeeded');
+        const unsureParts = partsWhere((outcome) => outcome === 'uncertain');
+        const failedParts = partsWhere((outcome) => outcome === 'failed' || outcome === 'notSent');
         const summary = [
-            results.length > 0 ? `Done now: ${titles(results.flatMap(({ group }) => group))}.` : '',
+            doneParts.length > 0 ? `Done now: ${titles(doneParts)}.` : '',
+            unsureParts.length > 0 ? `Not sure it was done, the App answered with an error: ${titles(unsureParts)}. Check before you ask for it again.` : '',
+            failedParts.length > 0 ? `Did not work, nothing was done: ${titles(failedParts)}.` : '',
             asked && !askedProblem ? `Waiting for the person's OK on a card: ${titles(waiting)}. Nothing of it was done yet.` : '',
             problems.length > 0 ? `Not done, it needs the person's OK: ${problems.join(' ')}` : '',
             notDone.length > 0 ? `Not done: ${notDone.join(' ')} Do not ask for ${notDone.length === 1 ? 'it' : 'them'} again; offer what you may still do.` : '',

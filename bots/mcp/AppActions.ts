@@ -115,12 +115,17 @@ export function batchParts(args: unknown): BatchPart[] | null {
     const calls = batchCalls(args);
     if (!calls) return null;
     const list = (args as { tools: Record<string, unknown>[] }).tools;
+    // Inputs the card could not show are never sent: an action's `arguments` are an object or nothing
+    if (list.some((item) => item.arguments !== undefined && item.arguments !== null && (typeof item.arguments !== 'object' || Array.isArray(item.arguments)))) return null;
     return calls.map((call, index) => ({ ...call, index, raw: list[index] }));
 }
 
-/** A batch call's arguments holding only these parts, with its other top-level keys kept as they were. */
+/**
+ * A batch call's arguments holding only these parts, with its other top-level keys kept as they were. Each action is sent as it
+ * was read (its slug and its inputs, nothing else), so what runs is exactly what a card showed.
+ */
 export function batchOf(args: Record<string, unknown>, parts: readonly BatchPart[]): Record<string, unknown> {
-    return { ...args, tools: parts.map((part) => part.raw) };
+    return { ...args, tools: parts.map((part) => ({ tool_slug: part.slug, arguments: part.args })) };
 }
 
 /** The strictest heading of several (Looks things up when there are none). */
