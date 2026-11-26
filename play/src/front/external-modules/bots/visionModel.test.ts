@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { BotAiOptions, BotData, VisionPick } from "./types";
 import {
     canPickVision,
+    isAlreadyPicked,
     readVisionPick,
     visionCandidates,
     visionMain,
@@ -349,6 +350,32 @@ describe("visionState: Runs on moved to the picked model", () => {
         const pick = { choice: "another", keyId: "key-g", model: "gemini-3-flash" } as const;
         const state = visionState(options(), "key-g", bot(pick))!;
         expect(state).toMatchObject({ problem: false, picked: true, effective: { choice: "this" } });
+    });
+});
+
+describe("isAlreadyPicked", () => {
+    it("is true for what the owner picked and what really happens", () => {
+        const pick = { choice: "universe-ai" } as const;
+        expect(isAlreadyPicked(bot(pick), visionState(options(), "key-g", bot(pick))!, "universe-ai")).toBe(true);
+    });
+
+    it("is false for the default: tapping it keeps it as the owner's own pick", () => {
+        const noPick = bot();
+        const state = visionState(options(), "key-g", noPick)!;
+        expect(state.picked).toBe(false);
+        expect(isAlreadyPicked(noPick, state, "this")).toBe(false);
+    });
+
+    it("is false for This model when what is saved is Another model that became the bot's own model", () => {
+        const pick = { choice: "another", keyId: "key-g", model: "gemini-3-flash" } as const;
+        const state = visionState(options(), "key-g", bot(pick))!;
+        expect(state.effective.choice).toBe("this");
+        expect(isAlreadyPicked(bot(pick), state, "this")).toBe(false);
+    });
+
+    it("is true for This model when This model is what is saved", () => {
+        const pick = { choice: "this" } as const;
+        expect(isAlreadyPicked(bot(pick), visionState(options(), "key-g", bot(pick))!, "this")).toBe(true);
     });
 });
 

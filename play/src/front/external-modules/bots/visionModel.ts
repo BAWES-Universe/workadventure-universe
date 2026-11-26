@@ -254,6 +254,15 @@ export function withVisionChoice(
 }
 
 /**
+ * Whether tapping a choice would change nothing: the owner already picked it and it is what happens. The saved pick is what
+ * counts, not only what is shown: "Another model" that has become the bot's own model shows as "This model", and tapping "This
+ * model" then keeps it as its own pick, so a later change of "Runs on" doesn't send images to that key again.
+ */
+export function isAlreadyPicked(bot: Pick<BotData, "behaviorConfig">, state: VisionState, choice: VisionPick["choice"]): boolean {
+    return state.picked && !state.problem && state.effective.choice === choice && readVisionPick(bot)?.choice === choice;
+}
+
+/**
  * Whether a refused save is one that put the Vision pick back: the save carried a pick that is not what was last saved
  * (a refusal about a position or a route leaves the pick alone), and the page still shows that pick (a newer one has its own
  * save coming).

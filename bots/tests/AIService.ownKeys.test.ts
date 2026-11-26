@@ -611,4 +611,39 @@ describe("AIService – finding a bot's AI by bot id", () => {
             expect(admin.getAIProviderCredentials).not.toHaveBeenCalled();
         });
     });
+    describe("an image a file tool opens is looked at where the Vision row says", () => {
+        const make = () => {
+            const { admin, memory } = buildMocks();
+            const service: any = new AIService(memory, admin, "http://admin.local");
+            service.describeImagesViaDefaultVision = vi.fn().mockResolvedValue("by Universe AI");
+            service.describeImages = vi.fn().mockResolvedValue("by the picked model");
+            return service;
+        };
+        const anotherConfig = { providerId: "key-v", model: "vision-model" };
+
+        it("This model: nothing else looks, for a bot on Universe AI too", async () => {
+            expect(make().lookAtOpened({ choice: "this" }, "universe-ai")).toEqual({});
+            expect(make().lookAtOpened({ choice: "this" }, "own-key")).toEqual({});
+        });
+
+        it("Universe AI: the default Vision provider looks, even for a bot on an own key, because the owner picked it", async () => {
+            const service = make();
+            const { look } = service.lookAtOpened({ choice: "universe-ai" }, "own-key");
+            expect(await look("https://x/y.png")).toBe("by Universe AI");
+        });
+
+        it("Another model: the model picked looks, and Universe AI is never asked", async () => {
+            const service = make();
+            const { look } = service.lookAtOpened({ choice: "another", config: anotherConfig }, "own-key");
+            expect(await look("https://x/y.png")).toBe("by the picked model");
+            expect(service.describeImages).toHaveBeenCalledWith(anotherConfig, ["https://x/y.png"], undefined);
+            expect(service.describeImagesViaDefaultVision).not.toHaveBeenCalled();
+        });
+
+        it("nothing said by Orbit: as before (Universe AI looks, a person's own key never sends it there)", async () => {
+            expect(make().lookAtOpened(undefined, "own-key")).toEqual({});
+            const { look } = make().lookAtOpened(undefined, "universe-ai");
+            expect(await look("https://x/y.png")).toBe("by Universe AI");
+        });
+    });
 });

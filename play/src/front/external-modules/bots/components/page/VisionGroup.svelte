@@ -4,7 +4,7 @@
     import LL from "../../../../../i18n/i18n-svelte";
     import type { BotAiOptions, BotData } from "../../types";
     import { botApiService } from "../../services/BotApiService";
-    import { canPickVision, visionState, withVisionChoice, type VisionCandidate } from "../../visionModel";
+    import { canPickVision, isAlreadyPicked, visionState, withVisionChoice, type VisionCandidate } from "../../visionModel";
     import PageGroup from "./PageGroup.svelte";
     import { IconEye, IconEyeOff, IconInfoCircle, IconKey, IconSparkles, IconChevronDown } from "@wa-icons";
 
@@ -69,7 +69,7 @@
     function choose(choice: "this" | "universe-ai" | "another") {
         if (!options || !state) return;
         // Tapping what is shown as the default keeps it as the owner's own pick; tapping what they picked does nothing
-        if (state.picked && state.effective.choice === choice && !state.problem) return;
+        if (isAlreadyPicked(bot, state, choice)) return;
         if (!canPickVision(options, state, choice)) return;
         onChange(withVisionChoice(bot, state, choice));
     }

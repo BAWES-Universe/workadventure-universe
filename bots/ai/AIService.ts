@@ -2357,7 +2357,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel, (resolved as { vision?: ResolvedVision }).vision);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) {
                                 readForTheGroup = true;
@@ -4646,6 +4646,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * How an image a file tool opens is looked at, the same way as one people send (see the Vision row): the owner's pick when Orbit
+     * says, otherwise Universe AI's default vision, except for a bot on a person's own key. "This model" never sends it elsewhere.
+     */
+    private lookAtOpened(
+        vision: ResolvedVision | undefined,
+        source: string | undefined,
+        abortSignal?: AbortSignal
+    ): { look?: (url: string) => Promise<string> } {
+        if (vision) {
+            if (vision.choice === 'another') return { look: (url: string) => this.describeImages(vision.config, [url], abortSignal) };
+            if (vision.choice === 'universe-ai') return { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
+            return {};
+        }
+        return source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
+    }
+
+    /**
      * Run one file tool (#1508) for the person talking to the bot, in their chat. A file sent again goes out as it was:
      * in a bubble as a line of nearby chat, in a direct message with the reply. Never throws.
      */
@@ -4660,11 +4677,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             playerId?: number;
             abortSignal?: AbortSignal;
             source?: string;
+            /** Where this bot's images go, when Orbit says (the Vision row). */
+            vision?: ResolvedVision;
             /** Set when other people read the reply (#1993): everyone else who is there. */
             present?: readonly string[];
         }
     ): Promise<Record<string, unknown>> {
-        const { botClient, spaceName, botId, playerId, abortSignal, source, present } = where;
+        const { botClient, spaceName, botId, playerId, abortSignal, source, vision, present } = where;
         const admin = where.adminApiService ?? this.adminApiService;
         if (!admin || !botId || playerId === undefined) return { error: "Earlier files can't be looked up right now." };
         const who = this.chatCallFor(botId, playerId, botClient, spaceName);
@@ -4678,8 +4697,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             limits,
             artifacts: artifactsEnabled(),
             linkOf: (store) => linkOfStore(store),
-            // One look through Universe AI's vision, never for a bot on a person's own key (as for images people send)
-            ...(source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
+            // One look at an image it opened, by whoever looks at images people send it: what the owner picked, or, with nothing
+            // picked, Universe AI's vision, never for a bot on a person's own key
+            ...this.lookAtOpened(vision, source, abortSignal),
             send: async (file, url) =>
                 this.someoneCameSince(botClient, spaceName, playerId, present)
                     ? SOMEONE_CAME
@@ -4997,7 +5017,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** The Apps a review in this reply said the computer could do better (the reply's own set, filled as it goes). */
         reviewedApps?: ReadonlySet<string>,
         /** Where the reply is said: the memory tools (what is remembered, forgetting it) are the person's own and run only in their direct message, whatever the model asks for. */
-        channel: 'world' | 'dm' = 'world'
+        channel: 'world' | 'dm' = 'world',
+        /** Where this bot's images go (the Vision row), when Orbit says: an image it opens is looked at the same way as one sent to it. */
+        vision?: ResolvedVision
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -5333,7 +5355,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runFileToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present }
+                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present, vision }
                         );
                         break;
 
