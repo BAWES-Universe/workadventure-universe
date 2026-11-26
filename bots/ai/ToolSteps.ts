@@ -244,6 +244,8 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
         if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
             return { id, ok: false, noChange: true, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
         }
+        // A note to the Universe team that did not go (the day's limit, Orbit away, enough for one reply): never "Sent" (mock "Brick reports inbox")
+        if (r.sent === false && !r.error) return { id, ok: false, note: 'Not sent' };
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
             // A tool server call that may have run is not a failure; a cancelled turn stays as it was

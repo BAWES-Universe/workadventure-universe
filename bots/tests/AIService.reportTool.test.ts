@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AIService } from "../ai/AIService";
 import { MCPConnector } from "../mcp/MCPConnector";
 import { REPORT_TOOL } from "../ai/ReportTools";
-import { describeStep } from "../ai/ToolSteps";
+import { describeStep, resultOf } from "../ai/ToolSteps";
 import { openToolGate } from "./helpers/openToolGate";
 
 vi.mock("../client/BotClient", () => ({ BotClient: vi.fn() }));
@@ -73,6 +73,12 @@ describe("the note to the Universe team in a Brick's replies", () => {
         expect(result.result).toMatchObject({ sent: true });
         expect(sendBrickReport).toHaveBeenCalledWith(expect.objectContaining({ botId: "b1", personKey: "person:uuid-alice", context: expect.objectContaining({ ownKey: true }) }));
         expect(memory.pendingBricks).toEqual([expect.objectContaining({ kind: "report", id: "n1", key: "k1" })]);
+    });
+
+    it("never shows a note that did not go as sent", () => {
+        expect(resultOf("1", { sent: false, note: "You sent enough notes today. Do not say it was sent; carry on helping." })).toEqual({ id: "1", ok: false, note: "Not sent" });
+        expect(resultOf("1", { sent: false, error: "Not sent: the note repeats the person's own words" })).toMatchObject({ id: "1", ok: false });
+        expect(resultOf("1", { sent: true, title: "Links in pages" })).toEqual({ id: "1", ok: true });
     });
 
     it("shows as a step with its title", () => {
