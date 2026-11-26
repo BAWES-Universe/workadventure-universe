@@ -907,8 +907,8 @@ export class AIService {
     }
 
     /**
-     * Orbit's plan for the bot's images. A key picked for images that can't be read here is never swapped for Universe AI: the
-     * images are left to the bot's own model, as when Orbit itself says the key can't be used.
+     * Orbit's plan for the bot's images. A key picked for images that can't be read here is never swapped for Universe AI or the
+     * bot's own model: nobody looks until the owner picks again, as when Orbit itself says the key can't be used.
      */
     private visionFromAnswer(plan: BotVisionPlan | undefined): ResolvedVision | undefined {
         if (!plan) return undefined;
@@ -1582,8 +1582,9 @@ export class AIService {
                 // be the one answering (persona, chat instructions, tools).
                 const visionCapable = this.providerRegistry.supportsVision(config);
                 // Who looks: when Orbit says (the Vision row), what the owner picked or the shown default; otherwise as it always
-                // was. A person's own key without Vision never has its images described by Universe AI unless the owner picked it:
-                // the image would leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
+                // was. A person's own key without Vision never has its images described by Universe AI unless Orbit's plan says so
+                // (the owner's pick, or the default the page shows): otherwise the image would leave their key (or their own
+                // computer) and Universe would pay for it. Without a plan the link stays in the text.
                 const plan = visionPlan;
                 const lookWith: 'self' | 'link' | 'universe-ai' | 'another' | 'unavailable' = plan
                     ? plan.choice === 'this'
@@ -1628,7 +1629,9 @@ export class AIService {
                     }
                     else {
                         // Nothing looked at it (the pick is "this model" and it can't see, or the one picked failed just now): say so
-                        // to the model, so it tells the person plainly instead of asking them to describe what they sent
+                        // to the model, so it tells the person plainly instead of asking them to describe what they sent. When the
+                        // place picked is another model or Universe AI and it failed, the link must not reach the main model either.
+                        if (lookWith === 'another' || lookWith === 'universe-ai') message = withoutImageLinks(message);
                         message = `${message}\n[The image could not be looked at, so what is in it is not known. Say so in one short line. Do not ask the person to describe it or to do anything else for it.]`;
                     }
                     // Images are NOT passed to a text-only main model (it would 400 on

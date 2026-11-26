@@ -371,7 +371,7 @@ describe("AIService – finding a bot's AI by bot id", () => {
                     expect(mockGetOrCreateProvider.mock.calls[0][0].ownKey).toEqual({ addressTyped: true });
                 });
 
-                it("Another model: if the description fails, the link stays in the text and Universe AI is never asked", async () => {
+                it("Another model: if the description fails, Universe AI is never asked and nothing is described", async () => {
                     const { admin, memory } = buildMocks();
                     admin.getBotAiCredentials.mockResolvedValue(ownKey({ vision: { choice: "another", credentials: visionKey() } }));
                     admin.getAvailableAIProviders.mockResolvedValue([provider({ defaultVision: true, supportsVision: true })]);
@@ -431,6 +431,59 @@ describe("AIService – finding a bot's AI by bot id", () => {
                         const service = new AIService(memory, admin, "http://admin.local");
                         await withLink(service);
                         expectNobodyLooked(admin);
+                    });
+
+                    describe("the picked place fails just now: the link doesn't go to the bot's own model either", () => {
+                        it.each([false, true])("Another model whose description comes back empty, the bot's own model sees images: %s", async (mainSees) => {
+                            const { admin, memory } = buildMocks();
+                            mockSupportsVision.mockReturnValue(mainSees);
+                            admin.getBotAiCredentials.mockResolvedValue(ownKey({ vision: { choice: "another", credentials: visionKey() } }));
+                            admin.getAvailableAIProviders.mockResolvedValue([provider({ defaultVision: true, supportsVision: true })]);
+                            mockGetOrCreateProvider.mockReturnValue({ supportsVision: () => true, generate: vi.fn().mockResolvedValue({ content: "" }) });
+                            mockGenerateStream.mockImplementation(answer);
+                            const service = new AIService(memory, admin, "http://admin.local");
+                            await withLink(service);
+                            expect(admin.getAvailableAIProviders).not.toHaveBeenCalled();
+                            expect(mockGenerateStream.mock.calls[0]).not.toContainEqual(images);
+                            expect(mockGenerateStream.mock.calls[0][2]).not.toContain(link);
+                            expect(mockGenerateStream.mock.calls[0][2]).toContain("Do not ask the person to describe it");
+                        });
+
+                        it("Another model whose provider call throws: no link either", async () => {
+                            const { admin, memory } = buildMocks();
+                            mockSupportsVision.mockReturnValue(false);
+                            admin.getBotAiCredentials.mockResolvedValue(ownKey({ vision: { choice: "another", credentials: visionKey() } }));
+                            mockGetOrCreateProvider.mockReturnValue({ supportsVision: () => true, generate: vi.fn().mockRejectedValue(new Error("boom")) });
+                            mockGenerateStream.mockImplementation(answer);
+                            const service = new AIService(memory, admin, "http://admin.local");
+                            await withLink(service);
+                            expect(mockGenerateStream.mock.calls[0][2]).not.toContain(link);
+                            expect(mockGenerateStream.mock.calls[0][2]).toContain("Do not ask the person to describe it");
+                        });
+
+                        it.each([false, true])("Universe AI with no default Vision provider, the bot's own model sees images: %s", async (mainSees) => {
+                            const { admin, memory } = buildMocks();
+                            mockSupportsVision.mockReturnValue(mainSees);
+                            admin.getBotAiCredentials.mockResolvedValue(ownKey({ vision: { choice: "universe-ai" } }));
+                            admin.getAvailableAIProviders.mockResolvedValue([]);
+                            mockGenerateStream.mockImplementation(answer);
+                            const service = new AIService(memory, admin, "http://admin.local");
+                            await withLink(service);
+                            expect(mockGenerateStream.mock.calls[0]).not.toContainEqual(images);
+                            expect(mockGenerateStream.mock.calls[0][2]).not.toContain(link);
+                            expect(mockGenerateStream.mock.calls[0][2]).toContain("Do not ask the person to describe it");
+                        });
+
+                        it("This model that can't see: the link stays, because the bot's own model is the place picked", async () => {
+                            const { admin, memory } = buildMocks();
+                            mockSupportsVision.mockReturnValue(false);
+                            admin.getBotAiCredentials.mockResolvedValue(ownKey({ vision: { choice: "this" } }));
+                            mockGenerateStream.mockImplementation(answer);
+                            const service = new AIService(memory, admin, "http://admin.local");
+                            await withLink(service);
+                            expect(mockGenerateStream.mock.calls[0][2]).toContain(link);
+                            expect(mockGenerateStream.mock.calls[0][2]).toContain("Do not ask the person to describe it");
+                        });
                     });
 
                     it("a reply with no image is untouched", async () => {
