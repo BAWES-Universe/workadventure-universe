@@ -154,6 +154,58 @@ describe('The send_to_universe_team tool', () => {
         expect(failureOf('Error: boom')).toBe('failed');
     });
 
+    it('a problem with no step named is about the last step that failed, not a later one that only came back empty', async () => {
+        const turn = newReportTurn('$event-1');
+        const sources = { apps: new Map(), offered: new Set(['read_page', 'list_files']) };
+        noteWhatRan(turn, [{ name: 'read_page', result: { error: 'Request timed out' } }], sources);
+        noteWhatRan(turn, [{ name: 'list_files', result: [] }], sources);
+        const ctx = context({ turn });
+        await runReportTool({ kind: 'problem', area: 'pages', effect: 'stopped' }, ctx);
+        expect(sentOf(ctx)).toMatchObject({ operation: 'read_page', failure: 'timed_out' });
+        // With nothing that failed, an empty answer is still what it is about
+        const emptyOnly = newReportTurn('$event-1');
+        noteWhatRan(emptyOnly, [{ name: 'list_files', result: [] }], sources);
+        const quiet = context({ turn: emptyOnly });
+        await runReportTool({ kind: 'problem', area: 'pages', effect: 'stopped' }, quiet);
+        expect(sentOf(quiet)).toMatchObject({ operation: 'list_files', failure: 'no_result' });
+    });
+
+    it('the same note again in this reply with words gets the words: the same receipt, nothing new kept, words shown with Send', async () => {
+        const ctx = context();
+        await runReportTool(args, ctx);
+        ctx.admin.sendBrickReport.mockResolvedValueOnce(kept({ again: true, wordsPreview: 'The page stays blank' }));
+        const result = await runReportTool({ ...args, words: 'The page stays blank' }, ctx);
+        expect(result).toMatchObject({ sent: true, note: expect.stringContaining('press Send') });
+        expect(sentOf(ctx, 1)).toMatchObject({ ref: sentOf(ctx, 0).ref, draftWords: 'The page stays blank' });
+        expect(ctx.notes).toEqual([expect.objectContaining({ id: 'note-1', wordsDraft: 'The page stays blank' })]);
+        // Once it has words, the same note again is only "already sent"
+        expect(await runReportTool({ ...args, words: 'Something else' }, ctx)).toMatchObject({ note: expect.stringContaining('Already sent') });
+        expect(ctx.admin.sendBrickReport).toHaveBeenCalledTimes(2);
+    });
+
+    it('words for a note sent beside them wait for it, then go with the same reference', async () => {
+        const ctx = context();
+        let release: () => void = () => undefined;
+        ctx.admin.sendBrickReport.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(kept()))));
+        ctx.admin.sendBrickReport.mockResolvedValueOnce(kept({ again: true, wordsPreview: 'It never loads' }));
+        const first = runReportTool(args, ctx);
+        const withWords = runReportTool({ ...args, words: 'It never loads' }, ctx);
+        release();
+        expect(await first).toMatchObject({ sent: true });
+        expect(await withWords).toMatchObject({ sent: true, note: expect.stringContaining('press Send') });
+        expect(ctx.notes).toEqual([expect.objectContaining({ wordsDraft: 'It never loads' })]);
+    });
+
+    it('words that could not be added never make a second note, and the Brick is told', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const ctx = context();
+        await runReportTool(args, ctx);
+        ctx.admin.sendBrickReport.mockRejectedValue(new Error('down'));
+        expect(await runReportTool({ ...args, words: 'The page stays blank' }, ctx)).toMatchObject({ sent: true, note: expect.stringContaining('could not be added') });
+        expect(ctx.notes).toHaveLength(1);
+        expect(ctx.notes?.[0]).not.toHaveProperty('wordsDraft');
+    });
+
     it('the person\'s words go only as a draft: Orbit answers them cleaned, and the chat shows them with Send', async () => {
         const ctx = context({ admin: { sendBrickReport: vi.fn(async () => kept({ wordsPreview: 'The share button does nothing' })) } as never });
         const result = await runReportTool({ ...args, words: 'The share button does nothing, call me on +965 5555 1234' }, ctx);

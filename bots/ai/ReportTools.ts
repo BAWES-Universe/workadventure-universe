@@ -165,6 +165,8 @@ function stepOf(turn: ReportTurn | undefined, kind: Kind, named: unknown): Repor
         for (let i = steps.length - 1; i >= 0; i--) if (steps[i].name === named) return steps[i];
     }
     if (kind !== 'problem') return undefined;
+    // A step that failed comes before one that only gave nothing back (an empty list can be a right answer)
+    for (let i = steps.length - 1; i >= 0; i--) if (steps[i].failure && steps[i].failure !== 'no_result') return steps[i];
     for (let i = steps.length - 1; i >= 0; i--) if (steps[i].failure) return steps[i];
     return undefined;
 }
@@ -202,15 +204,6 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     const replyRef = context.turn?.replyRef ?? `reply:${randomUUID()}`;
     const ref = createHash('sha256').update([replyRef, context.botId, kind, area, operation, failure].join('|')).digest('hex');
 
-    // The notes this reply already sent, and the ones being sent right now (tool calls of one round run side by side)
-    const already = (context.notes ?? []).filter((note): note is ReportSentNote => note.kind === 'report');
-    const flying = context.notes ? (sending.get(context.notes) ?? new Map<string, Promise<boolean>>()) : new Map<string, Promise<boolean>>();
-    if (already.some((note) => note.ref === ref)) return { sent: true, note: 'Already sent in this reply. Do not send it again.' };
-    // The same note is being sent beside this call: say what that one says, never "sent" before it is
-    const twin = flying.get(ref);
-    if (twin) return (await twin) ? { sent: true, note: 'Already sent in this reply. Do not send it again.' } : { sent: false, uncertain: true, note: NOT_CONFIRMED };
-    if (already.length + flying.size >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
-
     const report: BrickReportSend = {
         botId: context.botId,
         ...(context.personKey ? { personKey: context.personKey } : {}),
@@ -225,6 +218,21 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
         ...(draftWords ? { draftWords } : {}),
         ...(context.context ? { context: context.context } : {}),
     };
+
+    // The notes this reply already sent, and the ones being sent right now (tool calls of one round run side by side)
+    const sentAlready = () => (context.notes ?? []).filter((note): note is ReportSentNote => note.kind === 'report');
+    const flying = context.notes ? (sending.get(context.notes) ?? new Map<string, Promise<boolean>>()) : new Map<string, Promise<boolean>>();
+    const same = sentAlready().find((note) => note.ref === ref);
+    if (same) return draftWords && !same.wordsDraft ? addDraftWords(same, report, context) : ALREADY_SENT;
+    // The same note is being sent beside this call: say what that one says, never "sent" before it is
+    const twin = flying.get(ref);
+    if (twin) {
+        if (!(await twin)) return { sent: false, uncertain: true, note: NOT_CONFIRMED };
+        const first = sentAlready().find((note) => note.ref === ref);
+        return first && draftWords && !first.wordsDraft ? addDraftWords(first, report, context) : ALREADY_SENT;
+    }
+    if (sentAlready().length + flying.size >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
+
     let outcome: Awaited<ReturnType<AdminApiService['sendBrickReport']>> | undefined;
     // Held before Orbit is asked, so a call beside this one sees it (and waits for whether it went); let go once the answer is in
     let went: (sent: boolean) => void = () => undefined;
@@ -266,10 +274,33 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     return {
         sent: true,
         title: kept.title,
-        note: outcome.wordsPreview
-            ? 'Sent, without their words. The chat shows them the exact words to send with a Send button: say in one short sentence, in their language, that the note went to the Universe team and they can check their words and press Send. Do not promise when it will be fixed.'
-            : 'Sent. Say in one short sentence, in their language, that you sent it to the Universe team, then carry on helping. Do not promise when it will be fixed.',
+        note: outcome.wordsPreview ? WORDS_TO_SEND : 'Sent. Say in one short sentence, in their language, that you sent it to the Universe team, then carry on helping. Do not promise when it will be fixed.',
     };
+}
+
+const ALREADY_SENT = { sent: true, note: 'Already sent in this reply. Do not send it again.' };
+
+const WORDS_TO_SEND =
+    'Sent, without their words. The chat shows them the exact words to send with a Send button: say in one short sentence, in their language, that the note went to the Universe team and they can check their words and press Send. Do not promise when it will be fixed.';
+
+/**
+ * The same note again in this reply, now with words the person asked to say: asked again with the same reference, Orbit answers the same
+ * receipt with the words cleaned and keeps nothing new, so the note in the chat gets the words to show with its Send button.
+ */
+async function addDraftWords(note: ReportSentNote, report: BrickReportSend, context: ReportToolContext): Promise<Record<string, unknown>> {
+    let outcome: Awaited<ReturnType<AdminApiService['sendBrickReport']>> | undefined;
+    for (let attempt = 0; attempt < 2 && !outcome; attempt++) {
+        try {
+            outcome = await context.admin.sendBrickReport(report);
+        } catch (error) {
+            console.warn('[ReportTools] Could not add words to a note:', error instanceof Error ? error.message : error);
+        }
+    }
+    if (outcome?.sent === true && !outcome.takenBack && outcome.id === note.id && outcome.wordsPreview) {
+        note.wordsDraft = outcome.wordsPreview;
+        return { sent: true, title: note.title, note: WORDS_TO_SEND };
+    }
+    return { sent: true, note: 'Already sent in this reply, but their words could not be added to it. Do not send it again.' };
 }
 
 /** The fixed line a reply with no words of its own says for the notes it sent. */
