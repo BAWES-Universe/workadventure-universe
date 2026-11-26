@@ -29,7 +29,7 @@ import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDe
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, type JudgedPart } from '../mcp/ToolGate';
 import type { ToolHeading } from '../mcp/ToolCatalog';
-import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
+import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, toolErrorMayHaveRun, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
 import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, SessionOwners, withoutSession } from '../mcp/AppLookups';
 import { AppActionSorter } from '../mcp/AppActionSorter';
@@ -6052,7 +6052,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const { group, outcomes } of results) group.forEach((part, at) => outcomeOfPart.set(part, outcomes[at]));
         // The things it made go back to the limit when the call that would have made them proved it made nothing
         for (const [part, outcome] of outcomeOfPart) if (outcome === 'failed' || outcome === 'notSent') releases.get(part)?.();
-        if (asked.length === 0 && heldBack.length === 0 && notDone.length === 0 && results.length === 1) return results[0].answer;
+        // A tool's own error is no plain failure: some of its actions may have run, so it is told in the summary below, not handed over as "failed"
+        if (asked.length === 0 && heldBack.length === 0 && notDone.length === 0 && results.length === 1 && !toolErrorMayHaveRun(results[0].answer)) return results[0].answer;
         // A card that could not be shown is a part not done, never the whole call failing when other parts ran
         const cardProblem = (value: Record<string, unknown> | undefined) => (value && typeof value.error === 'string' ? value.error : undefined);
         const shownAsks = asked.filter(({ result }) => !cardProblem(result));
@@ -6069,7 +6070,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const waitingParts = shownAsks.flatMap(({ parts }) => parts).sort(byIndex);
         const summary = [
             doneParts.length > 0 ? `Done now: ${titles(doneParts)}.` : '',
-            unsureParts.length > 0 ? `Not sure it was done, the App answered with an error: ${titles(unsureParts)}. Check before you ask for it again.` : '',
+            unsureParts.length > 0 ? `Not sure it was done, the App gave an error or no answer: ${titles(unsureParts)}. Check before you ask for it again.` : '',
             failedParts.length > 0 ? `Did not work, nothing was done: ${titles(failedParts)}.` : '',
             waitingParts.length > 0 ? `Waiting for the person's OK on a card: ${titles(waitingParts)}. Nothing of it was done yet.` : '',
             problems.length > 0 ? `Not done, it needs the person's OK: ${problems.join(' ')}` : '',

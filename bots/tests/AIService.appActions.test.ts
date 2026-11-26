@@ -9,10 +9,18 @@ import { MCPConnector, type ToolServerEntry } from '../mcp/MCPConnector';
 import { ToolGate } from '../mcp/ToolGate';
 import type { PolicyTool, ServerPolicy, ToolSetting } from '../mcp/ToolPolicy';
 import type { ToolHeading } from '../mcp/ToolCatalog';
+import axios from 'axios';
 
 vi.mock('../client/BotClient', () => ({ BotClient: vi.fn() }));
+// The connector itself runs in the end-to-end tests below: its network is the only thing faked
+vi.mock('../ai/encryption', () => ({ decryptApiKey: (val: string | null | undefined) => val || null }));
+vi.mock('dns/promises', () => ({ lookup: vi.fn().mockResolvedValue([{ address: '93.184.216.34', family: 4 }]) }));
+vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn(), isCancel: vi.fn(), isAxiosError: vi.fn() } }));
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+});
 beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -334,6 +342,46 @@ describe('what runs is what the card showed', () => {
     });
 });
 
+describe('a batch through the real connector, to what the model is told', () => {
+    // Orbit's link route (POST /api/ready-made/link) is the only thing faked: it carries each JSON-RPC message of the connector and answers as a link does
+    const viaOrbit = (answerCall: (message: { id: string | number }) => { status: number; body: string }) => {
+        vi.stubEnv('BOT_SERVICE_TOKEN', 'service-token');
+        vi.mocked(axios.post).mockImplementation((async (_url: string, payload: { message: { method?: string; id?: string | number } }) => {
+            const { method, id } = payload.message;
+            const rpc = (result: unknown) => ({ status: 200, contentType: 'application/json', sessionId: 'link-session', body: JSON.stringify({ jsonrpc: '2.0', id, result }) });
+            if (method === 'initialize') return { data: rpc({ protocolVersion: '2024-11-05', serverInfo: { name: 'link', version: '1' }, capabilities: {} }) };
+            if (method === 'tools/call') {
+                const answered = answerCall({ id: id as string | number });
+                return { data: { status: answered.status, contentType: 'application/json', sessionId: 'link-session', body: answered.body } };
+            }
+            return { data: { status: 202, contentType: null, sessionId: 'link-session', body: '' } };
+        }) as never);
+    };
+    const batch = (service: AIService) => call(service, batchArgs('GMAIL_FETCH_EMAILS', 'GMAIL_LIST_LABELS'));
+
+    it('says "not sure" for every action when the tool answers with its own error (isError), whatever its words say', async () => {
+        const { service, execute } = brickService(gmailPolicy());
+        execute.mockRestore();
+        viaOrbit(({ id }) => ({ status: 200, body: JSON.stringify({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text: 'Invalid session. Action 1 completed.' }] } }) }));
+        const [result] = await batch(service);
+        expect(result.result.summary).toContain('Not sure it was done, the App gave an error or no answer: Fetch emails, List labels.');
+        expect(result.result.summary).not.toContain('Done now');
+        expect(result.result.summary).not.toContain('Did not work, nothing was done');
+    });
+
+    it('keeps a call that was sent and got no answer as "may have run" (uncertain), not as failed, with its own hint', async () => {
+        const { service, execute } = brickService(gmailPolicy());
+        execute.mockRestore();
+        viaOrbit(() => ({ status: 200, body: '' }));
+        const [result] = await batch(service);
+        expect(result.result).toMatchObject({ outcome: 'uncertain', hint: expect.stringContaining('It may have run') });
+        // ...and when it goes into a summary (a card beside it), it is "not sure", never "nothing was done"
+        const { outcomeOf } = await import('../mcp/ApprovalCard');
+        const { batchOutcomes } = await import('../mcp/AppActions');
+        expect(batchOutcomes(result.result, ['GMAIL_FETCH_EMAILS'], outcomeOf(result.result))).toEqual(['uncertain']);
+    });
+});
+
 describe('what the model is told was done', () => {
     it('never says a part was done when its call failed, or proved it made nothing', async () => {
         const { service, execute } = brickService(gmailPolicy({}, { ...DEFAULTS, changesThings: 'rightAway' }));
@@ -361,7 +409,7 @@ describe('what the model is told was done', () => {
         ] as never);
         const [result] = await call(service, batchArgs('GMAIL_FETCH_EMAILS', 'GMAIL_LIST_LABELS', 'GMAIL_REPLY_TO_THREAD'));
         expect(result.result.summary).toContain('Done now: Fetch emails.');
-        expect(result.result.summary).toContain('Not sure it was done, the App answered with an error: List labels.');
+        expect(result.result.summary).toContain('Not sure it was done, the App gave an error or no answer: List labels.');
         expect(result.result.summary).not.toContain('Done now: Fetch emails, List labels.');
     });
 
