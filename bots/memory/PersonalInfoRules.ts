@@ -281,7 +281,8 @@ export function stateIn(message: string): string | null {
 
 // ---- Birthday ---------------------------------------------------------------------------------------------------------
 
-const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december';
+// Full names and the short forms people type ("Dec 5", "Sept 3"); the date check downstream reads a short form by its first letters
+const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec';
 const BIRTHDAY_TODAY = new RegExp(`\\b(?:it${APOS}?s|today(?: is)?|today${APOS}s)\\s+my\\s+(?:birthday|bday)\\b|\\bmy\\s+(?:birthday|bday)\\s+(?:is\\s+)?today\\b`, 'iu');
 const BIRTHDAY_ON = [
     new RegExp(`\\bmy\\s+(?:birthday|bday)(?:${APOS}s)?\\s+(?:(?:is|was)\\s+)?(?:on\\s+)?((?:${MONTHS})\\s+\\d{1,2})(?:st|nd|rd|th)?\\b`, 'iu'),

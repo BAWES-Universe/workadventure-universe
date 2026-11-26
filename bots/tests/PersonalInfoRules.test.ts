@@ -136,6 +136,9 @@ describe('birthday', () => {
         expect(birthdayDateIn('my birthday is 3/3')).toBe('3/3');
         expect(birthdayDateIn('My birthday is March 3rd')).toBe('March 3');
         expect(birthdayDateIn('my birthday is on April 1st!')).toBe('April 1');
+        expect(birthdayDateIn('my birthday is Dec 5')).toBe('Dec 5');
+        expect(birthdayDateIn('My bday is on Sept 3rd')).toBe('Sept 3');
+        expect(birthdayDateIn('my birthday is Decor 5')).toBeNull();
     });
 
     it("is never someone else's, or not at all", () => {
