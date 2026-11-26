@@ -12,10 +12,24 @@
 const APOS = `['’]`;
 const SENTENCE_END = /(?<=[.!?\n])\s+|\n+/u;
 
-/** The lines of a message, each with the mark it ended with: a question is never a statement about the person. */
+/** A question that starts with one of these asks about the whole of it ("Do I like tea or coffee?"). */
+const ASKS = /^(?:am i|are you|are we|is|are|was|were|do|does|did|can|could|would|will|shall|should|may|might|has|have|what|who|whom|whose|why|how|when|where|which)(?![\p{L}\p{N}])/iu;
+
+/**
+ * The lines of a message, each with whether it is a question. In "I'm Sara, can you help me?" only the part after the last
+ * comma asks: what comes before it is something said.
+ */
 function sentencesOf(message: string): Array<{ text: string; question: boolean }> {
     const parts = message.split(SENTENCE_END).map((part) => part.trim()).filter(Boolean);
-    return parts.map((text) => ({ text, question: /\?\s*$/u.test(text) }));
+    return parts.flatMap((text) => {
+        const question = /\?\s*$/u.test(text);
+        if (!question || ASKS.test(text)) return [{ text, question }];
+        const cut = Math.max(text.lastIndexOf(','), text.lastIndexOf(';'));
+        if (cut <= 0) return [{ text, question }];
+        const before = text.slice(0, cut).trim();
+        const after = text.slice(cut + 1).trim();
+        return [before ? { text: before, question: false } : null, after ? { text: after, question: true } : null].filter((part): part is { text: string; question: boolean } => part !== null);
+    });
 }
 
 const CLAUSE_END = /\s*(?:[,;:]|\b(?:and|but|though|although|however|because|while|yet)\b)\s*/iu;
@@ -25,13 +39,15 @@ const CLAUSE_END = /\s*(?:[,;:]|\b(?:and|but|though|although|however|because|whi
  * question. A "not" is only looked for in the part that holds the thing, so "my name is Sara and I don't like tea" keeps the name.
  */
 function clausesOf(message: string): Array<{ text: string; question: boolean }> {
-    return sentencesOf(message).flatMap((sentence) =>
-        sentence.text
+    return sentencesOf(message).flatMap((sentence) => {
+        const clauses = sentence.text
             .split(CLAUSE_END)
             .map((text) => text.trim())
-            .filter(Boolean)
-            .map((text) => ({ text, question: sentence.question })),
-    );
+            .filter(Boolean);
+        // A question asks in its last clause, or in all of them when it starts by asking ("Am I tired and hungry?")
+        const asksAll = sentence.question && ASKS.test(sentence.text);
+        return clauses.map((text, index) => ({ text, question: sentence.question && (asksAll || index === clauses.length - 1) }));
+    });
 }
 
 /** Words said just before "like" / "feel" / "am" that turn it around, or put it in another's mouth. */

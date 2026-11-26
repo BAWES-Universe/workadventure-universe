@@ -71,6 +71,18 @@ const TABLE: Array<[string, Partial<Said>]> = [
     ['my email is sara@example.com and I like tea', { likes: ['tea'] }],
     ['I like sara@example.com', {}],
     ['I love 555-123-4567', {}],
+    // a statement with a question after it
+    ["Hi, I'm Sara, can you help me?", { name: 'Sara' }],
+    ["My name is Sara, what can you do?", { name: 'Sara' }],
+    ["I'm Sara and can you help me?", { name: 'Sara' }],
+    ["I'm Sara, right?", { name: 'Sara' }],
+    ['I like tea, can you make some?', { likes: ['tea'] }],
+    ["I'm tired, can you help?", { state: 'tired' }],
+    ["It's my birthday today, any ideas?", { today: true }],
+    ['Am I tired and hungry?', {}],
+    ['Do I like tea or coffee?', {}],
+    ['If I like tea, what should I drink?', {}],
+    ['What is my name, Sara?', {}],
     // doubts are not tastes
     ["I don't think I like jazz", {}],
     ["I'm not sure I like sushi", {}],
