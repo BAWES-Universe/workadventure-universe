@@ -69,7 +69,7 @@ export function instantToolDefinitions(listing: InstantListing | null): ToolDefi
 export function instantToolsNote(): string {
     return [
         'Instant Apps: you can run Instant Apps for your owner with the tools whose names start with instant_app_. Call them Instant Apps or Apps, never tools or connectors.',
-        'Each run is paid from your owner\'s Instant Apps credit. Use one when it does what was asked better than answering yourself or reading a page could, such as anything current or anything that needs a search or a service; once for a question, never in a loop, never to try it out.',
+        'Each run is paid from your owner\'s Instant Apps credit. Use one when it does what was asked better than answering yourself or reading a page could, such as fresh news, prices, or anything that needs a live search or a service; once for a question, never in a loop, never to try it out.',
         'Never say a price, an amount, a provider, or how much credit is left: their Usage page shows it ([Usage](#usage) opens it when they ask).',
         'When a run did not work or was refused, say it in one plain sentence in their language, in the words you were given, and carry on another way if you can.',
         'When their credit does not cover it, a card asks them how to carry on: say in one short line that you need their pick and stop, and do not list the choices in words. More credit is never the answer to something that is not available right now.',

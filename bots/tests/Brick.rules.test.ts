@@ -29,6 +29,11 @@ describe("A person's own Brick is told what it is and how it works", () => {
         }
     });
 
+    it('sets a reminder, briefing, watch or goal only when they ask, and starts the rest straight away', () => {
+        expect(BRICK_WORK_RULES).toContain('Use your Apps, your computer and your memory straight away when a job needs them, and set a reminder, briefing, watch or goal when they ask for one.');
+        expect(BRICK_WORK_RULES).not.toContain('your memory and your reminders straight away');
+    });
+
     it('offers a Connect card straight away when a job needs an App it does not have', () => {
         expect(BRICK_WORK_RULES).toContain('offer to connect it in the same reply');
         expect(BRICK_WORK_RULES).toContain('before you try any other way round');
@@ -36,11 +41,12 @@ describe("A person's own Brick is told what it is and how it works", () => {
         expect(BRICK_WORK_RULES).toContain('already said not now to');
     });
 
-    it('treats a picture as seen, tries its computer or an App on a bare link, and never says it is blind', () => {
-        expect(BRICK_WORK_RULES).toContain('Use it as if you saw it.');
-        expect(BRICK_WORK_RULES).toContain('open it with your computer if you have one');
-        expect(BRICK_WORK_RULES).toContain('Never say you cannot see pictures.');
-        expect(BRICK_WORK_RULES).toContain('Name the one thing that would make it possible and offer it');
+    it('answers from a picture or its description, and on a bare link never guesses and never starts a computer job for it', () => {
+        expect(BRICK_WORK_RULES).toContain('answer from what you see or what the description says');
+        expect(BRICK_WORK_RULES).toContain("never guess what it shows: say in one short line that this picture didn't come through to you, and ask what it shows or what they need from it");
+        expect(BRICK_WORK_RULES).not.toContain('open it with your computer');
+        expect(BRICK_WORK_RULES).not.toContain('Never say you cannot see pictures');
+        expect(BRICK_WORK_RULES).not.toContain('as if you saw it');
     });
 
     it('says "Apps", never tools or connectors, and carries no vendor name or number', () => {
@@ -50,8 +56,9 @@ describe("A person's own Brick is told what it is and how it works", () => {
     });
 
     it('keeps what the app decides in the app: asking first and Off are never skipped', () => {
-        expect(BRICK_WORK_RULES).toContain('The app asks the person itself when a step needs their yes');
-        expect(BRICK_WORK_RULES).toContain('You never ask on its behalf and never skip it.');
+        expect(BRICK_WORK_RULES).toContain('a card or your computer asks them. Never answer it for them and never go round it; when you are told one is waiting, say so in one short line.');
+        expect(BRICK_WORK_RULES).toContain('(sending, deleting, paying, their own details)');
+        expect(BRICK_WORK_RULES).not.toContain('on its behalf');
         expect(BRICK_WORK_RULES).toContain('When a step is Off, or asks first, say so in one plain line');
     });
 
@@ -164,7 +171,8 @@ describe('What a Brick is told it has', () => {
         expect(note).not.toContain('offer_app');
         expect(note).not.toContain('own computer');
         expect(note).not.toContain('reminders');
-        expect(brickAbilitiesNote(base)).toContain('not available to connect yet');
+        expect(brickAbilitiesNote(base)).toContain("that is in none of your lists, say in one short line that you can't reach it from here yet");
+        expect(brickAbilitiesNote(base)).not.toContain('not available to connect yet');
     });
 
     it('says nothing of the Apps it has when Orbit could not say, rather than that it has none', () => {
@@ -203,6 +211,8 @@ describe('The notes of a Brick no longer make it hesitate', () => {
         const note = instantToolsNote();
         expect(note).not.toContain('answering yourself or reading a page cannot');
         expect(note).toContain('better than answering yourself or reading a page could');
+        expect(note).toContain('such as fresh news, prices, or anything that needs a live search or a service');
+        expect(note).not.toContain('anything current');
         expect(note).toContain('once for a question, never in a loop, never to try it out');
     });
 

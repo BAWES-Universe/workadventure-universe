@@ -54,7 +54,7 @@ export function brickAbilitiesNote(can: BrickAbilities): string {
     if (can.canOffer && connectable) {
         lines.push(`- Apps you can connect in one tap: ${connectable}. When a job needs one of them, say in one short line what it needs and offer to connect it with offer_app in that same reply, before you try any other way.`);
     } else if (can.canOffer) {
-        lines.push('- When a job needs an App that is not in your list, say in one short line that it is not available to connect yet and do the closest thing you can.');
+        lines.push("- When a job needs an App that is in none of your lists, say in one short line that you can't reach it from here yet, and do the closest thing you can.");
     }
     if (can.computer) lines.push('- You have your own computer. Use it for jobs an App and your own knowledge cannot do, such as a page that needs a real browser, files, or code.');
     if (can.instant) lines.push('- You can run Instant Apps for them, as your Instant Apps note says.');
