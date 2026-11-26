@@ -459,6 +459,18 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(propose).not.toHaveBeenCalled();
     });
 
+    it('tells a batch whose tool answered with its own error that it may have run, never that nothing was done, and does not send it again', async () => {
+        const { apps, call } = withGate(gmail);
+        call.mockResolvedValue({ error: 'Tool error: Invalid session. Action 1 completed.', outcome: 'failed' } as never);
+        const session = (await apps.open(run()))!;
+        const told = JSON.parse(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS')));
+        expect(told).toMatchObject({ outcome: 'uncertain', hint: expect.stringContaining('Do not run them again') });
+        expect(call).toHaveBeenCalledTimes(1);
+        // A call that never reached the tool stays as it was: nothing ran
+        call.mockResolvedValue({ error: "Couldn't reach it. Nothing ran", outcome: 'not_sent' } as never);
+        expect(JSON.parse(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS')))).toMatchObject({ outcome: 'not_sent' });
+    });
+
     it('never sends a batch with an action that is Off, and asks on a card for one that makes, sends or deletes', async () => {
         const { apps, call, propose } = withGate(gmail);
         const session = (await apps.open(run()))!;

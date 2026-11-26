@@ -14,7 +14,7 @@
  * Pure of the AI and of the chat: the tools, the gate, the cards and the call are somebody else's (injected).
  */
 import { createHash } from 'crypto';
-import { SCRUBBED_LOOKUPS, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
+import { SCRUBBED_LOOKUPS, asMayHaveRun, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
 import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, SessionOwners, withoutSession } from '../mcp/AppLookups';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
@@ -192,7 +192,8 @@ export class TaskApps {
             if (!asks) {
                 const answer = await this.callWithSessionFallback(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) });
                 if (entry.readyMade && isJoinedLookup(name)) this.sessionOwners.note(run.brickId, answer, entry.serverId);
-                return asText(await this.withoutOffActions(run.brickId, name, listed, answer), isMailTool(name, entry.serverName));
+                // A batch whose tool answered with its own error may have run some of its actions: it is never read as "nothing was done"
+                return asText(await this.withoutOffActions(run.brickId, name, listed, isBatchTool(name) ? asMayHaveRun(answer) : answer), isMailTool(name, entry.serverName));
             }
             return await this.askFor(
                 run,
