@@ -59,6 +59,13 @@ describe('joining the answers of several Apps', () => {
         expect(silent.apps_that_did_not_answer).toEqual(['Gmail did not answer: it reported a failure.']);
     });
 
+    it('counts an App that answered nothing at all as one that did not answer, never as "null" text', () => {
+        const joined = read(joinLookupAnswers([{ app: 'Gmail', answer: text({ data: { results: [] } }) }, { app: 'Calendar', answer: null }]));
+        expect(joined.apps_that_did_not_answer).toEqual(['Calendar did not answer: it gave no answer.']);
+        // An answer with an empty list is still an answer
+        expect(joinLookupAnswers([{ app: 'Gmail', answer: text({ data: { results: [] } }) }, { app: 'Calendar', answer: text({ data: { results: [] } }) }])).toBeDefined();
+    });
+
     it('gives the first failure when every App failed', () => {
         expect(joinLookupAnswers([{ app: 'Gmail', answer: { error: 'one' } }, { app: 'Calendar', answer: { error: 'two' } }])).toEqual({ error: 'one' });
     });
@@ -68,11 +75,11 @@ describe('a session the App’s link refused', () => {
     const sent = { tools: [{ tool_slug: 'GOOGLECALENDAR_CREATE_EVENT', arguments: {} }], session_id: 'sess-g1' };
 
     it('is told only from a refusal of the whole call that names the session id', () => {
-        expect(sessionRefused({ error: 'Invalid session id sess-1' }, sent)).toBe(true);
+        expect(sessionRefused({ error: 'Invalid session id sess-g1' }, sent)).toBe(true);
         expect(sessionRefused(text({ successful: false, error: 'Session not found' }), sent)).toBe(true);
         expect(sessionRefused(text({ successful: false, error: 'Unknown session' }), sent)).toBe(true);
-        // The exact id that was sent, even in other words
-        expect(sessionRefused({ error: 'Cannot use sess-g1 here' }, sent)).toBe(true);
+        // The refusal quotes the id that was sent
+        expect(sessionRefused({ error: 'Tool error: Invalid session id sess-g1', outcome: 'failed' }, sent)).toBe(true);
         expect(sessionRefused({ error: 'The link is not answering.' }, sent)).toBe(false);
         expect(sessionRefused(text({ successful: true, data: { note: 'a session started' } }), sent)).toBe(false);
     });
@@ -82,6 +89,12 @@ describe('a session the App’s link refused', () => {
         expect(sessionRefused({ error: 'MCP tool error: invalid session in the transport' }, sent)).toBe(false);
         expect(sessionRefused({ error: 'Invalid session', outcome: 'uncertain' }, sent)).toBe(false);
         expect(sessionRefused(text({ successful: false, error: 'Invalid session', data: { results: [{ index: 0, tool_slug: 'A', response: { successful: true } }] } }), sent)).toBe(false);
+        // Another session than the one sent says nothing about this one; the id alone, in another field, is no refusal
+        expect(sessionRefused({ error: 'Invalid session id sess-other' }, sent)).toBe(false);
+        expect(sessionRefused({ error: 'Event note mentions sess-g1' }, sent)).toBe(false);
+        // Results at the root, or signs that actions ran in the error's own words
+        expect(sessionRefused(text({ successful: false, error: 'Invalid session', results: [{ index: 0, tool_slug: 'A' }] }), sent)).toBe(false);
+        expect(sessionRefused({ error: 'Tool error: {"successful":true,"data":{"results":[{"tool_slug":"A"}]}} then Invalid session', outcome: 'failed' }, sent)).toBe(false);
         // Nothing was sent with a session: nothing to take away
         expect(sessionRefused({ error: 'Invalid session' }, { tools: [] })).toBe(false);
     });

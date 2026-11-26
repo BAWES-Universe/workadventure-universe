@@ -251,7 +251,9 @@ export class TaskApps {
                 return { app: app.serverName ?? '', answer };
             })
         );
-        return asText(await this.withoutOffActions(run.brickId, name, first, joinLookupAnswers(answers)), isMailTool(name, first.serverName));
+        // What is Off in any App is taken out of each App's answer before they are joined, so a label put in front of one can't hide it
+        const scrubbed = await Promise.all(answers.map(async (one) => ({ ...one, answer: await this.withoutOffActions(run.brickId, name, first, one.answer) })));
+        return asText(joinLookupAnswers(scrubbed), isMailTool(name, first.serverName));
     }
 
     /**

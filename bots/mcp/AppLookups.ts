@@ -41,6 +41,8 @@ export function lookupRequests(name: string, args: Record<string, unknown>, apps
  * `{ successful: false, error }`, as an object, as JSON text or as the one text part of an MCP answer), not something the App found.
  */
 export function failureOf(answer: unknown): string | undefined {
+    // A tool that answered nothing at all did not find anything: it is named, not read as an empty answer
+    if (answer === null || answer === undefined) return 'it gave no answer.';
     const data = dataOf(answer);
     if (!isObject(data)) return undefined;
     if (typeof data.error === 'string' && data.error.trim() !== '') return data.error;
@@ -151,11 +153,19 @@ const sessionIdOf = (args: Record<string, unknown>): string | undefined => {
 /** Words that say a session id was not accepted (never just the word "session": an event may be called a "Strategy session"). */
 const SESSION_NOT_ACCEPTED = /\b(invalid|unknown|expired|unrecognized|missing)\s+(\w+\s+)?session\b|\bsession(\s+id)?\s+(is\s+)?(not\s+found|invalid|unknown|expired|missing)\b/i;
 
+/** A session id quoted in a refusal ("Invalid session id sess-1"): the word after "session" (or "session id") when it is not one of the refusal's own words. */
+const QUOTED_SESSION = /\bsession(?:\s+id)?\s*[:=]?\s*["'`]?([A-Za-z0-9][\w-]{3,})/gi;
+const REFUSAL_WORDS = new Set(['not', 'found', 'invalid', 'unknown', 'expired', 'missing', 'was', 'does', 'could', 'cannot', 'must', 'that', 'this', 'with', 'from', 'refused', 'rejected']);
+
+/** What an answer that ran something looks like: results of actions, or a success, in words or in JSON. A refusal before anything ran has none of it. */
+const RAN_SOMETHING = /tool_slug|"results"|"response"|"successful"\s*:\s*true/i;
+
 /**
  * Whether a call failed only because the App's link refused the session id it was given, so that nothing ran: the model carries the
- * session id one App's link gave (the joined search keeps the oldest App's) to another App's link, which may not know it. True only for a
- * refusal of the whole call (never a thrown error, an uncertain outcome, or an answer with results of actions) whose words name that
- * session id: the exact id that was sent, or an invalid, unknown, expired or missing session.
+ * session id one App's link gave (the joined search keeps the oldest App's) to another App's link, which may not know it. True only for an
+ * explicit refusal of the whole call (never a thrown error, an unsure outcome, or an answer that carries any sign that actions ran, at
+ * the root, in `data` or in the error's own words) that names an invalid, unknown, expired or missing session, and, when it quotes a
+ * session id, quotes the one that was sent.
  */
 export function sessionRefused(answer: unknown, args: Record<string, unknown>): boolean {
     const id = sessionIdOf(args);
@@ -163,12 +173,20 @@ export function sessionRefused(answer: unknown, args: Record<string, unknown>): 
     // A call that threw or whose outcome is not known may have run
     if (isObject(answer) && (answer.outcome === 'uncertain' || (typeof answer.error === 'string' && answer.error.startsWith('MCP tool error')))) return false;
     const line = failureOf(answer);
-    if (line === undefined) return false;
+    if (line === undefined || line === 'it gave no answer.') return false;
     // An answer that carries the results of actions may have run some of them
     const data = dataOf(answer);
     const inner = isObject(data) && isObject(data.data) ? data.data : undefined;
-    if (Array.isArray(inner?.results) && inner.results.length > 0) return false;
-    return line.includes(id) || SESSION_NOT_ACCEPTED.test(line);
+    const hasResults = (value: Record<string, unknown> | undefined) => Array.isArray(value?.results) && value.results.length > 0;
+    if (hasResults(isObject(data) ? data : undefined) || hasResults(inner)) return false;
+    if (RAN_SOMETHING.test(line)) return false;
+    if (!SESSION_NOT_ACCEPTED.test(line)) return false;
+    // A refusal of another session than the one sent says nothing about this one
+    for (const quoted of line.matchAll(QUOTED_SESSION)) {
+        const word = quoted[1].toLowerCase();
+        if (word !== id.toLowerCase() && !REFUSAL_WORDS.has(word)) return false;
+    }
+    return true;
 }
 
 /**

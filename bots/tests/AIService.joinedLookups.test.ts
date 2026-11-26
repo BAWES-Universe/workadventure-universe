@@ -324,3 +324,44 @@ describe('a write approved on its card, when the link refuses the session id', (
         expect(execute).toHaveBeenCalledTimes(2);
     });
 });
+
+describe('what the review of #2152 found', () => {
+    it('keeps an Off action out of a structured answer even when another App answers in prose', async () => {
+        const { callTool, execute } = twoApps(gmailPolicy(DEFAULTS, { GMAIL_DELETE_MESSAGE: 'off' }), calendarPolicy());
+        execute.mockImplementation(async (...args: unknown[]) => (args[0] === 'g1' ? text({ data: { results: [{ index: 1, primary_tool_slugs: ['GMAIL_DELETE_MESSAGE', 'GMAIL_FETCH_EMAILS'] }] } }) : 'Calendar found nothing.') as never);
+        const [searched] = await callTool(SEARCH, { queries: [{ use_case: 'clean up' }] });
+        const body = JSON.stringify(searched.result);
+        expect(body).not.toContain('GMAIL_DELETE_MESSAGE');
+        expect(body).toContain('GMAIL_FETCH_EMAILS');
+        expect(body).toContain('Calendar found nothing.');
+    });
+
+    it('tries a single App’s search again without the session id of another App’s link', async () => {
+        const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
+        execute.mockImplementation(async (...args: unknown[]) => ((args[3] as { session_id?: string }).session_id ? { error: 'Invalid session id sess-g1' } : text({ successful: true, data: { results: [] } })) as never);
+        const servers = new Map<string, ToolServerEntry>([[SEARCH, CALENDAR]]);
+        await service['executeToolCalls']([{ id: 'c1', name: SEARCH, arguments: JSON.stringify({ queries: [], session_id: 'sess-g1' }) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+        expect(execute.mock.calls.map((args: unknown[]) => 'session_id' in (args[3] as object))).toEqual([true, false]);
+    });
+
+    it('counts a person’s own link search that makes things toward the Brick’s limit, as on the ordinary path', async () => {
+        const own: ToolServerEntry = { botId: 'b1', serverId: 'own1', serverUrl: 'https://own.example/mcp', authType: 'none', serverName: 'My link', fingerprint: 'fp-own' };
+        const ownPolicy: ServerPolicy = {
+            serverId: 'own1',
+            kind: 'tools',
+            state: 'confirmed',
+            policyRevision: 2,
+            settings: DEFAULTS,
+            tools: new Map<string, PolicyTool>([[SEARCH, { name: SEARCH, heading: 'makesNew', fingerprint: 'fp-own', suggestedHeading: 'makesNew', confirmed: true, setting: 'rightAway' }]]),
+        };
+        const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'own1' ? ownPolicy : serverId === 'cal1' ? calendarPolicy() : gmailPolicy()));
+        service['toolGate'] = new ToolGate({ read } as never, { check: vi.fn(async () => ({ kind: 'allowed', allowed: true })) } as never, { canManageBotTools: async () => false });
+        const check = vi.spyOn(service as never, 'checkHowMany' as never).mockResolvedValue({ kind: 'result', result: { status: 'waiting_for_ok' } } as never);
+        const servers = new Map<string, ToolServerEntry>([[SEARCH, { ...own, otherApps: [GMAIL, CALENDAR] }]]);
+        const [searched] = await service['executeToolCalls']([{ id: 'c1', name: SEARCH, arguments: '{"queries":[{"use_case":"events"}]}' }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+        expect(check).toHaveBeenCalledTimes(1);
+        expect(searched.result).toMatchObject({ status: 'waiting_for_ok' });
+        expect(execute).not.toHaveBeenCalled();
+    });
+});

@@ -761,6 +761,19 @@ export class AIService {
             const asked = await this.askForOk(botId, toolName, app, args, verdict, playerId, botClient, spaceName);
             if (asked.kind === 'result') return asked.result;
         }
+        // A lookup that makes new things (a person's own link whose search was reviewed as such) counts toward the Brick's limit, as on the
+        // ordinary path; the one that would pass it asks first, and a call that proves it made nothing gives its count back
+        const releases = new Map<string, () => void>();
+        for (const { app, args, verdict } of usable) {
+            if (verdict.kind !== 'run' || verdict.heading !== 'makesNew') continue;
+            // eslint-disable-next-line no-await-in-loop
+            const counted = await this.checkHowMany(botId, toolName, app, args, verdict, playerId, botClient, spaceName);
+            if (counted.kind === 'result') {
+                for (const give of releases.values()) give();
+                return counted.result;
+            }
+            if (counted.release) releases.set(app.serverId, counted.release);
+        }
         const asker = this.gatePerson(botId, playerId, botClient, spaceName);
         const answers = await Promise.all(
             usable.map(async ({ app, args, verdict }) => ({
@@ -774,7 +787,10 @@ export class AIService {
                 }),
             }))
         );
-        return this.withoutOffActions(botId, toolName, entry, joinLookupAnswers(answers));
+        for (const { app, answer } of answers.map((one, at) => ({ app: usable[at].app, answer: one.answer }))) if (['failed', 'notSent'].includes(outcomeOf(answer))) releases.get(app.serverId)?.();
+        // What is Off in any App is taken out of each App's answer before they are joined, so a label put in front of one can't hide it
+        const scrubbed = await Promise.all(answers.map(async (one) => ({ ...one, answer: await this.withoutOffActions(botId, toolName, entry, one.answer) })));
+        return joinLookupAnswers(scrubbed);
     }
 
     private gateCallFor(botId: string, toolName: string, entry: ToolServerEntry, person: BotAccessPerson, botClient?: BotClient, args?: unknown): GateCall {
@@ -5639,7 +5655,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 result = await alongside;
                                 break;
                             }
-                            const running = this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
+                            const running = this.callWithSessionFallback(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
                                 botId: botId!,
                                 callId: toolCall.id,
                                 ...(verdict.heading ? { heading: verdict.heading } : {}),
