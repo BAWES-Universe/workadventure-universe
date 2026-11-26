@@ -108,12 +108,15 @@ describe('a session the App’s link refused', () => {
         expect(sessionRefused({ error: 'Invalid session' }, { tools: [] })).toBe(false);
     });
 
-    it('is tried again only on a ready-made App’s own tools', () => {
+    it('is tried again only on a ready-made App’s own lookups, never on the batch that runs actions', () => {
         const refused = { error: 'Invalid session id sess-g1' };
-        expect(retryWithoutSession({ readyMade: true }, 'COMPOSIO_MULTI_EXECUTE_TOOL', sent, refused)).toEqual({ tools: sent.tools });
+        // A repeated write (a second calendar event) is worse than a refused one: the batch is never sent again, whatever the refusal says
+        expect(retryWithoutSession({ readyMade: true }, 'COMPOSIO_MULTI_EXECUTE_TOOL', sent, refused)).toBeUndefined();
+        expect(retryWithoutSession({ readyMade: true }, ' composio_multi_execute_tool ', sent, refused)).toBeUndefined();
+        expect(retryWithoutSession({ readyMade: true }, 'COMPOSIO_GET_TOOL_SCHEMAS', { tool_slugs: [], session_id: 'sess-g1' }, refused)).toEqual({ tool_slugs: [] });
         expect(retryWithoutSession({ readyMade: true }, 'composio_search_tools', { queries: [], session_id: 'sess-g1' }, refused)).toEqual({ queries: [] });
         // A person's own server: session_id can be a real input of the tool
-        expect(retryWithoutSession({}, 'COMPOSIO_MULTI_EXECUTE_TOOL', sent, refused)).toBeUndefined();
+        expect(retryWithoutSession({}, 'COMPOSIO_SEARCH_TOOLS', { queries: [], session_id: 'sess-g1' }, refused)).toBeUndefined();
         expect(retryWithoutSession({ readyMade: true }, 'end_session', { session_id: 'sess-g1' }, refused)).toBeUndefined();
     });
 

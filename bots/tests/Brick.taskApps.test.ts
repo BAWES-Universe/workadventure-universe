@@ -508,7 +508,7 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(answer).toContain('Gmail did not answer');
     });
 
-    it('tries an App’s step again without the session id its link refused, once, as its own try', async () => {
+    it('never tries a step of actions again, even when the link refused its session id: a repeated write is worse than a refused one', async () => {
         const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
         const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
         const seen: Array<{ args: Record<string, unknown>; callId: string }> = [];
@@ -522,10 +522,8 @@ describe('a ready-made App’s batch of actions in a run', () => {
         });
         const session = (await apps.open(run()))!;
         const answer = await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-g1' });
-        expect(seen.map((one) => 'session_id' in one.args)).toEqual([true, false]);
-        expect(new Set(seen.map((one) => one.callId)).size).toBe(2);
-        expect(answer).toContain('successful');
-        expect(answer).not.toContain('Invalid session');
+        expect(seen).toHaveLength(1);
+        expect(answer).toContain('Invalid session');
     });
 
     it('never tries a step again that may have run some of its actions, even when the error says session', async () => {

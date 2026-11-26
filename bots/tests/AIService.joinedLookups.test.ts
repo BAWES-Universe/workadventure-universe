@@ -221,23 +221,15 @@ describe('a batch on a Brick with Gmail and Calendar, after its actions were fou
 });
 
 describe('a session id that Calendar’s link does not know', () => {
-    it('is tried again without the session id for a batch that already got its OK, and the writes still ask first', async () => {
+    it('never sends a batch of actions again, whatever the refusal says: the answer is the refusal', async () => {
         const { service, execute, propose } = twoApps(gmailPolicy(), calendarPolicy());
-        const seen: Array<Record<string, unknown>> = [];
-        execute.mockImplementation(async (...args: unknown[]) => {
-            const input = args[3] as Record<string, unknown>;
-            seen.push(input);
-            return (input.session_id ? { error: 'Invalid session id: sess-g1' } : text({ successful: true, data: { ran: true } })) as never;
-        });
+        execute.mockImplementation(async (...args: unknown[]) => ((args[3] as Record<string, unknown>).session_id ? { error: 'Invalid session id: sess-g1' } : text({ successful: true, data: { ran: true } })) as never);
         const servers = new Map<string, ToolServerEntry>([[BATCH, { ...GMAIL, otherApps: [CALENDAR] }]]);
         const [batched] = await service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify({ tools: [{ tool_slug: 'GOOGLECALENDAR_EVENTS_LIST', arguments: {} }], session_id: 'sess-g1' }) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
-        // The lookup ran twice on Calendar: with the session, then without it; the answer is the second one
-        expect(seen.map((input) => 'session_id' in input)).toEqual([true, false]);
+        expect(execute).toHaveBeenCalledTimes(1);
         expect(execute.mock.calls.every((args: unknown[]) => args[0] === 'cal1')).toBe(true);
-        expect(wrote(batched.result).successful).toBe(true);
+        expect(JSON.stringify(batched.result)).toContain('Invalid session');
         expect(propose).not.toHaveBeenCalled();
-        const callIds = execute.mock.calls.map((args: unknown[]) => (args[10] as { callId: string }).callId);
-        expect(new Set(callIds).size).toBe(2);
     });
 
     it('never retries a write that was not approved: it asks first, and nothing is sent', async () => {
@@ -295,17 +287,14 @@ describe('a session id that Calendar’s link does not know', () => {
 describe('a write approved on its card, when the link refuses the session id', () => {
     const refused = { error: 'Invalid session id sess-g1' };
 
-    it('runs the approved batch once more without the session id, with its own call id, and only once', async () => {
+    it('runs the approved batch once, even when the link refuses its session id: a repeated write is worse than a refused one', async () => {
         const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
         execute.mockResolvedValueOnce(refused as never).mockResolvedValueOnce(text({ successful: true, data: { ran: true } }) as never);
         const batch = { tools: [{ tool_slug: 'GOOGLECALENDAR_CREATE_EVENT', arguments: { summary: 'Lunch' } }, { tool_slug: 'GOOGLECALENDAR_UPDATE_EVENT', arguments: { id: 'e1' } }], session_id: 'sess-g1', thought: 'week' };
         const answer = await service.runApprovedTool('b1', CALENDAR, BATCH, batch, 'uuid-khalid', undefined, { heading: 'changesThings', callId: 'card-1' });
-        expect(execute).toHaveBeenCalledTimes(2);
-        expect(execute.mock.calls.map((args: unknown[]) => 'session_id' in (args[3] as object))).toEqual([true, false]);
-        expect(execute.mock.calls.map((args: unknown[]) => (args[10] as { callId: string }).callId)).toEqual(['card-1', 'card-1:no-session']);
-        expect(wrote(answer).successful).toBe(true);
-        // The actions and their inputs are exactly what the card showed
-        expect((execute.mock.calls[1][3] as { tools: unknown[] }).tools).toEqual(batch.tools);
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect((execute.mock.calls[0][3] as { session_id?: string }).session_id).toBe('sess-g1');
+        expect(JSON.stringify(answer)).toContain('Invalid session');
     });
 
     it('runs one approved action once: it carries no session id to refuse', async () => {
@@ -317,11 +306,11 @@ describe('a write approved on its card, when the link refuses the session id', (
         expect('session_id' in (execute.mock.calls[0][3] as object)).toBe(false);
     });
 
-    it('never runs a third time', async () => {
+    it('never runs a second time', async () => {
         const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
         execute.mockResolvedValue(refused as never);
         await service.runApprovedTool('b1', CALENDAR, BATCH, { tools: [{ tool_slug: 'GOOGLECALENDAR_CREATE_EVENT', arguments: {} }], session_id: 'sess-g1' }, 'uuid-khalid', undefined, { heading: 'changesThings', callId: 'card-3' });
-        expect(execute).toHaveBeenCalledTimes(2);
+        expect(execute).toHaveBeenCalledTimes(1);
     });
 });
 

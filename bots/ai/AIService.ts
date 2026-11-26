@@ -525,8 +525,8 @@ export class AIService {
     /**
      * One call to an App's link tool, tried once more without the session id it carried when its link refused that session. With several
      * Apps the model carries the session id one App's link gave (a joined search keeps the oldest App's) to another App's link, which may
-     * not know it. Only a ready-made App's own tools, only a refusal of the whole call that names the session (so nothing ran), and only
-     * once, as its own try (its own call id): it is the same call, already allowed or already approved on its card.
+     * not know it. Only a ready-made App's lookups (search, schemas: they change nothing), only a refusal that names the session and says nothing
+     * more, and only once, as its own try (its own call id). Never the batch that runs actions: a repeated write is worse than a refused one.
      */
     private async callWithSessionFallback(
         entry: ToolServerEntry,

@@ -141,8 +141,12 @@ export function joinLookupAnswers(answers: ReadonlyArray<{ app: string; answer: 
     return [...good.map(({ app, answer }) => ({ type: 'text', text: `${app ? `${app}:\n` : ''}${textOf(answer)}` })), ...notes.map((text) => ({ type: 'text', text }))];
 }
 
-/** The link's own tools whose inputs may carry the session id of the link that gave it (search, schemas, batch). */
-const SESSION_TOOLS: ReadonlySet<string> = new Set(['COMPOSIO_SEARCH_TOOLS', 'COMPOSIO_GET_TOOL_SCHEMAS', 'COMPOSIO_MULTI_EXECUTE_TOOL']);
+/**
+ * The link's own tools that are tried again without a session id its link refused: the lookups only (search, schemas), which change nothing
+ * and are safe to repeat. Never the batch that runs actions: nothing proves the link refuses a session before it runs anything, and a repeated
+ * write (a second calendar event) is worse than a refused one, which only asks the model to start a new session.
+ */
+const SESSION_TOOLS: ReadonlySet<string> = new Set(['COMPOSIO_SEARCH_TOOLS', 'COMPOSIO_GET_TOOL_SCHEMAS']);
 
 /** The session id the inputs carry: `session_id`, else the `id` of `session`. */
 const sessionIdOf = (args: Record<string, unknown>): string | undefined => {
@@ -199,7 +203,7 @@ export function sessionRefused(answer: unknown, args: Record<string, unknown>): 
 
 /**
  * The inputs to try again with when this call failed only because its link refused the session id, or undefined when it is not to be
- * tried again: only an App's own ready-made link and only its own tools (search, schemas, batch), never a person's own server, where
+ * tried again: only an App's own ready-made link and only its lookups (search, schemas), never the batch that runs actions and never a person's own server, where
  * `session_id` can be a real input of the tool.
  */
 export function retryWithoutSession(entry: { readyMade?: boolean }, toolName: string, args: Record<string, unknown>, answer: unknown): Record<string, unknown> | undefined {
