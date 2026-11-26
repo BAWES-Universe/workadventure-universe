@@ -87,7 +87,7 @@ function looksLikeHtml(text: string): boolean {
 // Headers only a mail has (an HTTP response shares From, Date and Content-Type with it, so those alone do not say it is a mail)
 const MAIL_HEADER = /^(?:subject|message-id|received|mime-version|delivered-to)$/i;
 
-/** The headers of a mail: under a key `headers`, as name and value pairs, with at least one header only a mail has. Any other list of names and values is data. */
+/** The headers of a mail: under a key `headers` in a message part (the object has a `mimeType`, as a mail's payload does), as name and value pairs, with at least one header only a mail has. Any other list of names and values is data. */
 function isMailHeaders(value: unknown[]): value is { name: string; value: string }[] {
     const pairs = value.every((one) => isObject(one) && typeof one.name === 'string' && typeof one.value === 'string' && Object.keys(one).length === 2);
     return pairs && value.some((one) => MAIL_HEADER.test((one as { name: string }).name));
@@ -149,7 +149,7 @@ function tidy(value: unknown, taken: Taken, html: boolean): unknown {
                 out[key] = file;
             } else if (file !== null && key === 'encoding') {
                 out[key] = 'utf-8';
-            } else if (key.toLowerCase() === 'headers' && Array.isArray(inner) && isMailHeaders(inner)) {
+            } else if (key.toLowerCase() === 'headers' && Array.isArray(inner) && typeof value.mimeType === 'string' && isMailHeaders(inner)) {
                 const kept = inner.filter((header) => !ROUTING_HEADER.test(header.name));
                 if (kept.length < inner.length) taken.count++;
                 out[key] = kept;

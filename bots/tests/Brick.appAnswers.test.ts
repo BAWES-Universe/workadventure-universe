@@ -138,6 +138,9 @@ describe('routing headers are only taken from the headers of a mail', () => {
         // An HTTP response shares From, Date and Content-Type with a mail: those alone do not make it one
         const response = { headers: [{ name: 'Content-Type', value: 'application/json' }, { name: 'Date', value: 'Tue, 25 Nov 2026 09:00:00 GMT' }, { name: 'From', value: 'a@b.test' }, { name: 'X-Request-Id', value: 'abc' }] };
         expect(fitAppAnswer(response)).toBe(JSON.stringify(response));
+        // HTTP lets any name be a header, Subject included: without a mail's own part around them they are data
+        const subject = { headers: [{ name: 'Subject', value: 'report' }, { name: 'X-Request-Id', value: 'abc' }] };
+        expect(fitAppAnswer(subject)).toBe(JSON.stringify(subject));
         const http = { headers: [{ name: 'X-Request-Id', value: 'abc' }, { name: 'X-Trace', value: 'def' }] };
         expect(fitAppAnswer(http)).toBe(JSON.stringify(http));
     });
@@ -145,7 +148,7 @@ describe('routing headers are only taken from the headers of a mail', () => {
     it('takes them from a mail whose headers are under `headers`, in any case', () => {
         const headers = [{ name: 'Subject', value: 'Hi' }, { name: 'Received', value: 'from x' }, { name: 'X-Mailer', value: 'y' }];
         for (const key of ['headers', 'Headers']) {
-            const read = JSON.parse(fitAppAnswer({ payload: { [key]: headers } })) as { payload: Record<string, { name: string }[]> };
+            const read = JSON.parse(fitAppAnswer({ payload: { mimeType: 'multipart/alternative', [key]: headers } })) as { payload: Record<string, { name: string }[]> };
             expect(read.payload[key].map((header) => header.name)).toEqual(['Subject']);
         }
     });
