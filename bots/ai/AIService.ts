@@ -236,7 +236,12 @@ type ResolvedProvider =
     | { resting: true; line: string };
 
 /** Where this bot's images go, when Orbit says (the Vision row): its own model, Universe AI, or a Vision model on the maker's key. */
-type ResolvedVision = { choice: 'this' } | { choice: 'universe-ai' } | { choice: 'another'; config: AIProviderConfig };
+type ResolvedVision =
+    | { choice: 'this' }
+    | { choice: 'universe-ai' }
+    | { choice: 'another'; config: AIProviderConfig }
+    /** The place the owner picked for images can't be used now (its key is gone, down or can't be read): nobody looks at them. */
+    | { choice: 'unavailable' };
 
 /** Refs that only Orbit can resolve for a bot: Universe AI (follows the Default) and a person's own key (`key-…`). */
 /**
@@ -279,6 +284,10 @@ const readsForTheGroup = (name: string): boolean => name === FIND_FILES_TOOL || 
  */
 export function telemetryToolNames(names: readonly string[], own: ReadonlySet<string>): string[] {
     return names.filter(Boolean).map((name) => (own.has(name) ? name : 'other'));
+}
+/** The lines an image people sent leaves in the text ("[User also sent an image: <url>]"), taken out when nothing may look at it. */
+export function withoutImageLinks(message: string): string {
+    return message.replace(/^\[User (?:also )?sent an image[^\]\n]*?: https?:\/\/[^\s\]]+\]\n?/gm, '').trimEnd();
 }
 const UNIVERSE_AI_REF = 'universe-ai';
 const OWN_KEY_PREFIX = 'key-';
@@ -898,11 +907,13 @@ export class AIService {
     }
 
     /**
-     * Orbit's plan for the bot's images. A key picked for images that can't be read here is never swapped for Universe AI: the
-     * images are left to the bot's own model, as when Orbit itself says the key can't be used.
+     * Orbit's plan for the bot's images. A key picked for images that can't be read here is never swapped for Universe AI or the
+     * bot's own model: nobody looks until the owner picks again, as when Orbit itself says the key can't be used.
      */
     private visionFromAnswer(plan: BotVisionPlan | undefined): ResolvedVision | undefined {
         if (!plan) return undefined;
+        // Orbit says the key picked for images can't be used now: the owner's pick stays, nobody looks until they pick again
+        if (plan.choice === 'this' && plan.problem === 'key') return { choice: 'unavailable' };
         if (plan.choice !== 'another') return { choice: plan.choice };
         try {
             // The model picked is the one that looks: no declared visionModel may stand in for it, and Orbit has checked it sees
@@ -910,8 +921,8 @@ export class AIService {
             config.ownKey = { addressTyped: plan.credentials.keyAddressTyped !== false };
             return { choice: 'another', config };
         } catch (error) {
-            console.error('[AIService] The key picked for images could not be read; leaving images to the bot\'s own model:', error);
-            return { choice: 'this' };
+            console.error('[AIService] The key picked for images could not be read; nobody looks at images until the owner picks again:', error);
+            return { choice: 'unavailable' };
         }
     }
 
@@ -1571,10 +1582,11 @@ export class AIService {
                 // be the one answering (persona, chat instructions, tools).
                 const visionCapable = this.providerRegistry.supportsVision(config);
                 // Who looks: when Orbit says (the Vision row), what the owner picked or the shown default; otherwise as it always
-                // was. A person's own key without Vision never has its images described by Universe AI unless the owner picked it:
-                // the image would leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
+                // was. A person's own key without Vision never has its images described by Universe AI unless Orbit's plan says so
+                // (the owner's pick, or the default the page shows): otherwise the image would leave their key (or their own
+                // computer) and Universe would pay for it. Without a plan the link stays in the text.
                 const plan = visionPlan;
-                const lookWith: 'self' | 'link' | 'universe-ai' | 'another' = plan
+                const lookWith: 'self' | 'link' | 'universe-ai' | 'another' | 'unavailable' = plan
                     ? plan.choice === 'this'
                         ? visionCapable
                             ? 'self'
@@ -1585,7 +1597,12 @@ export class AIService {
                       : resolved.source === 'own-key'
                         ? 'link'
                         : 'universe-ai';
-                if (lookWith !== 'self') {
+                if (lookWith === 'unavailable') {
+                    // The picked place can't be used: no image goes to the bot's own model or any other provider, and no link to it
+                    // stays in the text. The reply is still written, and the owner's pick is kept (the page says to pick again).
+                    message = `${withoutImageLinks(message)}\n[An image was sent, but nothing can look at it right now, so what is in it is not known. Say so in one short line. Do not ask the person to describe it or to do anything else for it.]`;
+                    visionImages = undefined;
+                } else if (lookWith !== 'self') {
                     const description =
                         lookWith === 'another' && plan?.choice === 'another'
                             ? await this.describeImages(plan.config, visionImages, abortSignal)
@@ -1612,7 +1629,9 @@ export class AIService {
                     }
                     else {
                         // Nothing looked at it (the pick is "this model" and it can't see, or the one picked failed just now): say so
-                        // to the model, so it tells the person plainly instead of asking them to describe what they sent
+                        // to the model, so it tells the person plainly instead of asking them to describe what they sent. When the
+                        // place picked is another model or Universe AI and it failed, the link must not reach the main model either.
+                        if (plan && (lookWith === 'another' || lookWith === 'universe-ai')) message = withoutImageLinks(message);
                         message = `${message}\n[The image could not be looked at, so what is in it is not known. Say so in one short line. Do not ask the person to describe it or to do anything else for it.]`;
                     }
                     // Images are NOT passed to a text-only main model (it would 400 on
@@ -4661,6 +4680,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (vision) {
             if (vision.choice === 'another') return { look: (url: string) => this.describeImages(vision.config, [url], abortSignal) };
             if (vision.choice === 'universe-ai') return { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
+            // "This model", or a place that can't be used now: nothing else looks
             return {};
         }
         return source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
