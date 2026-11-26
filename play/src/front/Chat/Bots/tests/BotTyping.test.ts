@@ -113,6 +113,25 @@ describe("workingBotIds", () => {
 });
 
 describe("typingExceptWorkingBots", () => {
+    it("shows a bot that is typing once its line was left working for over an hour, and hides it before", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-11-26T10:00:00Z"));
+        try {
+            const line = stepsLine({ chatId: BOT }, { ...steps("working"), startedAt: Date.now() });
+            const typing = writable([member(BOT), member("@sara:matrix.bawes.net")]);
+            const shown = typingExceptWorkingBots(typing, workingBotIds(writable([line.message])));
+            const seen: string[][] = [];
+            const stop = shown.subscribe((members) => seen.push(members.map((m) => m.id)));
+            expect(seen.at(-1)).toEqual(["@sara:matrix.bawes.net"]);
+            vi.advanceTimersByTime(61 * 60 * 1000);
+            // Typing is a live signal that ends by itself, so a bot still in it is writing now, not stuck on the old line
+            expect(seen.at(-1)).toEqual([BOT, "@sara:matrix.bawes.net"]);
+            stop();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it("hides a bot while its steps line works and shows it again after", () => {
         const line = stepsLine({ chatId: BOT }, steps("working"));
         const typing = writable([member(BOT), member("@sara:matrix.bawes.net")]);

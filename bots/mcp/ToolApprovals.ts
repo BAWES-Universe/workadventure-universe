@@ -16,7 +16,7 @@
  * The card and where it sits are kept in this process; after a restart the saved action still takes its tap, and the card
  * is shown again as a new notice instead of being edited.
  */
-import { askEdit, askNotice, buildAsk, cardTitle, cardWords, outcomeOf, rememberOffer, resultLine, type AskAnswer, type AskDecision, type AskField, type CardFacts, type ParsedTap } from './ApprovalCard';
+import { askEdit, askNotice, buildAsk, cardTitle, cardWords, outcomeOf, rememberOffer, resultLine, resultText, type AskAnswer, type AskDecision, type AskField, type CardFacts, type ParsedTap } from './ApprovalCard';
 import { acceptLine, fallbackLine, nameForLine, WORDS_SYSTEM, wordsPrompt, type Moment } from './NearbyWords';
 import type { GateCall, GateDecision, ToolGate } from './ToolGate';
 import type { ToolServerEntry } from './MCPConnector';
@@ -750,8 +750,9 @@ export class ToolApprovals {
                 if (quantity.known) this.made.add(this.countKey(botId, roomId, person), quantity.count, requestEpoch);
             }
             if (outcome === 'succeeded') {
+                // The card shows words only; the bot is still told whatever came back (as data), so it can say it in its own words
                 const line = resultLine(result);
-                return void (await finish('succeeded', line ? { result: line } : {}, 'done', line));
+                return void (await finish('succeeded', line ? { result: line } : {}, 'done', resultText(result)));
             }
             if (outcome === 'uncertain') return void (await finish('uncertain', { unknown: true }, 'unknown'));
             const why = errorLine(result);

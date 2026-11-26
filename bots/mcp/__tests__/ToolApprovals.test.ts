@@ -243,6 +243,15 @@ describe('Create (approve)', () => {
         expect(s.outcomes).toEqual([expect.objectContaining({ state: 'done', title: 'Create issue', result: 'Created WEB-12', person: SARA })]);
     });
 
+    it('keeps data off the card but still tells the bot what came back', async () => {
+        s = setup({ runResult: [{ type: 'text', text: '{"successful":true,"data":{"id":"WEB-12"}}' }] });
+        await s.approvals.propose(input());
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(field(s.sent.at(-1)!.content).answer).toEqual({ option: 'approve' });
+        expect(s.outcomes).toEqual([expect.objectContaining({ state: 'done', result: '{"successful":true,"data":{"id":"WEB-12"}}' })]);
+    });
+
     it('runs it once however many times it is tapped', async () => {
         await s.approvals.propose(input());
         const first = s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));

@@ -302,15 +302,46 @@ export function outcomeOf(result: unknown): 'succeeded' | 'failed' | 'notSent' |
 }
 
 /**
+ * Whether text is data that reads as code: JSON that starts with `{` or a list (`[1, 2]`, `[{...}]`, `["a"]`, `[]`), also
+ * inside a code fence. A bracketed word before plain text ("[Gmail] Message sent") is a sentence, not data.
+ */
+export function looksLikeData(text: string): boolean {
+    let body = text.trim();
+    const fence = /^```[\w-]*\s*/.exec(body);
+    if (fence) body = body.slice(fence[0].length).replace(/\s*```\s*$/, '').trim();
+    if (body.startsWith('{')) return true;
+    if (!body.startsWith('[')) return false;
+    try {
+        JSON.parse(body);
+        return true;
+    } catch {
+        // Not whole JSON (cut short, or a fence after it): a list still starts with `[{`, `[[`, `["`, `[]` or a value and a comma, while "[1] emails found" or "[2024-05-01] Sent" is a sentence
+        return /^\[\s*(?:[[{"\]]|-?\d+(?:\.\d+)?\s*,|(?:true|false|null)\s*,)/.test(body);
+    }
+}
+
+/** The first text of what a tool gave back, whatever it says, on one line (for the bot's own follow-up, where it is data and never an instruction). */
+export function resultText(result: unknown): string | undefined {
+    const items = Array.isArray(result) ? result : [result];
+    for (const item of items) {
+        const text = typeof item === 'string' ? item : isPlain(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : undefined;
+        const line = text?.replace(/\s+/g, ' ').trim();
+        if (line) return clip(line, RESULT_MAX);
+    }
+    return undefined;
+}
+
+/**
  * What the tool gave back, on one short line for the card: its first text in words, or nothing. An answer that is data
- * (it starts with `{` or `[`) is never a line: it reads as code, and the bot says what came back in its own words.
+ * is never a line on the card: it reads as code, and the bot says what came back in its own words (it is still told what
+ * came back, see `resultText`).
  */
 export function resultLine(result: unknown): string | undefined {
     const items = Array.isArray(result) ? result : [result];
     for (const item of items) {
         const text = typeof item === 'string' ? item : isPlain(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : undefined;
         const line = text?.replace(/\s+/g, ' ').trim();
-        if (!line || /^[[{]/.test(line)) continue;
+        if (!line || looksLikeData(line)) continue;
         return clip(line, RESULT_MAX);
     }
     return undefined;
