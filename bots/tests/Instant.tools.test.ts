@@ -228,8 +228,9 @@ describe('what the model is offered', () => {
         expect(defs[0].function.name).toBe('instant_app_exa_search');
         expect(defs[0].function.parameters).toBe(SEARCH_SCHEMA);
         expect(defs[0].function.description).toMatch(/^Search the web\./);
-        // An App that is not a research one (or of no kind) keeps "once for a question"
-        expect(defs[0].function.description).toMatch(/runs once for your owner .* never again for the same question\.$/);
+        // An App that is not a research one (or of no kind) keeps "once for each thing asked", never "once for a question"
+        expect(defs[0].function.description).toMatch(/runs for your owner .* once for each thing asked: never again for the same thing, while a request that needs several runs \(two emails, three events\) gets one run for each\.$/);
+        expect(defs[0].function.description).not.toMatch(/same question|runs once/);
         expect(defs[0].function.description).not.toMatch(/never twice with the same words/);
         expect(isInstantTool(defs[0].function.name)).toBe(true);
         expect(isInstantTool('use_computer')).toBe(false);
@@ -254,7 +255,8 @@ describe('what the model is offered', () => {
         expect(note).toMatch(/Never say who runs an App for Universe/);
         expect(note).toMatch(/More credit is never the answer to something that is not available/);
         expect(note).toMatch(/never in a loop/);
-        expect(note).toMatch(/once for a question, never in a loop, never to try it out/);
+        expect(note).toMatch(/once for each thing asked \(a request that needs several runs, like emailing two people, gets one run for each\), never again for the same thing, never in a loop, never to try it out/);
+        expect(note).not.toMatch(/once for a question|same question/);
         expect(note).not.toMatch(/try another|never twice with the same words/);
         expect(note).toMatch(/When a rule they set says no/);
         expect(note).not.toMatch(/didn.t work/i);
@@ -304,8 +306,8 @@ describe('research Apps on by default: what the Brick knows about them', () => {
         expect(defs.map((def) => def.function.description.split(':')[0])).toEqual(['Exa (papers, companies and people)', 'Exa (papers, companies and people)', 'Tavily (fresh news and quick facts)']);
         // A research App may be searched again with other words; the general rule names it as the one exception
         for (const def of defs) expect(def.function.description).toMatch(/never twice with the same words\.$/);
-        expect(note).toMatch(/once for a question, never in a loop/);
-        expect(note).toMatch(/Research Apps are the one exception to once for a question/);
+        expect(note).toMatch(/once for each thing asked \(a request that needs several runs/);
+        expect(note).toMatch(/Research Apps are the one exception to once for each thing asked/);
     });
 
     it('says once, the first time an App is used, that the owner’s own free account has no Universe limit, only for Apps that are new to them', () => {
@@ -328,8 +330,8 @@ describe('research Apps on by default: what the Brick knows about them', () => {
         // Mixed: only the research one is named as research
         const mixed = listing({ tools: [...research().tools, ...other.tools] });
         expect(researchAppsOf(mixed).map((one) => one.app)).toEqual(['Exa', 'Tavily']);
-        // ...and only the research ones may be searched again: Gmail keeps "never again for the same question"
-        const tails = instantToolDefinitions(mixed).map((def) => (def.function.description.endsWith('never twice with the same words.') ? 'again' : def.function.description.endsWith('never again for the same question.') ? 'once' : '?'));
+        // ...and only the research ones may be searched again: Gmail keeps "once for each thing asked"
+        const tails = instantToolDefinitions(mixed).map((def) => (def.function.description.endsWith('never twice with the same words.') ? 'again' : def.function.description.endsWith('gets one run for each.') ? 'once' : '?'));
         expect(tails).toEqual(['again', 'again', 'again', 'once']);
     });
 
@@ -465,6 +467,16 @@ describe('one Instant run', () => {
         expect(ran.result).toMatchObject({ success: true, data: { results: ['a'] }, receipt: '[What it used](#usage=act_1)' });
         expect(String(ran.result.note)).toMatch(/Never say a price/);
         noMoney({ ...ran.result, data: undefined });
+    });
+
+    it('a request that needs two runs of one App (email two people) runs both: each is sent to Orbit, with its own call id, and both work', async () => {
+        const instantRun = answers({ status: 'done', data: { sent: 'ali' }, chargedMicros: 1000 }, { status: 'done', data: { sent: 'mona' }, chargedMicros: 1000 });
+        const first = await go(instantRun, { taskKey: 'instant-2', arguments: { to: 'ali@example.com' } });
+        const second = await go(instantRun, { taskKey: 'instant-2', arguments: { to: 'mona@example.com' } });
+        expect(instantRun).toHaveBeenCalledTimes(2);
+        expect(instantRun.mock.calls.map(([, body]) => body.arguments)).toEqual([{ to: 'ali@example.com' }, { to: 'mona@example.com' }]);
+        expect(instantRun.mock.calls[0][1].callId).not.toBe(instantRun.mock.calls[1][1].callId);
+        expect([first.ended, second.ended]).toEqual(['worked', 'worked']);
     });
 
     it('a very long answer is cut and says so', async () => {
