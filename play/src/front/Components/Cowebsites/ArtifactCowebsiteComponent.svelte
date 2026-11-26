@@ -932,17 +932,21 @@
             {:else}
                 <!-- The locked box: its scripts run, but the page has no origin of its own, no network except common
                      libraries, and no way into the game. The address is outside the game's own. A link in it opens in
-                     a new tab when tapped, as the other site itself (a booking, a map), never in place of the game. -->
-                <iframe
-                    title={$LL.chat.artifacts.frameTitle({ title, maker: makerName })}
-                    src={opened.version.url}
-                    sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-                    referrerpolicy="no-referrer"
-                    allow=""
-                    data-testid="artifactFrame"
-                    bind:this={frameElement}
-                    on:load={onFrameLoad}
-                />
+                     a new tab when tapped, as the other site itself (a booking, a map), never in place of the game.
+                     Each opening gets a frame of its own: the page of the one before goes at the switch, so nothing it says
+                     afterwards comes from this window's frame, and a page heard here first spoke in the opening on show. -->
+                {#key opening}
+                    <iframe
+                        title={$LL.chat.artifacts.frameTitle({ title, maker: makerName })}
+                        src={opened.version.url}
+                        sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+                        referrerpolicy="no-referrer"
+                        allow=""
+                        data-testid="artifactFrame"
+                        bind:this={frameElement}
+                        on:load={onFrameLoad}
+                    />
+                {/key}
                 {#if payView}
                     <div class="pay-line" class:closable={payView.closable} role="status" data-testid="artifactPayLine">
                         {#if payView.closable}
