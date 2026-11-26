@@ -654,6 +654,10 @@ const chat: DeepPartial<Translation["chat"]> = {
                 "أنت تكتب على حاسوب {name}. برنامج ثبّته {name} ما زال يعمل ويمكنه أن يرى ما تكتبه.",
             notReady: "تعذّر تجهيز الحاسوب. لم يتغيّر شيء عليه. حاول مرة أخرى.",
         },
+        files: {
+            artifactsMade: "الأعمال التي أنشأها: {count}",
+            opensArtifacts: "يفتح أعمالك",
+        },
     },
     artifacts: {
         kindApp: "تطبيق مصغّر",
@@ -777,12 +781,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         artifactsEmpty: "لا توجد أعمال بعد",
         artifactsMore: "عرض المزيد",
         artifactsFailed: "تعذّر تحميل الأعمال.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "الأعمال التي أنشأها: {count}",
-            opensArtifacts: "يفتح أعمالك",
-        },
     },
 };
 
