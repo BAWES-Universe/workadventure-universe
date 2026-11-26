@@ -14,6 +14,7 @@
  * Pure of the AI and of the chat: the tools, the gate, the cards and the call are somebody else's (injected).
  */
 import { createHash } from 'crypto';
+import { SCRUBBED_LOOKUPS, isOffRow, withoutOff } from '../mcp/AppActions';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
 import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
@@ -27,7 +28,8 @@ export const APP_RESULT_MAX = 12_000;
 export interface TaskAppsDeps {
     /** The tools the Brick's Apps give, and where each one lives. Throws when they cannot be listed. */
     discover(brickId: string): Promise<{ tools: ToolDefinition[]; servers: Map<string, ToolServerEntry> }>;
-    gate: Pick<ToolGate, 'decide'>;
+    /** `appPolicy`, when given, reads a ready-made App's actions, so an action Off in it is taken out of what the link's lookups answer. */
+    gate: Pick<ToolGate, 'decide'> & Partial<Pick<ToolGate, 'appPolicy'>>;
     approvals: { propose(input: ProposeInput): Promise<Proposed> };
     /** The person's own chat with the Brick, where the card goes; never made here. */
     room(brickId: string, matrixUserId: string): Promise<{ ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' }>;
@@ -101,6 +103,16 @@ export class TaskApps {
         };
     }
 
+    /** What a ready-made App's own lookups answer (its search, its schemas) never shows an action that is Off in any of the Brick's Apps, as in chat. */
+    private async withoutOffActions(brickId: string, name: string, entry: ToolServerEntry, answer: unknown): Promise<unknown> {
+        const readPolicy = this.deps.gate.appPolicy?.bind(this.deps.gate);
+        if (!readPolicy || !SCRUBBED_LOOKUPS.has(name.trim().toUpperCase())) return answer;
+        const apps = [entry, ...(entry.otherApps ?? [])].filter((app) => app.readyMade);
+        if (apps.length === 0) return answer;
+        const policies = (await Promise.all(apps.map((app) => readPolicy(brickId, app.serverId)))).filter((policy) => !!policy);
+        return policies.length > 0 ? withoutOff(answer, (slug) => policies.some((policy) => isOffRow(policy!, slug))) : answer;
+    }
+
     private gateCall(run: DueRun, toolName: string, entry: ToolServerEntry): GateCall {
         return {
             botId: run.brickId,
@@ -134,7 +146,8 @@ export class TaskApps {
             const heading = verdict.heading!;
             const asks = verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading);
             if (!asks) {
-                return asText(await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) }));
+                const answer = await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) });
+                return asText(await this.withoutOffActions(run.brickId, name, entry, answer));
             }
             return await this.askFor(
                 run,

@@ -257,3 +257,25 @@ describe('the model of a check with Apps', () => {
         expect(text).toMatch(/cannot send anything to anyone, use an app/);
     });
 });
+
+describe('a ready-made App’s lookups in a goal or task', () => {
+    it('never show an action that is Off in any of the Brick’s Apps', async () => {
+        const gmail: ToolServerEntry = { ...entry('COMPOSIO_SEARCH_TOOLS'), serverId: 'g1', serverName: 'Gmail', readyMade: true, orbitUrl: 'https://orbit.example' };
+        const calendar: ToolServerEntry = { ...gmail, serverId: 'cal1', serverName: 'Google Calendar' };
+        const off = (serverId: string, slug: string) => ({ serverId, kind: 'appActions', state: 'confirmed', policyRevision: 1, settings: { looksUp: 'rightAway', makesNew: 'rightAway', changesThings: 'asksFirst', deletesOrSends: 'asksFirst' }, tools: new Map([[slug, { name: slug, title: slug, heading: 'deletesOrSends', fingerprint: 'r', suggestedHeading: 'deletesOrSends', confirmed: true, setting: 'off' }]]) });
+        const appPolicy = vi.fn(async (_bot: string, serverId: string) => (serverId === 'g1' ? off('g1', 'GMAIL_DELETE_MESSAGE') : off('cal1', 'GOOGLECALENDAR_DELETE_EVENT')));
+        const { apps } = setUp(
+            { COMPOSIO_SEARCH_TOOLS: RUN('looksUp') },
+            {
+                discover: async () => ({ tools: [tool('COMPOSIO_SEARCH_TOOLS')], servers: new Map([['COMPOSIO_SEARCH_TOOLS', { ...gmail, otherApps: [calendar] }]]) }),
+                gate: { decide: async () => RUN('looksUp'), appPolicy } as never,
+                call: async () => [{ type: 'text', text: '{"results":[{"tool_slug":"GMAIL_DELETE_MESSAGE"},{"tool_slug":"GOOGLECALENDAR_DELETE_EVENT"},{"tool_slug":"GMAIL_FETCH_EMAILS"}]}' }],
+            }
+        );
+        const session = await apps.open(run());
+        const answer = await session!.call('COMPOSIO_SEARCH_TOOLS', {});
+        expect(answer).toContain('GMAIL_FETCH_EMAILS');
+        expect(answer).not.toContain('GMAIL_DELETE_MESSAGE');
+        expect(answer).not.toContain('GOOGLECALENDAR_DELETE_EVENT');
+    });
+});
