@@ -310,6 +310,19 @@ describe('what runs is what the card showed', () => {
         expect(propose).not.toHaveBeenCalled();
     });
 
+    it('judges actions with inputs written as JSON text one by one: an Off one is never sent and the rest runs', async () => {
+        const { service, execute } = brickService(gmailPolicy({ GMAIL_DELETE_MESSAGE: 'off' }));
+        const [result] = await call(service, {
+            tools: [
+                { tool_slug: 'GMAIL_FETCH_EMAILS', arguments: '{"max":5}' },
+                { tool_slug: 'GMAIL_DELETE_MESSAGE', arguments: '{"id":"m1"}' },
+            ],
+        });
+        expect(sentSlugs(execute)).toEqual([['GMAIL_FETCH_EMAILS']]);
+        expect((execute.mock.calls[0] as unknown[])[3]).toMatchObject({ tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { max: 5 } }] });
+        expect(result.result.summary).toContain('Delete message is off');
+    });
+
     it('refuses a batch whose inputs can’t be read as an object (the card could not show them), and sends nothing', async () => {
         const { service, execute, propose } = brickService(gmailPolicy());
         for (const inputs of ['to boss: I quit', '["I quit"]', 42]) {
