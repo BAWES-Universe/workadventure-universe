@@ -181,6 +181,10 @@ export interface DmReply {
     claimOffer?: () => Promise<string | null>;
     /** The same for an App offer's card (game #2001). */
     claimApp?: () => Promise<string | null>;
+    /** The card claimed by `claimOffer` never reached the person: Orbit takes the claim back, so a card nobody saw does not close the topic. Never throws. */
+    releaseOffer?: () => Promise<void>;
+    /** The same for an App offer's card (one the person asked for by name was never claimed, so there is nothing to take back). */
+    releaseApp?: () => Promise<void>;
     /** A tool's sign-in expired and this person manages the bot (#1819): the Reconnect card to send after the reply. */
     toolSignIn?: ToolSignInCard;
     /** Says how the Reconnect card's send went (see AIStreamChunk.toolSignInDelivery) */
@@ -828,6 +832,8 @@ export class DmReplyService extends BaseBehavior {
         if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer' && note.kind !== 'app');
         const claimOffer = this.offerClaim(bricks, botId, person.uuid);
         const claimApp = this.appClaim(bricks, botId, person.uuid);
+        const releaseOffer = this.offerRelease(bricks, botId, person.uuid);
+        const releaseApp = this.appRelease(bricks, botId, person.uuid);
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
@@ -856,6 +862,8 @@ export class DmReplyService extends BaseBehavior {
             ...(newJob && replyText.trim() ? { newJob } : {}),
             ...(claimOffer ? { claimOffer } : {}),
             ...(claimApp ? { claimApp } : {}),
+            ...(releaseOffer ? { releaseOffer } : {}),
+            ...(releaseApp ? { releaseApp } : {}),
             ...(toolSignIn ? { toolSignIn, ...(toolSignInDelivery ? { toolSignInDelivery } : {}) } : {}),
         };
     }
@@ -900,6 +908,22 @@ export class DmReplyService extends BaseBehavior {
                     console.warn('[DmReplyService] Could not ask Orbit about an App offer:', error instanceof Error ? error.message : error);
                     return null;
                 }));
+    }
+
+    /** Takes back the claim for this reply's suggestion once its card was not delivered (see `releaseOffer`). Never throws. */
+    private offerRelease(bricks: BrickNote[], botId: string, userId: string): (() => Promise<void>) | undefined {
+        const offer = bricks.find((note): note is BrickOfferNote => note.kind === 'offer');
+        const admin = this.adminApiService;
+        if (!offer || !admin) return undefined;
+        return async () => void (await admin.releaseBrickOffer(botId, userId, offer.topic));
+    }
+
+    /** The same for an App offer. One the person asked for by name was never claimed, so it has nothing to take back. */
+    private appRelease(bricks: BrickNote[], botId: string, userId: string): (() => Promise<void>) | undefined {
+        const offer = bricks.find((note): note is AppOfferNote => note.kind === 'app');
+        const admin = this.adminApiService;
+        if (!offer || offer.asked || !admin) return undefined;
+        return async () => void (await admin.releaseBrickOffer(botId, userId, offer.topic));
     }
 
     /**

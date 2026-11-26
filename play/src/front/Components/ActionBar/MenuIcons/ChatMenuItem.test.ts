@@ -12,10 +12,26 @@ vi.mock("../../../Phaser/Game/GameManager", () => {
         gameManager: {
             getCurrentGameScene: () => ({ proximityChatRoom: room() }),
             getChatConnection: () => Promise.resolve(),
-            chatConnection: { rooms: readable([]), directRooms: readable([]), invitations: readable([]) },
+            chatConnection: {
+                rooms: readable([]),
+                directRooms: readable([]),
+                invitations: readable([]),
+                connectionStatus: readable("OFFLINE"),
+            },
         },
     };
 });
+const unopenedBricks = vi.hoisted(() => ({ count: undefined as unknown as { set: (value: number) => void } }));
+vi.mock("../../../Chat/Bricks/BrickChat", async () => {
+    const { writable: store } = await import("svelte/store");
+    const count = store(0);
+    unopenedBricks.count = count;
+    return { unopenedBrickCountOf: () => count };
+});
+vi.mock("../../../Chat/Bricks/MyBricksStore", () => ({
+    refreshMyChatId: vi.fn(),
+    loadMyBricks: vi.fn(() => Promise.resolve()),
+}));
 const switchToChat = vi.hoisted(() => vi.fn());
 vi.mock("../../../Chat/Stores/ChatStore", () => ({
     navChat: { switchToChat },
@@ -60,6 +76,7 @@ describe("ChatMenuItem", () => {
         chatVisibilityStore.set(false);
         chatComposerFocusRequestStore.set(0);
         switchToChat.mockClear();
+        unopenedBricks.count.set(0);
     });
 
     afterEach(() => {
@@ -90,5 +107,14 @@ describe("ChatMenuItem", () => {
         await clickChatButton();
         expect(get(chatVisibilityStore)).toBe(false);
         expect(get(chatComposerFocusRequestStore)).toBe(0);
+    });
+
+    it("counts a Brick the person never opened as one unread message on the chat button", async () => {
+        mount({});
+        await tick();
+        expect(target.querySelector('[data-testid="chatUnreadBadge"]')).toBeNull();
+        unopenedBricks.count.set(2);
+        await tick();
+        expect(target.querySelector('[data-testid="chatUnreadBadge"]')?.textContent?.trim()).toBe("2");
     });
 });

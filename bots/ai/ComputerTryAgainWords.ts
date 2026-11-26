@@ -118,6 +118,13 @@ export const WHICH_EARLIER_JOB_NOTE =
 export const whichEarlierJobSaid = (line: string): string =>
     `It is not clear which earlier job they mean, and NOTHING was started. Say this to them in their language, in these words, and nothing more about it: "${line}" Do not call use_computer again for it in this turn. When they answer, call use_computer with that job's title and try_again true.`;
 
+/** The same for the question that tells jobs of one title apart by when they ended (FINAL, 24 Nov): the answer names the one they chose by its place in the question. */
+export const WHICH_EARLIER_DATED_NOTE =
+    'It is not clear which earlier job they mean, and NOTHING was started. A fixed line under your reply already asks them which, in its own words: do not ask it again and do not reword it. ' +
+    'Do not call use_computer again for it in this turn. When they answer, call use_computer with that job\'s title, try_again true and pick: the number of the job they chose, counting the jobs in the question from the first one named.';
+export const whichEarlierDatedSaid = (line: string): string =>
+    `It is not clear which earlier job they mean, and NOTHING was started. Say this to them in their language, in these words, and nothing more about it: "${line}" Do not call use_computer again for it in this turn. When they answer, call use_computer with that job's title, try_again true and pick: the number of the job they chose, counting the jobs in the question from the first one named.`;
+
 /** The same for the offer to start it as a new job (no earlier job was found to carry on). */
 export const NEW_JOB_OFFER_NOTE =
     'No earlier job was found to carry on, and NOTHING was started. A fixed line under your reply already offers to start it as a new job: do not say it again and do not reword it. Do not call use_computer again for it in this turn.';

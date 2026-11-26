@@ -39,8 +39,12 @@ describe.runIf(!!URL)('the durable inbox, CodeRabbit pass on #2114 (a real Redis
                 ...used.map((id) => `matrix:inbox-resend:${id}`),
                 ...used.map((id) => `matrix:inbox-waited:${id}`),
                 ...used.map((id) => `matrix:room-order:!room-${id}:matrix.test`),
+                // a closure writes the notice to the person in the outbox (GPT's eighth note G): a test that closes an entry without sending it leaves it for the next scan, so it goes too
+                ...used.map((id) => `matrix:outbox:${id}`),
+                ...used.map((id) => `matrix:outbox-sent:${id}`),
             ]);
         for (const id of used) await client.zRem(INBOX_KEY, id);
+        for (const id of used) await client.zRem('matrix:outbox', id);
         used.length = 0;
     });
     afterAll(async () => {

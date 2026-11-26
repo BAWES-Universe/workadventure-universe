@@ -12,6 +12,8 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import { selectedRoomStore } from "../../../Chat/Stores/SelectRoomStore";
     import type { ChatRoom } from "../../../Chat/Connection/ChatConnection";
+    import { unopenedBrickCountOf } from "../../../Chat/Bricks/BrickChat";
+    import { loadMyBricks, refreshMyChatId } from "../../../Chat/Bricks/MyBricksStore";
 
     export let last: boolean | undefined = undefined;
     export let chatEnabledInAdmin = false;
@@ -117,8 +119,18 @@
     // Proximity chat room is already a store, so we can use it directly
     const nbUnreadProximityChatRoomMessages = proximityChatRoom.unreadNotificationCount;
 
+    // A Brick the person never opened counts as one unread message: the same count the Brick's row and the Chats tab carry
+    const nbUnopenedBricks = unopenedBrickCountOf(gameManager.chatConnection);
+    // The Bricks are listed once the chats are online, so the count is right before the Chats list was ever opened
+    const chatStatus = gameManager.chatConnection.connectionStatus;
+    $: if ($chatStatus === "ONLINE") {
+        refreshMyChatId();
+        loadMyBricks().catch((error: unknown) => console.error(error));
+    }
+
     // Calculate total unread count and format it (max 99+)
     $: totalUnreadCount =
+        $nbUnopenedBricks +
         $nbUnreadRoomsMessages +
         $nbUnreadDirectRoomsMessages +
         $nbUnreadInvitationsMessages +

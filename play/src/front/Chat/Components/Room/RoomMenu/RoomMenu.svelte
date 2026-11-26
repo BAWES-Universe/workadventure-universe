@@ -1,6 +1,6 @@
 <script lang="ts">
     import { getContext, hasContext, onDestroy, onMount } from "svelte";
-    import { readable } from "svelte/store";
+    import { get, readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import { openModal } from "svelte-modals";
     import type {
@@ -24,13 +24,15 @@
     import { NAME_BY_CHAT_ID_CONTEXT, personName } from "../../../Stores/ChatUserWokaStore";
     import { botIdFromChatId } from "../../../Bots/BotChatStatus";
     import MemorySheet from "../../../Bricks/MemorySheet.svelte";
-    import { myBricksStore } from "../../../Bricks/MyBricksStore";
+    import { openBrickChat } from "../../../Bricks/BrickChat";
+    import { loadMyBricks, myBricksStore } from "../../../Bricks/MyBricksStore";
     import { directPartnerStore } from "../DirectChat/DirectPartnerStore";
     import { partnerStillInChat } from "../DirectChat/partnerStillInChat";
     import {
         canInvitePartner,
         canOpenPartnerProfile,
         invitePartner,
+        isBotPartner,
         locatePartner,
         openPartnerProfile,
         partnerFriendAction,
@@ -45,6 +47,7 @@
         IconUnMute,
         IconMapPin,
         IconWalk,
+        IconRotate,
         IconTrash,
         IconUserCircle,
         IconUsersPlus,
@@ -125,21 +128,44 @@
         }
     }
 
+    // A chat with a Brick (anyone's) is cleared, not deleted: it starts again empty, and the Brick keeps what it learned
+    $: clearsChat = $partner !== undefined && isBotPartner($partner);
+
+    /**
+     * Whether a bot's chat is with one of the person's own Bricks. When Orbit has not been asked yet it is asked before the
+     * chat is cleared: not knowing the Bricks is not knowing the bot is someone else's. When Orbit does not answer either, the
+     * bot is not known to be theirs and the person is left on the list of chats, told that the chat was cleared.
+     */
+    async function ownBrickIdOf(botId: string | undefined): Promise<string | undefined> {
+        if (!botId) return undefined;
+        if (get(myBricksStore) === undefined) await loadMyBricks();
+        return (get(myBricksStore) ?? []).some((brick) => brick.id === botId) ? botId : undefined;
+    }
+
     function closeMenuAndLeaveRoom() {
         toggleRoomOptions();
         // Says which chat went: "Deleted your chat with Mishari", "Left Design team".
-        const notification = isDirect
+        const cleared = clearsChat;
+        const botId = cleared ? memoryBotId : undefined;
+        const notification = cleared
+            ? $LL.chat.directChat.clearChat.notification({ name })
+            : isDirect
             ? $LL.chat.directChat.deleteChat.notification({ name })
             : $LL.chat.roomMenu.leaveRoom.notification({ name });
         // Deleting a chat leaves it and forgets it, so it goes from the person's lists and not just from view.
-        room.leaveRoom(isDirect ? { forget: true } : undefined)
-            .then(() => {
-                if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
-                showChatDoneToast(notification);
-            })
+        ownBrickIdOf(botId)
+            .then((brickId) =>
+                room.leaveRoom(isDirect ? { forget: true } : undefined).then(() => {
+                    if ($selectedRoomStore?.id === room.id) selectedRoomStore.set(undefined);
+                    showChatDoneToast(notification);
+                    // The person's own Brick opens again as a new empty chat
+                    if (brickId) openBrickChat(brickId).catch((error) => console.error(error));
+                })
+            )
             .catch((error) => {
                 console.error("Failed to leave room", error);
-                if (isDirect) warningMessageStore.addWarningMessage($LL.chat.directChat.deleteChat.failed());
+                if (cleared) warningMessageStore.addWarningMessage($LL.chat.directChat.clearChat.failed());
+                else if (isDirect) warningMessageStore.addWarningMessage($LL.chat.directChat.deleteChat.failed());
             });
     }
 
@@ -181,7 +207,7 @@
     }
 
     // What a bot remembers about this person (game #2003): in a chat with any bot, theirs or someone else's
-    $: memoryBotId = isDirect && $partner?.isBot ? botIdFromChatId($partner.chatId) : undefined;
+    $: memoryBotId = isDirect && $partner && isBotPartner($partner) ? botIdFromChatId($partner.chatId) : undefined;
 
     function openMemory() {
         toggleRoomOptions();
@@ -292,9 +318,15 @@
         {/if}
         {#if confirmingDelete}
             <div class="flex flex-col gap-2 p-2 text-sm" data-testid="deleteChatConfirm">
-                <span class="font-bold">{$LL.chat.directChat.deleteChat.confirm()}</span>
+                <span class="font-bold"
+                    >{clearsChat
+                        ? $LL.chat.directChat.clearChat.confirm()
+                        : $LL.chat.directChat.deleteChat.confirm()}</span
+                >
                 <span class="max-w-56 text-xs text-white/60"
-                    >{$partnerHolds
+                    >{clearsChat
+                        ? $LL.chat.directChat.clearChat.confirmHint({ name })
+                        : $partnerHolds
                         ? $LL.chat.directChat.deleteChat.hint({ name })
                         : $LL.chat.directChat.deleteChat.hintGone({ name })}</span
                 >
@@ -310,15 +342,17 @@
                         class="m-0 flex-1 rounded bg-danger-900 px-2 py-1.5 text-sm font-bold text-white [font-family:inherit] hover:bg-danger"
                         data-testid="deleteChatConfirmButton"
                         on:click|stopPropagation={closeMenuAndLeaveRoom}
-                        >{$LL.chat.directChat.deleteChat.confirmButton()}</button
+                        >{clearsChat
+                            ? $LL.chat.directChat.clearChat.confirmButton()
+                            : $LL.chat.directChat.deleteChat.confirmButton()}</button
                     >
                 </div>
             </div>
         {:else}
             <RoomOption
                 dataTestId="deleteChatOption"
-                IconComponent={IconTrash}
-                title={$LL.chat.directChat.deleteChat.label()}
+                IconComponent={clearsChat ? IconRotate : IconTrash}
+                title={clearsChat ? $LL.chat.directChat.clearChat.label() : $LL.chat.directChat.deleteChat.label()}
                 bg="u-danger"
                 on:click={() => (confirmingDelete = true)}
             />
