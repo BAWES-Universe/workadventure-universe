@@ -190,7 +190,9 @@ export function sessionRefused(answer: unknown, args: Record<string, unknown>): 
     if (!SESSION_NOT_ACCEPTED.test(line)) return false;
     // Only a bare refusal: its words are the refusal's own, and a session id named in it is exactly the one that was sent (compared as it is,
     // right after the word "session" or "id"), nothing that could tell of an action or of another session
-    const words = line.match(/[A-Za-z0-9_-]+/g) ?? [];
+    // A quoted word is a name, never a refusal's word: it must be the id that was sent, whatever it spells ("unknown" included)
+    for (const [, quoted] of line.matchAll(/["'`]([^"'`]*)["'`]/g)) if (quoted !== id) return false;
+    const words = line.replace(/["'`][^"'`]*["'`]/g, ' ').match(/[A-Za-z0-9_-]+/g) ?? [];
     for (let at = 0; at < words.length; at++) {
         const previous = words[at - 1]?.toLowerCase();
         if (words[at] === id && (previous === 'session' || previous === 'id')) continue;
