@@ -360,6 +360,25 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
     });
 
+    it('does not offer or run a link tool the Apps share when every one of them has it Off', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => {
+            const policy = serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS);
+            return { ...policy, settings: { ...policy.settings, looksUp: 'off' as const } };
+        });
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const entries = new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }]]);
+        const { apps, call } = setUp({}, { discover: async () => ({ tools: [tool(LOOKUP)], servers: entries }), gate });
+        expect(await apps.open(run())).toBeNull();
+        // Turned off while a run was going: the step is refused, and nothing is sent
+        const allowed = setUp({}, { discover: async () => ({ tools: [tool(LOOKUP)], servers: entries }), gate: new ToolGate({ read: async (_bot: string, serverId: string) => policyOf(serverId, GMAIL_ROWS) } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false }) });
+        const session = (await allowed.apps.open(run()))!;
+        (allowed.apps as unknown as { deps: TaskAppsDeps }).deps.gate = gate;
+        expect(await session.call(LOOKUP, { queries: ['events'] })).toContain('turned off');
+        expect(allowed.call).not.toHaveBeenCalled();
+        expect(call).not.toHaveBeenCalled();
+    });
+
     it('sends a batch through the App its actions belong to, and refuses one that mixes Apps or names none clearly', async () => {
         const { apps, call } = withGate({ ...gmail, otherApps: [calendar] });
         const session = (await apps.open(run()))!;
