@@ -4,14 +4,22 @@
     import LL from "../../../i18n/i18n-svelte";
     import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
     import { canTakeBack, type BrickReport } from "./BrickReport";
-    import { takeBackReport, takenBackReports } from "./BrickReportStore";
+    import {
+        readReportStatus,
+        sendReportWords,
+        sentReportWords,
+        takeBackReport,
+        takenBackReports,
+    } from "./BrickReportStore";
     import { keepFocusInside } from "./keepFocusInside";
     import { IconX } from "@wa-icons";
     import "./BrickGroups.css";
 
     /**
-     * What a Brick sent to the Universe team (mock "Brick reports inbox", screen 7): the note exactly as Orbit kept it, what is never sent,
-     * and Take it back for 24 hours. Anyone in the chat can. This is the only control, and it is per note, not a setting.
+     * What a Brick sent to the Universe team (mock "Brick reports inbox", screen 7): the note exactly as Orbit kept it (product-only), what
+     * is never sent, the person's own words when they asked to tell the team something (shown exactly as they would go, sent only when they
+     * press Send), and Take it back for 24 hours. Anyone in the chat can. Opening it reads from Orbit what became of the note, so a note
+     * taken back or words sent on another device show here. These are the only controls, and they are per note, not settings.
      */
     export let isOpen: boolean;
     export let report: BrickReport;
@@ -19,9 +27,28 @@
 
     let busy = false;
     let problem: "failed" | "too_late" | null = null;
+    let sendingWords = false;
+    let wordsProblem: "failed" | "too_late" | null = null;
 
     $: taken = $takenBackReports.has(report.id);
     $: offerTakeBack = !taken && canTakeBack(report, messageAt, Date.now());
+    $: wordsSent = $sentReportWords.get(report.id);
+    $: offerWords = !taken && !wordsSent && !!report.wordsDraft && canTakeBack(report, messageAt, Date.now());
+
+    // What became of the note, from Orbit: nothing changes when it can't say
+    void readReportStatus(report.id, report.key).catch(() => undefined);
+
+    function sendWords() {
+        if (sendingWords) return;
+        sendingWords = true;
+        wordsProblem = null;
+        sendReportWords(report.id, report.key, report.wordsDraft)
+            .then((outcome) => {
+                if (outcome === "failed" || outcome === "too_late") wordsProblem = outcome;
+            })
+            .catch(() => (wordsProblem = "failed"))
+            .finally(() => (sendingWords = false));
+    }
 
     function takeBack() {
         if (busy) return;
@@ -70,22 +97,21 @@
                     <dt>{$LL.chat.brick.report.title()}</dt>
                     <dd data-testid="brickReportTitle">{report.title}</dd>
                 </div>
-                {#if report.tried}
+                {#if report.retried}
                     <div>
-                        <dt>{$LL.chat.brick.report.tried()}</dt>
-                        <dd>{report.tried}</dd>
+                        <dt>{$LL.chat.brick.report.retried()}</dt>
+                        <dd data-testid="brickReportRetried">{$LL.chat.brick.report.retriedYes()}</dd>
                     </div>
                 {/if}
-                {#if report.stopped}
+                {#if !taken && wordsSent}
                     <div>
-                        <dt>{$LL.chat.brick.report.stopped()}</dt>
-                        <dd>{report.stopped}</dd>
+                        <dt>{$LL.chat.brick.report.words()}</dt>
+                        <dd data-testid="brickReportWordsSent">{wordsSent}</dd>
                     </div>
-                {/if}
-                {#if report.idea}
+                {:else if offerWords}
                     <div>
-                        <dt>{$LL.chat.brick.report.idea()}</dt>
-                        <dd>{report.idea}</dd>
+                        <dt>{$LL.chat.brick.report.wordsNotSent()}</dt>
+                        <dd data-testid="brickReportWordsDraft">{report.wordsDraft}</dd>
                     </div>
                 {/if}
             </dl>
@@ -93,13 +119,28 @@
             {#if taken}
                 <p class="rs-note" data-testid="brickReportSheetTakenBack">{$LL.chat.brick.report.takenBack()}</p>
             {/if}
+            {#if offerWords}
+                <p class="rs-note">{$LL.chat.brick.report.wordsExact()}</p>
+            {/if}
+            {#if wordsProblem}
+                <p class="rs-note" role="alert" data-testid="brickReportWordsProblem">
+                    {wordsProblem === "too_late"
+                        ? $LL.chat.brick.report.tooLateWords()
+                        : $LL.chat.brick.report.wordsFailed()}
+                </p>
+            {/if}
             {#if problem}
                 <p class="rs-note" role="alert" data-testid="brickReportProblem">
                     {problem === "too_late" ? $LL.chat.brick.report.tooLate() : $LL.chat.brick.report.takeBackFailed()}
                 </p>
             {/if}
             <div class="rs-btns">
-                <PageButton tall go testId="brickReportDone" on:click={closeModal}
+                {#if offerWords && wordsProblem !== "too_late"}
+                    <PageButton tall go disabled={sendingWords} testId="brickReportSendWords" on:click={sendWords}
+                        >{$LL.chat.brick.report.sendWords()}</PageButton
+                    >
+                {/if}
+                <PageButton tall go={!offerWords} testId="brickReportDone" on:click={closeModal}
                     >{$LL.chat.brick.report.done()}</PageButton
                 >
                 {#if offerTakeBack && problem !== "too_late"}

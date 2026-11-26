@@ -2,8 +2,9 @@ import { botIdFromChatId } from "../Bots/BotChatStatus";
 
 /**
  * A note a Brick sent to the Universe team (mock "Brick reports inbox"), as it rides on the words of the Brick's answer. The chat shows
- * "Sent to the Universe team" under the answer; "See what was sent" opens the note as Orbit kept it, and anyone in the chat can take it
- * back for 24 hours with the key the message carries. Nothing in here talks to a server, so every rule can be unit tested.
+ * "Sent to the Universe team" under the answer; "See what was sent" opens the note as Orbit kept it (product-only: its kind, area and a
+ * title built from fixed words), the person's own words when they asked to tell the team something (not sent until they press Send), and
+ * Take it back for 24 hours with the key the message carries. Nothing in here talks to a server, so every rule can be unit tested.
  */
 export const BRICK_REPORTS_KEY = "universe.brick_reports";
 
@@ -31,10 +32,12 @@ export interface BrickReport {
     key: string;
     kind: ReportKind;
     area: ReportArea;
+    /** Built by Orbit from fixed words ("Signed out: Gmail App"), never from the chat. */
     title: string;
-    tried: string;
-    stopped: string;
-    idea: string;
+    /** The Brick tried the step again before sending. */
+    retried: boolean;
+    /** The person's own words, exactly as Orbit cleaned them, waiting for them to press Send; empty when they asked to say nothing. */
+    wordsDraft: string;
     /** When it was sent (ms); 0 when the message did not say. */
     sentAt: number;
 }
@@ -56,7 +59,7 @@ export function readBrickReports(sender: string | null | undefined, content: Rec
     const reports: BrickReport[] = [];
     for (const one of list.slice(0, REPORTS_MAX)) {
         if (!one || typeof one !== "object") continue;
-        const { id, key, kind, area, title, tried, stopped, idea, sentAt } = one as Record<string, unknown>;
+        const { id, key, kind, area, title, retried, wordsDraft, sentAt } = one as Record<string, unknown>;
         if (typeof id !== "string" || !id || typeof key !== "string" || !key || !text(title, TITLE_MAX)) continue;
         if (reports.some((other) => other.id === id)) continue;
         reports.push({
@@ -65,9 +68,8 @@ export function readBrickReports(sender: string | null | undefined, content: Rec
             kind: oneOf(kind, REPORT_KINDS, "problem"),
             area: oneOf(area, REPORT_AREAS, "other"),
             title: text(title, TITLE_MAX),
-            tried: text(tried, TEXT_MAX),
-            stopped: text(stopped, TEXT_MAX),
-            idea: text(idea, TEXT_MAX),
+            retried: retried === true,
+            wordsDraft: text(wordsDraft, TEXT_MAX),
             sentAt: typeof sentAt === "number" && Number.isFinite(sentAt) && sentAt > 0 ? sentAt : 0,
         });
     }

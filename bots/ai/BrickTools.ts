@@ -77,13 +77,17 @@ export interface ReportSentNote {
     /** Orbit's id of the note, and the key anyone in the chat takes it back with (24 hours). */
     id: string;
     key: string;
-    /** The note as Orbit kept it, after cleaning. `noteKind` is Problem, Can't do, Friction or Idea (`kind` above says this is a report). */
+    /** The bot server's reference for the note (the chat's message and what it is about): the same note in this reply is never sent twice. */
+    ref: string;
+    /** The note as Orbit kept it: product-only. `noteKind` is Problem, Can't do, Friction or Idea (`kind` above says this is a report). */
     noteKind: 'problem' | 'cant_do' | 'friction' | 'idea';
     area: string;
+    /** Built by Orbit from fixed words ("Signed out: Gmail App"), never from the chat. */
     title: string;
-    tried: string;
-    stopped: string;
-    idea: string;
+    failure: string;
+    retried: boolean;
+    /** The person's own words, exactly as Orbit cleaned them, waiting for them to press Send; not kept by Orbit until they do. */
+    wordsDraft?: string;
     /** When it was sent (ms), so the chat stops offering Take it back after 24 hours. */
     sentAt: number;
 }

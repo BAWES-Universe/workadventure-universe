@@ -26,7 +26,7 @@ describe("the note to the Universe team in a Brick's replies", () => {
         expect(await names(service, undefined, "dm")).not.toContain(REPORT_TOOL);
     });
 
-    it("runs for anyone in the chat, with the person counted, what they wrote kept for the quote check, and the line waiting with the reply", async () => {
+    it("runs for anyone in the chat, with the person counted, nothing they wrote sent, and the line waiting with the reply", async () => {
         const service = openToolGate(new AIService(null!, null!, ""));
         const memory = {
             userUuid: "uuid-alice",
@@ -40,11 +40,11 @@ describe("the note to the Universe team in a Brick's replies", () => {
             sent: true,
             id: "n1",
             takeBackKey: "k1",
-            note: { kind: "problem", area: "pages", effect: "stopped", title: "Links in pages", tried: "", stopped: "", idea: "" },
+            note: { kind: "problem", area: "pages", effect: "stopped", title: "Failed: Pages", operation: "none", failure: "failed", retried: false },
         }));
         const admin = { isConfigured: () => true, sendBrickReport };
         const call = (channel: "world" | "dm") => service["executeToolCalls"](
-            [{ id: "1", name: REPORT_TOOL, arguments: JSON.stringify({ kind: "problem", area: "pages", title: "Links in pages", effect: "stopped" }) }],
+            [{ id: "1", name: REPORT_TOOL, arguments: JSON.stringify({ kind: "problem", area: "pages", effect: "stopped", title: "Why can't you add links to my listings page" }) }],
             undefined,
             admin as never,
             new Map(),
@@ -72,16 +72,21 @@ describe("the note to the Universe team in a Brick's replies", () => {
         const [result] = await call("dm");
         expect(result.result).toMatchObject({ sent: true });
         expect(sendBrickReport).toHaveBeenCalledWith(expect.objectContaining({ botId: "b1", personKey: "person:uuid-alice", context: expect.objectContaining({ ownKey: true }) }));
-        expect(memory.pendingBricks).toEqual([expect.objectContaining({ kind: "report", id: "n1", key: "k1" })]);
+        expect(memory.pendingBricks).toEqual([expect.objectContaining({ kind: "report", id: "n1", key: "k1", title: "Failed: Pages" })]);
+        // Product-only: nothing the person wrote (or the model wrote into the call) goes to Orbit
+        expect(JSON.stringify(sendBrickReport.mock.calls)).not.toContain("listings");
     });
 
     it("never shows a note that did not go as sent", () => {
         expect(resultOf("1", { sent: false, note: "You sent enough notes today. Do not say it was sent; carry on helping." })).toEqual({ id: "1", ok: false, note: "Not sent" });
-        expect(resultOf("1", { sent: false, error: "Not sent: the note repeats the person's own words" })).toMatchObject({ id: "1", ok: false });
+        expect(resultOf("1", { sent: false, uncertain: true, note: "Could not confirm the note reached the Universe team." })).toEqual({ id: "1", ok: false, unknown: true, note: "Not confirmed" });
+        expect(resultOf("1", { sent: false, error: "Say what kind of note it is" })).toMatchObject({ id: "1", ok: false });
         expect(resultOf("1", { sent: true, title: "Links in pages" })).toEqual({ id: "1", ok: true });
     });
 
-    it("shows as a step with its title", () => {
-        expect(describeStep({ id: "1", name: REPORT_TOOL, arguments: { title: "Links in pages" } })).toMatchObject({ doing: "Sending to the Universe team", done: "Sent to the Universe team", detail: "Links in pages" });
+    it("shows as a step with no words from the call", () => {
+        const step = describeStep({ id: "1", name: REPORT_TOOL, arguments: { title: "Links in pages", words: "Alice's words" } });
+        expect(step).toMatchObject({ doing: "Sending to the Universe team", done: "Sent to the Universe team" });
+        expect(JSON.stringify(step)).not.toMatch(/Links in pages|Alice/);
     });
 });

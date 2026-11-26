@@ -42,3 +42,50 @@ describe("taking back a note sent to the Universe team", () => {
         expect(await nowhere.takeBackBrickReport("note-1", "key-1234567890abcdef")).toBe("failed");
     });
 });
+
+/** The person's own words and what became of a note: like Take it back, the key alone, no sign-in. */
+describe("the person's words and what became of a note", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it("sends the words with the key alone and reads back what Orbit kept", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValue(answer({ added: true, words: "Links do nothing" }));
+        const api = new BotApiService();
+        api.initialize(GUEST, ORBIT, "room-1", "https://bots.test");
+        expect(await api.addBrickReportWords("note-1", "key-1234567890abcdef", "Links do nothing")).toEqual({
+            outcome: "sent",
+            words: "Links do nothing",
+        });
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toBe(`${ORBIT}/api/me/brick-reports/words`);
+        expect(init?.credentials).toBe("omit");
+        expect(new Headers(init?.headers).has("Authorization")).toBe(false);
+        expect(JSON.parse(init?.body as string)).toEqual({
+            id: "note-1",
+            key: "key-1234567890abcdef",
+            words: "Links do nothing",
+        });
+        fetchMock.mockResolvedValueOnce(answer({ added: false, reason: "taken_back" }));
+        expect(await api.addBrickReportWords("note-1", "key-1234567890abcdef", "x")).toEqual({ outcome: "taken_back" });
+        fetchMock.mockRejectedValueOnce(new Error("offline"));
+        expect(await api.addBrickReportWords("note-1", "key-1234567890abcdef", "x")).toEqual({ outcome: "failed" });
+    });
+
+    it("reads what became of a note, and says nothing when Orbit can't", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValue(answer({ state: "taken_back", words: "", canTakeBack: false }));
+        const api = new BotApiService();
+        api.initialize(GUEST, ORBIT, "room-1", "https://bots.test");
+        expect(await api.brickReportStatus("note-1", "key-1234567890abcdef")).toEqual({
+            state: "taken_back",
+            words: "",
+        });
+        expect(fetchMock.mock.calls[0][0]).toBe(`${ORBIT}/api/me/brick-reports/status`);
+        expect(fetchMock.mock.calls[0][1]?.credentials).toBe("omit");
+        fetchMock.mockResolvedValueOnce(answer({ error: "Internal server error" }, 500));
+        expect(await api.brickReportStatus("note-1", "key-1234567890abcdef")).toBeNull();
+        expect(await new BotApiService().brickReportStatus("note-1", "key-1234567890abcdef")).toBeNull();
+    });
+});

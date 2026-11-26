@@ -144,7 +144,7 @@ import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
-import { REPORT_TOOL, type ReportTurn, noteWhatWasRead, reportToolDefinition, runReportTool } from './ReportTools';
+import { REPORT_TOOL, type ReportTurn, newReportTurn, noteWhatRan, reportToolDefinition, runReportTool } from './ReportTools';
 import {
     InstantOffers,
     endInstantTask,
@@ -2325,8 +2325,9 @@ export class AIService {
                         const appStepCounts = new Map<string, number>();
                         // The Apps a review said the computer could do better for the rest: a use_computer that names one is Orbit's to weigh
                         const reviewedApps = new Set<string>();
-                        // Notes to the Universe team in this reply: one rewrite after a refusal, and what Apps and files gave back for the quote check
-                        const reportTurn: ReportTurn = { refusals: 0, read: [] };
+                        // Notes to the Universe team in this reply: the steps it ran (what they were and how they ended, never what they gave back),
+                        // and the chat's message it answers, which with what a note is about is the note's reference (sent again, the same note)
+                        const reportTurn: ReportTurn = newReportTurn(channel === 'dm' && botId && playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId)?.dmEventId : undefined);
                         // What the model said, and its reasoning, in the call that asked for this round's tools
                         let roundContent = firstCallContent || '';
                         let roundReasoning = chunk.reasoning;
@@ -2362,8 +2363,11 @@ export class AIService {
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
                             const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel, (resolved as { vision?: ResolvedVision }).vision, reportTurn);
-                            // A note to the Universe team later in this reply never repeats what these tools gave back
-                            noteWhatWasRead(reportTurn, toolResults);
+                            // A note to the Universe team later in this reply says which of these steps it is about and how it ended
+                            noteWhatRan(reportTurn, toolResults, {
+                                apps: toolServerMap,
+                                offered: new Set((tools as Array<{ function?: { name?: string } }>).map((tool) => tool.function?.name ?? '').filter(Boolean)),
+                            });
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) {
                                 readForTheGroup = true;
@@ -4648,8 +4652,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
 
     /**
      * Runs send_to_universe_team (mock "Brick reports inbox") in a Brick's direct message. The note waits with the reply, so the game shows
-     * "Sent to the Universe team" under it with Take it back. The person is passed only for Orbit's one-way count; what they wrote, and what
-     * Apps and files gave back in this reply, are used here only to refuse a note that quotes them, and are never sent.
+     * "Sent to the Universe team" under it with Take it back. The note is product-only, filled from this reply's steps; the person is passed
+     * only for Orbit's one-way count.
      */
     private async runReportToolCall(
         args: Record<string, unknown>,
@@ -4663,14 +4667,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const uuid = memory.userUuid;
         if (uuid && !uuid.startsWith('temp-')) personKey = `${memory.isGuest === false ? 'person' : 'guest'}:${uuid}`;
         if (personKey && !/^(person|guest):[A-Za-z0-9_.:-]{1,255}$/.test(personKey)) personKey = undefined;
-        const said = (memory.conversationHistory ?? []).filter((line) => line.sender === 'person').map((line) => line.message);
         const release = process.env.RELEASE_VERSION?.trim();
         return runReportTool(args, {
             admin,
             botId: where.botId,
             ...(personKey ? { personKey } : {}),
-            said,
-            ...(memory.playerName ? { name: memory.playerName } : {}),
             ...(where.turn ? { turn: where.turn } : {}),
             // The line under the answer, with what was sent and the key to take it back
             notes: (memory.pendingBricks ??= []),
@@ -5071,7 +5072,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         channel: 'world' | 'dm' = 'world',
         /** Where this bot's images go (the Vision row), when Orbit says: an image it opens is looked at the same way as one sent to it. */
         vision?: ResolvedVision,
-        /** This reply's notes to the Universe team: refusals so far and what its Apps and files gave back. */
+        /** This reply's notes to the Universe team: the steps it ran so far and its reference. */
         reportTurn?: ReportTurn
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)

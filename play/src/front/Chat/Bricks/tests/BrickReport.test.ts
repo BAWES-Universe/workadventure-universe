@@ -3,10 +3,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 /**
  * A note a Brick sent to the Universe team (mock "Brick reports inbox", screens 6 and 7): read from the answer's message, the line under
- * the answer, what was sent, and Take it back for 24 hours.
+ * the answer, what was sent, the person's own words sent only when they press Send, what became of it read from Orbit, and Take it back
+ * for 24 hours.
  */
 const game = vi.hoisted(() => ({
     takeBack: vi.fn<(id: string, key: string) => Promise<"taken" | "too_late" | "failed">>(),
+    addWords: vi.fn<(id: string, key: string, words: string) => Promise<{ outcome: string; words?: string }>>(),
+    status: vi.fn<(id: string, key: string) => Promise<{ state: string; words: string } | null>>(),
     openModal: vi.fn<(component: unknown, props: unknown) => void>(),
     closeModal: vi.fn<() => void>(),
 }));
@@ -14,13 +17,17 @@ const game = vi.hoisted(() => ({
 vi.mock("svelte", async () => await import("svelte/internal"));
 vi.mock("svelte-modals", () => ({ closeModal: game.closeModal, openModal: game.openModal }));
 vi.mock("../../../external-modules/bots/services/BotApiService", () => ({
-    botApiService: { takeBackBrickReport: game.takeBack },
+    botApiService: {
+        takeBackBrickReport: game.takeBack,
+        addBrickReportWords: game.addWords,
+        brickReportStatus: game.status,
+    },
 }));
 
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import { BRICK_REPORTS_KEY, TAKE_BACK_MS, canTakeBack, readBrickReports, type BrickReport } from "../BrickReport";
-import { takenBackReports } from "../BrickReportStore";
+import { sentReportWords, takenBackReports } from "../BrickReportStore";
 import BrickReportLine from "../BrickReportLine.svelte";
 import BrickReportSheet from "../BrickReportSheet.svelte";
 
@@ -32,10 +39,9 @@ const field = (over: Record<string, unknown> = {}) => ({
     key: "key-1234567890abcdef",
     kind: "problem",
     area: "pages",
-    title: "Links inside pages don't open",
-    tried: "A link on each listing in a shortlist page, then a button.",
-    stopped: "Tapping a link does nothing in the chat preview.",
-    idea: "Let page links open in a new tab.",
+    title: "Failed: read_page",
+    retried: true,
+    wordsDraft: "Links on my listings page do nothing when tapped.",
     sentAt: NOW,
     ...over,
 });
@@ -51,6 +57,14 @@ describe("reading the notes on a Brick's answer", () => {
             field(),
             { ...field({ id: "note-2" }), kind: "problem", area: "other", sentAt: 0 },
         ]);
+        // A note with nothing more: not tried again, no words
+        expect(
+            readBrickReports(BRICK_SENDER, {
+                msgtype: "m.text",
+                body: "x",
+                [BRICK_REPORTS_KEY]: [field({ retried: "yes", wordsDraft: 4 })],
+            })
+        ).toEqual([{ ...field(), retried: false, wordsDraft: "" }]);
     });
 
     it("reads nothing from a person's message, another type, or a note with no id, key or title", () => {
@@ -102,6 +116,8 @@ describe("the line under the answer and what was sent", () => {
     });
     beforeEach(() => {
         vi.clearAllMocks();
+        game.status.mockResolvedValue({ state: "live", words: "" });
+        sentReportWords.set(new Map());
         vi.useFakeTimers({ toFake: ["Date"] });
         vi.setSystemTime(NOW + 60_000);
         takenBackReports.set(new Set());
@@ -128,17 +144,80 @@ describe("the line under the answer and what was sent", () => {
         expect(game.openModal).toHaveBeenCalledWith(BrickReportSheet, { report, messageAt: NOW });
     });
 
-    it("shows the note as kept and what is never sent", async () => {
+    it("shows the note as kept, what is never sent, and the person's words as they would go, not sent yet", async () => {
         part = new BrickReportSheet({ target, props: { isOpen: true, report, messageAt: NOW }, intro: false });
         await settle();
         expect(byId("brickReportKind")?.textContent?.trim()).toBe("Problem · Pages");
-        expect(byId("brickReportTitle")?.textContent).toBe("Links inside pages don't open");
-        expect(text()).toContain("What I tried A link on each listing in a shortlist page, then a button.");
-        expect(text()).toContain("What stopped me Tapping a link does nothing in the chat preview.");
-        expect(text()).toContain("Idea Let page links open in a new tab.");
+        expect(byId("brickReportTitle")?.textContent).toBe("Failed: read_page");
+        expect(byId("brickReportRetried")?.textContent).toBe("Yes, before sending");
+        expect(text()).toContain("Your words, not sent yet Links on my listings page do nothing when tapped.");
+        expect(text()).toContain("This is exactly what would go with the note. Nothing else you wrote is sent.");
         expect(text()).toContain(
-            "Never sent: your name, this chat’s words, links or files. The Universe team sees how many Bricks hit this, never whose."
+            "Never sent on its own: your name, this chat’s words, links or files; your words go only if you press Send. The Universe team sees how many Bricks hit this, never whose."
         );
+        expect(game.addWords).not.toHaveBeenCalled();
+        // What became of it is read from Orbit when it opens
+        expect(game.status).toHaveBeenCalledWith("note-1", "key-1234567890abcdef");
+    });
+
+    it("sends the person's words only when they press Send, exactly as shown", async () => {
+        game.addWords.mockResolvedValue({
+            outcome: "sent",
+            words: "Links on my listings page do nothing when tapped.",
+        });
+        part = new BrickReportSheet({ target, props: { isOpen: true, report, messageAt: NOW }, intro: false });
+        await settle();
+        byId("brickReportSendWords")?.click();
+        await settle();
+        expect(game.addWords).toHaveBeenCalledWith(
+            "note-1",
+            "key-1234567890abcdef",
+            "Links on my listings page do nothing when tapped."
+        );
+        expect(byId("brickReportWordsSent")?.textContent).toBe("Links on my listings page do nothing when tapped.");
+        expect(byId("brickReportSendWords")).toBeNull();
+        expect(byId("brickReportWordsDraft")).toBeNull();
+    });
+
+    it("says when the words did not go", async () => {
+        game.addWords.mockResolvedValueOnce({ outcome: "failed" }).mockResolvedValueOnce({ outcome: "too_late" });
+        part = new BrickReportSheet({ target, props: { isOpen: true, report, messageAt: NOW }, intro: false });
+        await settle();
+        byId("brickReportSendWords")?.click();
+        await settle();
+        expect(byId("brickReportWordsProblem")?.textContent?.trim()).toBe("Your words didn’t go. Try again.");
+        byId("brickReportSendWords")?.click();
+        await settle();
+        expect(byId("brickReportWordsProblem")?.textContent?.trim()).toBe("Words can only be added within 24 hours.");
+        expect(byId("brickReportSendWords")).toBeNull();
+    });
+
+    it("shows what another device did: taken back there, or words already sent", async () => {
+        game.status.mockResolvedValueOnce({ state: "taken_back", words: "" });
+        part = new BrickReportSheet({ target, props: { isOpen: true, report, messageAt: NOW }, intro: false });
+        await settle();
+        expect(byId("brickReportSheetTakenBack")?.textContent).toBe("Taken back");
+        expect(byId("brickReportTakeBack")).toBeNull();
+        expect(byId("brickReportSendWords")).toBeNull();
+        part.$destroy();
+        takenBackReports.set(new Set());
+        game.status.mockResolvedValueOnce({ state: "live", words: "Sent from my phone." });
+        part = new BrickReportSheet({ target, props: { isOpen: true, report, messageAt: NOW }, intro: false });
+        await settle();
+        expect(byId("brickReportWordsSent")?.textContent).toBe("Sent from my phone.");
+        expect(byId("brickReportSendWords")).toBeNull();
+    });
+
+    it("a note with no words and not tried again shows neither", async () => {
+        part = new BrickReportSheet({
+            target,
+            props: { isOpen: true, report: { ...report, retried: false, wordsDraft: "" }, messageAt: NOW },
+            intro: false,
+        });
+        await settle();
+        expect(byId("brickReportRetried")).toBeNull();
+        expect(byId("brickReportWordsDraft")).toBeNull();
+        expect(byId("brickReportSendWords")).toBeNull();
     });
 
     it("takes it back, and the line under the answer says so", async () => {

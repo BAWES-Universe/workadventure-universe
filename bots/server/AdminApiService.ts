@@ -169,25 +169,35 @@ export interface ArtifactMediaUpload {
     body: Uint8Array;
 }
 
-/** One note a Brick sends to the Universe team (mock "Brick reports inbox"). Only general words: the tool and Orbit both clean it. */
+/**
+ * One note a Brick sends to the Universe team (mock "Brick reports inbox"): product-only, filled from what ran. `draftWords` only when the
+ * person asked to tell the team something: Orbit answers them cleaned (`wordsPreview`) and keeps none of them.
+ */
 export interface BrickReportSend {
     botId: string;
     /** Who was in the chat (person:<id>, guest:<id>): Orbit keeps only a one-way hash, to count different people. */
     personKey?: string;
+    /** sha256 of the chat's message and what the note is about: sent again, Orbit answers the same receipt. */
+    ref: string;
     kind: 'problem' | 'cant_do' | 'friction' | 'idea';
     area: 'apps' | 'computer' | 'pages' | 'chat' | 'voice' | 'map' | 'memory' | 'files' | 'credit' | 'other';
-    title: string;
-    tried: string;
-    stopped: string;
-    idea: string;
+    /** One of the Brick's own tools, `app` or `none`. */
+    operation: string;
+    /** For `app`: the connection it ran on, so Orbit can name the catalog App it came from. */
+    appConnectionId?: string;
+    failure: 'failed' | 'signed_out' | 'timed_out' | 'not_allowed' | 'no_result' | 'missing_ability' | 'corrected' | 'idea';
+    retried: boolean;
     effect: 'stopped' | 'slowed' | 'idea';
+    draftWords?: string;
     context?: { model?: string; ownKey?: boolean; gameVersion?: string; tools?: string[] };
 }
 
-/** The note as Orbit kept it, after cleaning: what the chat shows under "What was sent". */
-export type BrickReportKept = Pick<BrickReportSend, 'kind' | 'area' | 'title' | 'tried' | 'stopped' | 'idea' | 'effect'>;
+/** The note as Orbit kept it: what the chat shows under "What was sent". */
+export type BrickReportKept = Pick<BrickReportSend, 'kind' | 'area' | 'failure' | 'retried' | 'effect'> & { title: string; operation: string };
 
-export type BrickReportOutcome = { sent: true; id: string; takeBackKey: string; note: BrickReportKept } | { sent: false; reason: 'empty' | 'limit' | 'unknown_brick' };
+export type BrickReportOutcome =
+    | { sent: true; id: string; takeBackKey: string; note: BrickReportKept; again?: boolean; takenBack?: boolean; wordsPreview?: string }
+    | { sent: false; reason: 'limit' | 'unknown_brick' };
 
 /** Orbit said no, or could not be asked. `code` is Orbit's (edit_not_found, change_not_allowed, ...) or orbit_unavailable. */
 export class ArtifactCallError extends Error {
@@ -1519,9 +1529,9 @@ export class AdminApiService {
     }
 
     /**
-     * A Brick's note to the Universe team (mock "Brick reports inbox"): Orbit cleans it (no emails, phone numbers, links, @names or long numbers),
-     * counts it into a problem and answers it as kept, with the key the chat holds to take it back. A refusal (`empty`, `limit`, `unknown_brick`)
-     * is an answer, not an error. Throws when Orbit cannot be reached or says anything else (then the note is never sent again).
+     * A Brick's note to the Universe team (mock "Brick reports inbox"): Orbit counts it into a problem and answers it as kept, with the key
+     * the chat holds to take it back; the same `ref` sent again answers the same receipt (`again`). A refusal (`limit`, `unknown_brick`) is
+     * an answer, not an error. Throws when Orbit cannot be reached or says anything else: the caller may ask again with the same `ref`.
      */
     async sendBrickReport(report: BrickReportSend): Promise<BrickReportOutcome> {
         const response = await this.brickCall<Record<string, unknown>>('post', 'api/bricks/reports', report);
@@ -1533,11 +1543,22 @@ export class AdminApiService {
                 sent: true,
                 id: data.id,
                 takeBackKey: data.takeBackKey,
-                note: { kind: report.kind, area: report.area, effect: report.effect, title: words(note.title), tried: words(note.tried), stopped: words(note.stopped), idea: words(note.idea) },
+                note: {
+                    kind: report.kind,
+                    area: report.area,
+                    effect: report.effect,
+                    title: words(note.title),
+                    operation: words(note.operation) || report.operation,
+                    failure: report.failure,
+                    retried: note.retried === true,
+                },
+                ...(data.again === true ? { again: true } : {}),
+                ...(data.takenBack === true ? { takenBack: true } : {}),
+                ...(typeof data.wordsPreview === 'string' && data.wordsPreview ? { wordsPreview: data.wordsPreview } : {}),
             };
         }
-        if (data.sent === false && (data.reason === 'limit' || data.reason === 'empty' || data.reason === 'unknown_brick')) return { sent: false, reason: data.reason };
-        // Anything else may be a note Orbit kept: never read as a refusal, so the Brick is not asked to send it again
+        if (data.sent === false && (data.reason === 'limit' || data.reason === 'unknown_brick')) return { sent: false, reason: data.reason };
+        // Anything else may be a note Orbit kept: never read as a refusal; asked again with the same reference, Orbit answers its receipt
         throw new Error('Orbit answered the note in a way it does not know');
     }
 

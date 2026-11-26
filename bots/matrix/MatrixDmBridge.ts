@@ -2200,7 +2200,7 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // The id Matrix gave the event that carries the words of the reply (none when the send was suppressed, or gave none)
             let wordsEvent: string | undefined;
             // The notes this reply sent to the Universe team ride on its words, whichever card the words carry too
-            const reports = reply.bricks?.flatMap((note) => (note.kind === 'report' ? [{ id: note.id, key: note.key, kind: note.noteKind, area: note.area, title: note.title, tried: note.tried, stopped: note.stopped, idea: note.idea, sentAt: note.sentAt }] : [])) ?? [];
+            const reports = reply.bricks?.flatMap((note) => (note.kind === 'report' ? [{ id: note.id, key: note.key, kind: note.noteKind, area: note.area, title: note.title, failure: note.failure, retried: note.retried, ...(note.wordsDraft ? { wordsDraft: note.wordsDraft } : {}), sentAt: note.sentAt }] : [])) ?? [];
             const reportField = reports.length > 0 ? { [BRICK_REPORTS_KEY]: reports } : {};
             if (reply.roomLink && reply.text) {
                 // A reply that names the bot's room carries it, so the game shows a card to go there.
