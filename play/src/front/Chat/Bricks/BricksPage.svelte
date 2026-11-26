@@ -11,6 +11,7 @@
     import { openNextOn } from "../../external-modules/bots/components/BotDetailView.svelte";
     import { shortDay, type BrickCard, type DeletedBrickCard } from "./Brick";
     import BrickPage from "./BrickPage.svelte";
+    import { openBrickChat } from "./BrickChat";
     import BrickPicture from "./BrickPicture.svelte";
     import DeletedBrickFiles from "./DeletedBrickFiles.svelte";
     import {
@@ -57,6 +58,8 @@
     let collapsed: Record<Section, boolean> = { active: false, inactive: false };
     // The Brick whose own page is open over the list
     let pageOfId: string | undefined;
+    // Opened from the Brick's chat (its profile's Settings row): the page says "Chat with {name}" and Back returns there
+    let pageFromChat = false;
     let undoing = new Set<string>();
     // The Usage page, open over the list. A link in a Brick's answer ("What it used") asks for it, with one receipt open.
     let usageOpen = false;
@@ -95,7 +98,7 @@
         usageOpen = false;
         goalsOpen = false;
         pageOfId = $brickPageRequest;
-        takeBrickPageRequest();
+        pageFromChat = takeBrickPageRequest().backToChat;
     }
 
     $: list = $LL.mapEditor.edit.bots.page.list;
@@ -114,6 +117,7 @@
     }));
 
     $: pageOf = pageOfId ? (bricks ?? []).find((brick) => brick.id === pageOfId) : undefined;
+    $: pageBackTitle = pageOf && pageFromChat ? $LL.chat.brick.backToChat({ name: pageOf.name }) : undefined;
     $: deletedBricks = $myDeletedBricksStore;
     // The Usage row says it in a line: the Universe AI bar, in plain words
     $: usageText = $LL.chat.brick.usage;
@@ -144,6 +148,7 @@
     /** A goal or task tapped on the Goals and tasks page: its Brick's page, open on Goals and tasks. */
     function openGoalOn(brickId: string) {
         openNextOn("goals");
+        pageFromChat = false;
         pageOfId = brickId;
     }
 
@@ -199,7 +204,18 @@
     }
 
     function open(brick: BrickCard) {
+        pageFromChat = false;
         pageOfId = brick.id;
+    }
+
+    /** Back from a Brick's page: to the Bricks list, or, when it was opened from the Brick's chat, to that chat again. */
+    function backFromPage() {
+        const brickId = pageOfId;
+        pageOfId = undefined;
+        if (!pageFromChat || !brickId) return;
+        pageFromChat = false;
+        bricksPageOpenStore.set(false);
+        openBrickChat(brickId).catch((error) => console.error(error));
     }
 
     function onRowKey(event: KeyboardEvent, brick: BrickCard) {
@@ -223,7 +239,12 @@
         looks={brickLooks}
     />
 {:else if pageOf}
-    <BrickPage brick={pageOf} onBack={() => (pageOfId = undefined)} onDeleted={() => (pageOfId = undefined)} />
+    <BrickPage
+        brick={pageOf}
+        backTitle={pageBackTitle}
+        onBack={backFromPage}
+        onDeleted={() => (pageOfId = undefined)}
+    />
 {:else if goalsOpen}
     <GoalsPage onBack={() => (goalsOpen = false)} onOpen={openGoalOn} looks={brickLooks} names={brickNames} />
 {:else}
