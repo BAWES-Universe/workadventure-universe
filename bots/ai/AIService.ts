@@ -760,6 +760,8 @@ export class AIService {
         // An App that asks first shows its card, one after another; the first card shown ends the reply. What the person's approval runs is that
         // App's own lookup, so the Apps that need no OK are asked now and their joined answer travels with the card (the model never has to ask them again)
         let card: unknown;
+        // An App that asks first whose OK is already given (a remembered approval) is asked like one that needs none
+        const approved = new Set<string>();
         for (const { app, args, verdict } of usable) {
             if (verdict.kind !== 'ask') continue;
             // eslint-disable-next-line no-await-in-loop
@@ -768,9 +770,10 @@ export class AIService {
                 card = asked.result;
                 break;
             }
+            approved.add(app.serverId);
         }
         const waiting = card !== undefined;
-        const going = waiting ? usable.filter(({ verdict }) => verdict.kind === 'run') : usable;
+        const going = waiting ? usable.filter(({ app, verdict }) => verdict.kind === 'run' || approved.has(app.serverId)) : usable;
         if (waiting && going.length === 0) return card;
         // A lookup that makes new things (a person's own link whose search was reviewed as such) counts toward the Brick's limit, as on the
         // ordinary path; the one that would pass it asks first, and a call that proves it made nothing gives its count back
