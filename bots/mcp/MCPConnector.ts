@@ -60,12 +60,21 @@ export interface McpServerConfig {
     readyMade?: boolean;
     /** Where Orbit is, set when `readyMade`. Never sent anywhere else. */
     orbitUrl?: string;
+    /**
+     * Set by Orbit on a ready-made App when this Brick also has the person's own copy of the same App, switched on (their own link or
+     * key): the id of that own grant. The person's own copy is the one used, so this ready-made App is not offered at all (own Apps first).
+     */
+    ownCopyServerId?: string | null;
     /** When Orbit last saw this server's sign-in refused, or the server not answer (#1819); null when not */
     signInLostAt?: string | null;
     noAnswerAt?: string | null;
     /** The jobs its owner lets other people ask this Brick for, with the inputs people may fill in and what may come back (#2006). Only an App on a person's connection has any. */
     shared?: { jobs: SharedJob[] };
 }
+
+/** A ready-made App whose person also has their own copy of it on this Brick (Orbit says which): only their own copy is offered. */
+export const hasOwnCopy = (server: Pick<McpServerConfig, 'readyMade' | 'ownCopyServerId'>): boolean =>
+    server.readyMade === true && typeof server.ownCopyServerId === 'string' && server.ownCopyServerId.trim() !== '';
 
 /** One job an owner shared: the tool, the names of the inputs people may fill in, and the names of what may come back (null: the whole answer). */
 export interface SharedJob {
@@ -966,7 +975,8 @@ export class MCPConnector {
 
         // Query each enabled server and collect tools
         const allTools: McpToolDefinition[] = [];
-        const enabledServers = servers.filter((s) => s.enabled);
+        // A ready-made App the person also has their own copy of is left out: their own copy is the one used, never the one Universe pays for
+        const enabledServers = servers.filter((s) => s.enabled && !hasOwnCopy(s));
 
         // Track seen tool names across all servers to avoid duplicates
         const seenToolNames = new Set<string>();

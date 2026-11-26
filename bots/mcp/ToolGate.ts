@@ -15,7 +15,8 @@
  *  2. A tool nobody confirmed, or one that changed since it was confirmed, does not run for anyone but a person who
  *     manages the bot, and for them only with a card every time. The tool as it is now (its fingerprint) must be the one
  *     that was confirmed.
- *  3. A heading set to Off blocks its tools.
+ *  3. A heading set to Off blocks its tools, and so does a tool set to Off on its own. A tool's own choice (Right away, Asks first,
+ *     Off) wins over its heading's.
  *  4. Changing things and deleting or sending need their own permission (Orbit #737), whatever the setting. Asking first
  *     is not an access limit and never stands in for a permission.
  *  5. Asks first becomes a card; Right away runs.
@@ -151,8 +152,8 @@ export class ToolGate {
             if (!call.person.signedIn || !call.person.identifier || !(await this.managesTools(call.botId, call.person.identifier))) return waits;
             // A manager may try a tool nobody confirmed. Their permissions still count, and the card comes every time.
             const heading = tool?.heading ?? tool?.suggestedHeading ?? 'deletesOrSends';
-            // Off holds for managers too: a heading turned off lets nothing under it through, reviewed or not
-            if (policy.settings[heading] === 'off') return refusal('off', `${nameOf(call)} is turned off for this bot.`);
+            // Off holds for managers too: a heading turned off lets nothing under it through, reviewed or not (and neither does a tool turned off on its own)
+            if ((tool?.setting ?? policy.settings[heading]) === 'off') return refusal('off', `${nameOf(call)} is turned off for this bot.`);
             const refused = await this.missingPermission(call, heading);
             if (refused) return refused;
             if (!call.fingerprint) return waits;
@@ -160,7 +161,8 @@ export class ToolGate {
         }
 
         const heading = tool.heading!;
-        const setting = policy.settings[heading];
+        // A tool's own choice wins over its heading's (Right away, Asks first, Off), as on a ready-made App's actions
+        const setting = tool.setting ?? policy.settings[heading];
         if (setting === 'off') return refusal('off', `${nameOf(call)} is turned off for this bot.`);
 
         const refused = await this.missingPermission(call, heading);

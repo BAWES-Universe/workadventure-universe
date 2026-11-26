@@ -5,7 +5,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
-import type { GateDecision } from '../mcp/ToolGate';
+import { ToolGate, type GateDecision } from '../mcp/ToolGate';
+import type { PolicyTool } from '../mcp/ToolPolicy';
 import type { DueRun } from '../server/BrickRunner';
 import { TaskApps, type TaskAppsDeps } from '../server/BrickTaskApps';
 import { ModelTaskRunner } from '../server/BrickTaskModel';
@@ -255,5 +256,54 @@ describe('the model of a check with Apps', () => {
     it('keeps the old rules text when no Apps are offered', () => {
         const text = taskPrompt(run(), { name: 'Brick', instructions: '' }, new Date('2026-11-15T06:00:00Z'));
         expect(text).toMatch(/cannot send anything to anyone, use an app/);
+    });
+});
+
+describe("a person's own App in a goal or briefing (own Apps first)", () => {
+    // The real gate, with Orbit's answer for the person's own Exa: its tool confirmed by Universe under Looks things up (Orbit sorts and confirms
+    // an own App's tools by itself), or under a heading that asks first with the tool's own choice set to Right away
+    function ownExa(row: Partial<PolicyTool>) {
+        const settings = { looksUp: 'rightAway', makesNew: 'rightAway', changesThings: 'asksFirst', deletesOrSends: 'asksFirst' } as const;
+        const policy = {
+            serverId: 'server-web_search_exa',
+            kind: 'tools' as const,
+            state: 'confirmed' as const,
+            policyRevision: 4,
+            settings,
+            tools: new Map([['web_search_exa', { name: 'web_search_exa', fingerprint: 'fp-web_search_exa', heading: 'looksUp' as const, suggestedHeading: null, confirmed: true, setting: null, ...row }]]),
+        };
+        const gate = new ToolGate({ read: async () => policy } as never, { check: async () => ({ allowed: true, kind: 'allowed' }) } as never, { canManageBotTools: async () => false });
+        const propose = vi.fn<TaskAppsDeps['approvals']['propose']>(async () => ({ kind: 'waiting' as const, result: { status: 'waiting_for_ok' } }));
+        const call = vi.fn<TaskAppsDeps['call']>(async () => [{ type: 'text', text: '3 results' }]);
+        const apps = new TaskApps({
+            discover: async () => ({ tools: [tool('web_search_exa')], servers: new Map([['web_search_exa', { ...entry('web_search_exa'), serverName: 'Exa', connectionId: 'conn-own-exa' }]]) }),
+            gate,
+            approvals: { propose },
+            room: async () => ({ ok: true as const, roomId: '!dm:matrix.test' }),
+            call,
+        });
+        return { apps, propose, call };
+    }
+
+    it('uses a search of their own Exa right away, with no card', async () => {
+        const { apps, propose, call } = await ownExa({});
+        const session = await apps.open(run());
+        expect(session?.has('web_search_exa')).toBe(true);
+        expect(await session!.call('web_search_exa', { query: 'visa' })).toContain('3 results');
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(propose).not.toHaveBeenCalled();
+    });
+
+    it("takes the tool's own Right away over a heading that asks first", async () => {
+        const { apps, propose, call } = await ownExa({ heading: 'changesThings', setting: 'rightAway' });
+        const session = await apps.open(run());
+        await session!.call('web_search_exa', { query: 'visa' });
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(propose).not.toHaveBeenCalled();
+    });
+
+    it('leaves out a tool turned off on its own', async () => {
+        const { apps } = await ownExa({ setting: 'off' });
+        expect(await apps.open(run())).toBeNull();
     });
 });
