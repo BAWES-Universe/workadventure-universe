@@ -355,6 +355,22 @@ const chat: DeepPartial<Translation["chat"]> = {
             notReady: "コンピューターを準備できませんでした。何も変更されていません。もう一度お試しください。",
         },
     },
+    artifacts: {
+        openPublic: "公開",
+        openPublicHelp: "リンクを知っている人には、公開した内容だけが表示されます",
+        notPublished: "まだ公開されていません",
+        publishHelp: "公開したバージョンが相手に表示されます。その後の変更は、もう一度公開するまで非公開のままです。",
+        publishVersion: "バージョン {version} を公開",
+        publishedStatus: "公開済み · バージョン {version} · {time}",
+        unpublishedChanges: "バージョン {version} はまだ公開されていません",
+        linkFollows: "リンクには常に最新バージョンが表示されます。",
+        publishBar: "公開済み: バージョン {version}。バージョン {latest} はまだ公開されていません。",
+        publish: "公開",
+        publishing: "公開中…",
+        publishFailed: "公開できませんでした。もう一度お試しください。",
+        publicUnavailable: "公開バージョンを利用できません",
+        publicUnavailableHelp: "バージョンを公開するまで、相手には「利用できません」と表示されます。",
+    },
 };
 
 export default chat;

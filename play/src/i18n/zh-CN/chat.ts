@@ -53,6 +53,22 @@ const chat: DeepPartial<Translation["chat"]> = {
             notReady: "无法准备好电脑。电脑上没有任何改动。请重试。",
         },
     },
+    artifacts: {
+        openPublic: "公开",
+        openPublicHelp: "拥有链接的任何人只能看到你发布的内容",
+        notPublished: "尚未发布",
+        publishHelp: "大家看到的是你发布的版本。之后的更改会保持私密，直到你再次发布。",
+        publishVersion: "发布版本 {version}",
+        publishedStatus: "已发布 · 版本 {version} · {time}",
+        unpublishedChanges: "版本 {version} 尚未发布",
+        linkFollows: "链接始终显示你的最新版本。",
+        publishBar: "已发布：版本 {version}。版本 {latest} 尚未发布。",
+        publish: "发布",
+        publishing: "正在发布…",
+        publishFailed: "无法发布，请重试。",
+        publicUnavailable: "公开版本不可用",
+        publicUnavailableHelp: "在你发布版本之前，大家会看到“不可用”。",
+    },
 };
 
 export default chat;

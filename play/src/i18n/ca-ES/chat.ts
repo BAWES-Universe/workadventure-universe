@@ -57,6 +57,23 @@ const chat: DeepPartial<Translation["chat"]> = {
             notReady: "No s'ha pogut preparar l'ordinador. No s'ha canviat res. Torna-ho a provar.",
         },
     },
+    artifacts: {
+        openPublic: "Públic",
+        openPublicHelp: "Qualsevol persona amb l'enllaç només veu el que publiques",
+        notPublished: "Encara no publicat",
+        publishHelp:
+            "La gent veu la versió que publiques. Els canvis posteriors es mantenen privats fins que tornis a publicar.",
+        publishVersion: "Publica la versió {version}",
+        publishedStatus: "Publicat · Versió {version} · {time}",
+        unpublishedChanges: "La versió {version} encara no està publicada",
+        linkFollows: "L'enllaç sempre mostra la teva última versió.",
+        publishBar: "Publicat: versió {version}. La versió {latest} encara no està publicada.",
+        publish: "Publica",
+        publishing: "S'està publicant…",
+        publishFailed: "No s'ha pogut publicar. Torna-ho a provar.",
+        publicUnavailable: "Versió pública no disponible",
+        publicUnavailableHelp: "La gent veu «No disponible» fins que publiquis una versió.",
+    },
 };
 
 export default chat;

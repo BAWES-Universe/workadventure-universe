@@ -210,6 +210,22 @@ const chat: DeepPartial<Translation["chat"]> = {
             notReady: "Licadło njejo se mógło pśigótowaś. Nic njejo se změniło. Wopytaj hyšći raz.",
         },
     },
+    artifacts: {
+        openPublic: "Zjawny",
+        openPublicHelp: "Kuždy z wótkazom wiźi jano to, což wózjawijoš",
+        notPublished: "Hyšći njewózjawjony",
+        publishHelp: "Luźe wiźe wersiju, kótaruž wózjawijoš. Změny pó tom wóstanu priwatne, až wózjawijoš znowa.",
+        publishVersion: "Wersiju {version} wózjawiś",
+        publishedStatus: "Wózjawjony · Wersija {version} · {time}",
+        unpublishedChanges: "Wersija {version} hyšći njejo wózjawjona",
+        linkFollows: "Wótkaz pokazujo pśecej twoju nejnowšu wersiju.",
+        publishBar: "Wózjawjone: wersija {version}. Wersija {latest} hyšći njejo wózjawjona.",
+        publish: "Wózjawiś",
+        publishing: "Wózjawjujo se…",
+        publishFailed: "Wózjawjenje njejo se raźiło. Wopytaj hyšći raz.",
+        publicUnavailable: "Zjawna wersija njestoj k dispoziciji",
+        publicUnavailableHelp: "Luźe wiźe „Njestoj k dispoziciji“, až wózjawijoš wersiju.",
+    },
 };
 
 export default chat;

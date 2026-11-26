@@ -593,6 +593,64 @@ describe("how the chat draws a person's own Bricks", () => {
             expect(get(myBricksByChatId).get(`@bot_${STUDIO}:chat.test`)?.name).toBe("Teal Brick");
         });
 
+        it("sends the request key it was given, so a tap tried again gives back the first Brick", async () => {
+            await loadMyBricks();
+            api.makeMyBrick.mockResolvedValue({
+                brick: card({ id: STUDIO, name: "Teal Brick", characterTextureId: "brick-teal", isDefault: false }),
+            });
+            await makeMyBrick("Teal Brick", "brick-teal", { requestKey: "key-1" });
+            expect(api.makeMyBrick).toHaveBeenCalledWith({
+                name: "Teal Brick",
+                characterTextureId: "brick-teal",
+                requestKey: "key-1",
+            });
+        });
+
+        it("tells onLimit when they can make another, and makes nothing, when Orbit says they made too many Bricks this hour", async () => {
+            await loadMyBricks();
+            const limited = Object.assign(new Error("You've made a lot of Bricks this hour. Try again at 3:40 PM."), {
+                status: 429,
+                code: "new_bricks_limit",
+                retryAt: "2026-11-21T12:40:00.000Z",
+            });
+            api.makeMyBrick.mockRejectedValue(limited);
+            const heard: (string | undefined)[] = [];
+            expect(
+                await makeMyBrick("Teal Brick", "brick-teal", { onLimit: (retryAt) => heard.push(retryAt) })
+            ).toBeUndefined();
+            expect(heard).toEqual(["2026-11-21T12:40:00.000Z"]);
+            expect(get(myBricksStore)).toHaveLength(2);
+            // Any other 429 is an ordinary failure
+            api.makeMyBrick.mockRejectedValue(Object.assign(new Error("slow down"), { status: 429 }));
+            expect(
+                await makeMyBrick("Teal Brick", "brick-teal", { onLimit: (retryAt) => heard.push(retryAt) })
+            ).toBeUndefined();
+            expect(heard).toHaveLength(1);
+        });
+
+        it("does not tell onLimit about a refusal that arrives after the person signed out of that account", async () => {
+            await loadMyBricks();
+            let refuse: (error: unknown) => void = () => undefined;
+            api.makeMyBrick.mockReturnValue(
+                new Promise((_resolve, reject) => {
+                    refuse = reject;
+                })
+            );
+            const heard: (string | undefined)[] = [];
+            const pending = makeMyBrick("Teal Brick", "brick-teal", { onLimit: (retryAt) => heard.push(retryAt) });
+            // Signed out (and maybe into another account) while the make was out
+            forgetMyBricks();
+            refuse(
+                Object.assign(new Error("too many"), {
+                    status: 429,
+                    code: "new_bricks_limit",
+                    retryAt: "2026-11-21T12:40:00.000Z",
+                })
+            );
+            expect(await pending).toBeUndefined();
+            expect(heard).toEqual([]);
+        });
+
         it("makes nothing and changes nothing when Orbit refuses", async () => {
             await loadMyBricks();
             api.makeMyBrick.mockRejectedValue(new Error("400"));

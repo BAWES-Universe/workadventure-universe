@@ -48,7 +48,7 @@ import { loadLocale } from "../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../i18n/i18n-svelte";
 import ArtifactCowebsiteComponent from "./ArtifactCowebsiteComponent.svelte";
 
-const opened = (owner: boolean, openScope: string) => ({
+const opened = (owner: boolean, openScope: string, published: { version: number; at: string } | null = null) => ({
     artifact: {
         id: "a1",
         title: "Coffee Club",
@@ -59,6 +59,7 @@ const opened = (owner: boolean, openScope: string) => ({
         changeScope: "owner",
         chatKind: null,
         expiresAt: null,
+        published,
     },
     version: {
         number: 3,
@@ -89,9 +90,9 @@ describe("the line under a paying page in the artifact window (the approved mock
         vi.clearAllMocks();
     });
 
-    async function mount(owner = false, openScope = "link") {
+    async function mount(owner = false, openScope = "link", published: { version: number; at: string } | null = null) {
         vi.useFakeTimers();
-        api.fetchArtifact.mockResolvedValue(opened(owner, openScope));
+        api.fetchArtifact.mockResolvedValue(opened(owner, openScope, published));
         const target = document.createElement("div");
         document.body.appendChild(target);
         const cowebsite = {
@@ -170,6 +171,37 @@ describe("the line under a paying page in the artifact window (the approved mock
         );
         expect((target.querySelector('[data-testid="artifactPay-copy"]') as HTMLButtonElement).disabled).toBe(true);
         view.$destroy();
+    });
+
+    it("gives a guest who paid on a published Public page the receipt link too, and none on one that was never published", async () => {
+        api.payOnArtifact
+            .mockResolvedValueOnce({ orderId: "o1", checkoutUrl: "https://checkout.examplepay.com/c1", app: "Example" })
+            .mockResolvedValue({ status: "paid", testPayment: false });
+        const written: string[] = [];
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: { writeText: (value: string) => (written.push(value), Promise.resolve()) },
+        });
+        vi.spyOn(window, "open").mockReturnValue(null);
+        const published = await mount(false, "public", { version: 3, at: "2026-11-20T09:12:00Z" });
+        await published.say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await vi.advanceTimersByTimeAsync(3_000);
+        await settle();
+        await published.press("copy");
+        expect(written[0]).toMatch(/^https:\/\/play\.test\/a\/a1#receipt=[A-Za-z0-9_-]{43}$/);
+        published.view.$destroy();
+        document.body.innerHTML = "";
+
+        // Nothing published: Orbit has no public page for it, so there is no receipt link to give
+        api.payOnArtifact
+            .mockResolvedValueOnce({ orderId: "o2", checkoutUrl: "https://checkout.examplepay.com/c2", app: "Example" })
+            .mockResolvedValue({ status: "paid", testPayment: false });
+        const never = await mount(false, "public", null);
+        await never.say({ universe: "use-app", app: "examplepay", request: "r2", session: "s2" });
+        await vi.advanceTimersByTimeAsync(3_000);
+        await settle();
+        expect(never.target.querySelector('[data-testid="artifactPay-copy"]')).toBeNull();
+        never.view.$destroy();
     });
 
     it("shows the receipt link to copy by hand when the browser would not copy it", async () => {

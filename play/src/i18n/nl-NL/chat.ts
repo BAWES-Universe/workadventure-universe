@@ -298,6 +298,23 @@ const chat: DeepPartial<Translation["chat"]> = {
             notReady: "De computer kon niet worden voorbereid. Er is niets gewijzigd. Probeer het opnieuw.",
         },
     },
+    artifacts: {
+        openPublic: "Openbaar",
+        openPublicHelp: "Iedereen met de link ziet alleen wat je publiceert",
+        notPublished: "Nog niet gepubliceerd",
+        publishHelp:
+            "Mensen zien de versie die je publiceert. Wijzigingen daarna blijven privé tot je opnieuw publiceert.",
+        publishVersion: "Versie {version} publiceren",
+        publishedStatus: "Gepubliceerd · Versie {version} · {time}",
+        unpublishedChanges: "Versie {version} is nog niet gepubliceerd",
+        linkFollows: "De link toont altijd je nieuwste versie.",
+        publishBar: "Gepubliceerd: versie {version}. Versie {latest} is nog niet gepubliceerd.",
+        publish: "Publiceren",
+        publishing: "Publiceren…",
+        publishFailed: "Publiceren is niet gelukt. Probeer het opnieuw.",
+        publicUnavailable: "Openbare versie niet beschikbaar",
+        publicUnavailableHelp: 'Mensen zien "Niet beschikbaar" tot je een versie publiceert.',
+    },
 };
 
 export default chat;

@@ -374,6 +374,23 @@ const chat: DeepPartial<Translation["chat"]> = {
             notReady: "Impossibile preparare il computer. Non è stato modificato nulla. Riprova.",
         },
     },
+    artifacts: {
+        openPublic: "Pubblico",
+        openPublicHelp: "Chiunque abbia il link vede solo ciò che pubblichi",
+        notPublished: "Non ancora pubblicato",
+        publishHelp:
+            "Le persone vedono la versione che pubblichi. Le modifiche successive restano private finché non pubblichi di nuovo.",
+        publishVersion: "Pubblica la versione {version}",
+        publishedStatus: "Pubblicato · Versione {version} · {time}",
+        unpublishedChanges: "La versione {version} non è ancora pubblicata",
+        linkFollows: "Il link mostra sempre la tua ultima versione.",
+        publishBar: "Pubblicato: versione {version}. La versione {latest} non è ancora pubblicata.",
+        publish: "Pubblica",
+        publishing: "Pubblicazione…",
+        publishFailed: "Impossibile pubblicare. Riprova.",
+        publicUnavailable: "Versione pubblica non disponibile",
+        publicUnavailableHelp: "Le persone vedono «Non disponibile» finché non pubblichi una versione.",
+    },
 };
 
 export default chat;
