@@ -199,6 +199,20 @@ describe('The send_to_universe_team tool', () => {
         expect(refused.admin.sendBrickReport).toHaveBeenCalledTimes(2);
     });
 
+    it('two notes that fail side by side are both remembered: neither is sent again, and both count (CodeRabbit)', async () => {
+        const ctx = context();
+        ctx.admin.sendBrickReport.mockResolvedValue({ sent: false, reason: 'refused' });
+        const idea = { kind: 'idea', area: 'chat', effect: 'idea' };
+        const cantDo = { kind: 'cant_do', area: 'voice', effect: 'stopped' };
+        await Promise.all([runReportTool(idea, ctx), runReportTool(cantDo, ctx)]);
+        expect(ctx.admin.sendBrickReport).toHaveBeenCalledTimes(2);
+        await runReportTool(idea, ctx);
+        await runReportTool(cantDo, ctx);
+        expect(ctx.admin.sendBrickReport).toHaveBeenCalledTimes(2);
+        expect(await runReportTool({ kind: 'friction', area: 'memory', effect: 'slowed' }, ctx)).toMatchObject({ note: expect.stringContaining('Enough notes') });
+        expect(ctx.admin.sendBrickReport).toHaveBeenCalledTimes(2);
+    });
+
     it('reads how a step ended from its answer, never from its content', () => {
         expect(failureOf({ text: 'Your meeting with Dr. Smith was not allowed to move' })).toBeNull();
         expect(failureOf('All good')).toBeNull();

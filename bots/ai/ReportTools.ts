@@ -213,6 +213,17 @@ const sending = new WeakMap<BrickNote[], Map<string, Promise<Record<string, unkn
 /** Per reply, the notes that did not go (refused, taken back, not confirmed), by reference, with what the Brick was told: never sent again in that reply. */
 const notSent = new WeakMap<BrickNote[], Map<string, Record<string, unknown>>>();
 
+/** This reply's own list in one of the maps above, kept there the moment it is made: two calls side by side share one list. */
+function perReply<T>(lists: WeakMap<BrickNote[], Map<string, T>>, notes: BrickNote[] | null): Map<string, T> {
+    if (!notes) return new Map<string, T>();
+    let list = lists.get(notes);
+    if (!list) {
+        list = new Map<string, T>();
+        lists.set(notes, list);
+    }
+    return list;
+}
+
 const NOT_CONFIRMED =
     'Could not confirm the note reached the Universe team. Do not send it again in this reply and never say it was sent; if the person asked you to report it, say in one short sentence that you could not confirm it went.';
 
@@ -252,7 +263,7 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
 
     // The notes this reply already sent, and the ones being sent right now (tool calls of one round run side by side)
     const sentAlready = () => (context.notes ?? []).filter((note): note is ReportSentNote => note.kind === 'report');
-    const flying = context.notes ? (sending.get(context.notes) ?? new Map<string, Promise<Record<string, unknown>>>()) : new Map<string, Promise<Record<string, unknown>>>();
+    const flying = perReply(sending, context.notes);
     const same = sentAlready().find((note) => note.ref === ref);
     if (same) return draftWords && !same.wordsDraft ? addDraftWords(same, report, context) : ALREADY_SENT;
     // The same note is being sent beside this call: say what that one says (taken back, refused, not confirmed), never "sent" before it is
@@ -264,21 +275,18 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
         return first && draftWords && !first.wordsDraft ? addDraftWords(first, report, context) : ALREADY_SENT;
     }
     // A note that did not go is not sent again in this reply, as the Brick was told; it still counts toward the reply's notes
-    const failed = context.notes ? (notSent.get(context.notes) ?? new Map<string, Record<string, unknown>>()) : new Map<string, Record<string, unknown>>();
-    const toldBefore = failed.get(ref);
+    // One list per reply, kept at once (before any wait), so two notes failing side by side are both remembered
+    const notGone = perReply(notSent, context.notes);
+    const toldBefore = notGone.get(ref);
     if (toldBefore) return toldBefore;
-    if (sentAlready().length + flying.size + failed.size >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
+    if (sentAlready().length + flying.size + notGone.size >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
 
     // Held before Orbit is asked, so a call beside this one sees it and waits for what it is told; let go once the answer is in
     const answer = sendNew(report, context);
     flying.set(ref, answer);
-    if (context.notes) sending.set(context.notes, flying);
     try {
         const told = await answer;
-        if (told.sent !== true && context.notes) {
-            failed.set(ref, told);
-            notSent.set(context.notes, failed);
-        }
+        if (told.sent !== true) notGone.set(ref, told);
         return told;
     } finally {
         flying.delete(ref);
