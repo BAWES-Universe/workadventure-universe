@@ -400,6 +400,25 @@ describe('a ready-made App’s lookups in a goal or task', () => {
         expect(answer).not.toContain('GMAIL_DELETE_MESSAGE');
         expect(answer).not.toContain('GOOGLECALENDAR_DELETE_EVENT');
     });
+
+    it('shows the card of the App that asks first, does not ask that App, and answers the other Apps with the card', async () => {
+        const gmail: ToolServerEntry = { ...entry('COMPOSIO_SEARCH_TOOLS'), serverId: 'g1', serverName: 'Gmail', readyMade: true, orbitUrl: 'https://orbit.example' };
+        const calendar: ToolServerEntry = { ...gmail, serverId: 'cal1', serverName: 'Google Calendar' };
+        const decide = async (call: { serverId?: string }): Promise<GateDecision> => (call.serverId === 'g1' ? { kind: 'ask', heading: 'looksUp', notReviewed: false, policyRevision: 3, fingerprint: 'fp' } : RUN('looksUp'));
+        const call = vi.fn<TaskAppsDeps['call']>(async () => [{ type: 'text', text: '{"results":[{"tool_slug":"GOOGLECALENDAR_EVENTS_LIST"}]}' }]);
+        const { apps, propose } = setUp(
+            {},
+            { discover: async () => ({ tools: [tool('COMPOSIO_SEARCH_TOOLS')], servers: new Map([['COMPOSIO_SEARCH_TOOLS', { ...gmail, otherApps: [calendar] }]]) }), gate: { decide } as never, call }
+        );
+        const session = await apps.open(run());
+        const answer = await session!.call('COMPOSIO_SEARCH_TOOLS', {});
+        expect(propose).toHaveBeenCalledTimes(1);
+        expect(propose).toHaveBeenCalledWith(expect.objectContaining({ entry: expect.objectContaining({ serverId: 'g1' }) }));
+        expect(answer).toContain('waiting_for_ok');
+        expect(answer).toContain('GOOGLECALENDAR_EVENTS_LIST');
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
+    });
 });
 
 describe('a ready-made App’s batch of actions in a run', () => {

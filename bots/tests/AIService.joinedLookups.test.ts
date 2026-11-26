@@ -141,7 +141,7 @@ describe('a search on a Brick with Gmail and Calendar', () => {
         expect(searched.result.error).toContain('turned off');
     });
 
-    it('shows the card of an App that asks first for lookups before anything is asked, and runs nothing until the person says yes', async () => {
+    it('shows the card of an App that asks first for lookups, runs nothing in that App until the person says yes, and answers the other Apps now', async () => {
         // The person's own link, whose search was confirmed as Asks first (a ready-made App's lookups never ask)
         const own: ToolServerEntry = { botId: 'b1', serverId: 'own1', serverUrl: 'https://own.example/mcp', authType: 'none', serverName: 'My link', fingerprint: 'fp-own' };
         const ownPolicy: ServerPolicy = {
@@ -159,8 +159,12 @@ describe('a search on a Brick with Gmail and Calendar', () => {
         const [searched] = await service['executeToolCalls']([{ id: 'c1', name: SEARCH, arguments: '{"queries":[{"use_case":"events"}]}' }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
         expect(propose).toHaveBeenCalledTimes(1);
         expect(propose).toHaveBeenCalledWith(expect.objectContaining({ toolName: SEARCH, entry: expect.objectContaining({ serverId: 'own1' }) }));
-        expect(execute).not.toHaveBeenCalled();
+        // The Apps that need no OK are asked at once and their joined answer comes with the card; the App that asks is not asked
+        expect(execute.mock.calls.map((args: unknown[]) => args[0])).toEqual(['g1', 'cal1']);
         expect(searched.result).toMatchObject({ status: 'waiting_for_ok' });
+        const slugs = wrote((searched.result as { alsoAnswered: unknown }).alsoAnswered).data.results.flatMap((one: { primary_tool_slugs: string[] }) => one.primary_tool_slugs);
+        expect(slugs).toContain('GOOGLECALENDAR_EVENTS_LIST');
+        expect(slugs).toContain('GMAIL_FETCH_EMAILS');
     });
 });
 

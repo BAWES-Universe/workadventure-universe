@@ -757,29 +757,38 @@ export class AIService {
         const usable = decided.filter(({ verdict }) => verdict.kind !== 'refuse');
         // No App allows it: the first App's refusal stands
         if (usable.length === 0) return this.toolNotRun(refused!.verdict as Extract<GateDecision, { kind: 'refuse' }>);
-        // An App that asks first shows its card, one after another; the first card shown ends the reply, so nothing else is asked of the Apps
+        // An App that asks first shows its card, one after another; the first card shown ends the reply. What the person's approval runs is that
+        // App's own lookup, so the Apps that need no OK are asked now and their joined answer travels with the card (the model never has to ask them again)
+        let card: unknown;
         for (const { app, args, verdict } of usable) {
             if (verdict.kind !== 'ask') continue;
             // eslint-disable-next-line no-await-in-loop
             const asked = await this.askForOk(botId, toolName, app, args, verdict, playerId, botClient, spaceName);
-            if (asked.kind === 'result') return asked.result;
+            if (asked.kind === 'result') {
+                card = asked.result;
+                break;
+            }
         }
+        const waiting = card !== undefined;
+        const going = waiting ? usable.filter(({ verdict }) => verdict.kind === 'run') : usable;
+        if (waiting && going.length === 0) return card;
         // A lookup that makes new things (a person's own link whose search was reviewed as such) counts toward the Brick's limit, as on the
         // ordinary path; the one that would pass it asks first, and a call that proves it made nothing gives its count back
         const releases = new Map<string, () => void>();
-        for (const { app, args, verdict } of usable) {
+        for (const { app, args, verdict } of going) {
             if (verdict.kind !== 'run' || verdict.heading !== 'makesNew') continue;
             // eslint-disable-next-line no-await-in-loop
             const counted = await this.checkHowMany(botId, toolName, app, args, verdict, playerId, botClient, spaceName);
             if (counted.kind === 'result') {
                 for (const give of releases.values()) give();
-                return counted.result;
+                // A card already shown for another App is the reply, whatever else is asked
+                return waiting ? card : counted.result;
             }
             if (counted.release) releases.set(app.serverId, counted.release);
         }
         const asker = this.gatePerson(botId, playerId, botClient, spaceName);
         const answers = await Promise.all(
-            usable.map(async ({ app, args, verdict }) => ({
+            going.map(async ({ app, args, verdict }) => ({
                 app: app.serverName ?? '',
                 answer: await this.callWithSessionFallback(app, toolName, args, input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
                     botId,
@@ -790,11 +799,14 @@ export class AIService {
                 }),
             }))
         );
-        for (const { app, answer } of answers.map((one, at) => ({ app: usable[at].app, answer: one.answer }))) if (['failed', 'notSent'].includes(outcomeOf(answer))) releases.get(app.serverId)?.();
-        for (const [at, one] of answers.entries()) this.sessionOwners.note(botId, one.answer, usable[at].app.serverId);
+        for (const { app, answer } of answers.map((one, at) => ({ app: going[at].app, answer: one.answer }))) if (['failed', 'notSent'].includes(outcomeOf(answer))) releases.get(app.serverId)?.();
+        for (const [at, one] of answers.entries()) this.sessionOwners.note(botId, one.answer, going[at].app.serverId);
         // What is Off in any App is taken out of each App's answer before they are joined, so a label put in front of one can't hide it
         const scrubbed = await Promise.all(answers.map(async (one) => ({ ...one, answer: await this.withoutOffActions(botId, toolName, entry, one.answer) })));
-        return joinLookupAnswers(scrubbed);
+        const joined = joinLookupAnswers(scrubbed);
+        if (!waiting) return joined;
+        // The card is the reply; what the other Apps answered comes with it
+        return { ...(card !== null && typeof card === 'object' && !Array.isArray(card) ? (card as Record<string, unknown>) : { result: card }), alsoAnswered: joined };
     }
 
     private gateCallFor(botId: string, toolName: string, entry: ToolServerEntry, person: BotAccessPerson, botClient?: BotClient, args?: unknown): GateCall {

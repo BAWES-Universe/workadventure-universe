@@ -234,17 +234,26 @@ export class TaskApps {
         const usable = decided.filter(({ verdict }) => this.refusal(verdict, name) === null);
         // No App lets it be used: the first App's refusal stands
         if (usable.length === 0) return refused(this.refusal(decided[0].verdict, name) ?? `${name} cannot be used.`);
+        // The first App that asks shows its card and the check ends with it; the person's approval runs only that App's lookup, so the Apps that
+        // need no OK are asked now and their joined answer travels with the card
+        let card: string | undefined;
+        const asking = new Set<string>();
         for (const { app, args: own, verdict } of usable) {
             const heading = verdict.kind === 'refuse' ? undefined : verdict.heading;
             if (verdict.kind === 'refuse' || !heading) continue;
             if (verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading)) {
-                // eslint-disable-next-line no-await-in-loop
-                return await this.askFor(run, name, app, own, { kind: 'ask', heading, notReviewed: false, policyRevision: verdict.policyRevision!, fingerprint: verdict.fingerprint! }, state);
+                asking.add(app.serverId);
+                if (card === undefined) {
+                    // eslint-disable-next-line no-await-in-loop
+                    card = await this.askFor(run, name, app, own, { kind: 'ask', heading, notReviewed: false, policyRevision: verdict.policyRevision!, fingerprint: verdict.fingerprint! }, state);
+                }
             }
         }
+        const going = card === undefined ? usable : usable.filter(({ app }) => !asking.has(app.serverId));
+        if (card !== undefined && going.length === 0) return card;
         const step = stepId(run.runId, name, args);
         const answers = await Promise.all(
-            usable.map(async ({ app, args: own, verdict }) => {
+            going.map(async ({ app, args: own, verdict }) => {
                 let answer: unknown;
                 try {
                     answer = await this.callWithSessionFallback(run.brickId, app, name, own, run.userId, { heading: (verdict as { heading: ToolHeading }).heading, callId: requests.length === 1 ? step : `${step}:${app.serverId}` });
@@ -258,7 +267,8 @@ export class TaskApps {
         );
         // What is Off in any App is taken out of each App's answer before they are joined, so a label put in front of one can't hide it
         const scrubbed = await Promise.all(answers.map(async (one) => ({ ...one, answer: await this.withoutOffActions(run.brickId, name, first, one.answer) })));
-        return asText(joinLookupAnswers(scrubbed), isMailTool(name, first.serverName));
+        const joined = asText(joinLookupAnswers(scrubbed), isMailTool(name, first.serverName));
+        return card === undefined ? joined : `${card}\n\nAnswered now by the other Apps: ${joined}`;
     }
 
     /**
