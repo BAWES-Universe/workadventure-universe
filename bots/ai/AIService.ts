@@ -5549,10 +5549,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 }
                                 if (split.kind === 'parts') {
                                     // The Apps that ran a part: one, or all of them when parts ran on more than one (a note names none of them then,
-                                    // but two such batches on different Apps stay two notes)
-                                    const ran = new Set(split.parts.filter((part) => part.decision.kind !== 'refuse').map((part) => part.entry.connectionId ?? null));
-                                    ranOn.set(toolCall.id, ran.size === 1 ? [...ran][0] : ran.size === 0 ? null : [...ran].map((id) => id ?? '').sort());
-                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
+                                    // but two such batches on different Apps stay two notes). Until a call is sent, the Apps it is for (as one call
+                                    // that waits for an OK names its App); once calls are sent, only the Apps they went to, never one whose part waits
+                                    const apps = (ids: Array<string | null>) => {
+                                        const ran = new Set(ids);
+                                        ranOn.set(toolCall.id, ran.size === 1 ? [...ran][0] : ran.size === 0 ? null : [...ran].map((id) => id ?? '').sort());
+                                    };
+                                    apps(split.parts.filter((part) => part.decision.kind !== 'refuse').map((part) => part.entry.connectionId ?? null));
+                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds, sentTo: apps });
                                     break;
                                 }
                             }
@@ -5890,6 +5894,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         spaceName?: string;
         abortSignal?: AbortSignal;
         toolTimeoutSeconds?: number | null;
+        /** Told the connections of the Apps that calls were sent to, when any were (a part that waits for an OK or was held back is not among them). */
+        sentTo?: (connections: Array<string | null>) => void;
     }): Promise<unknown> {
         const { botId, args, playerId, botClient, spaceName } = input;
         const byIndex = (a: AppPart, b: AppPart) => a.index - b.index;
@@ -5993,6 +5999,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // Each action's own result in the answer says whether it was done; a call that failed fails them all
             results.push({ group, answer, outcomes: batchOutcomes(answer, group.map((part) => part.slug), outcomeOf(answer)) });
         }
+        if (results.length > 0) input.sentTo?.(results.map(({ group }) => group[0].entry.connectionId ?? null));
         const outcomeOfPart = new Map<AppPart, PartOutcome>();
         for (const { group, outcomes } of results) group.forEach((part, at) => outcomeOfPart.set(part, outcomes[at]));
         // The things it made go back to the limit when the call that would have made them proved it made nothing

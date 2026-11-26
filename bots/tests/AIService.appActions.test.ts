@@ -423,6 +423,17 @@ describe('a Brick with several ready-made Apps', () => {
         ]);
     });
 
+    it('a batch where one App ran and the other waits for an OK is recorded for the App that ran only (CodeRabbit)', async () => {
+        const { service, servers, sentTo, propose } = twoApps(gmailPolicy(), calendarPolicy({ GOOGLECALENDAR_DELETE_EVENT: 'asksFirst' }));
+        const turn = newReportTurn('$event-2');
+        const sources = { apps: new Map([[BATCH, { connectionId: 'c1' }]]), offered: new Set([BATCH]) };
+        await service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify(batchArgs('GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_DELETE_EVENT')) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7,
+            undefined, undefined, false, undefined, undefined, undefined, false, false, false, undefined, 'dm', undefined, turn, sources);
+        expect(sentTo()).toEqual([['g1', ['GMAIL_FETCH_EMAILS']]]);
+        expect(propose).toHaveBeenCalledTimes(1);
+        expect(turn.steps.map((step) => ({ apps: step.apps, connection: step.appConnectionId }))).toEqual([{ apps: undefined, connection: undefined }]);
+    });
+
     it('never lets another App’s looser choice run an action that is Off in its own App', async () => {
         const { run, execute } = twoApps(gmailPolicy({ GMAIL_DELETE_MESSAGE: 'off' }), calendarPolicy());
         const [result] = await run(batchArgs('GMAIL_DELETE_MESSAGE'));
