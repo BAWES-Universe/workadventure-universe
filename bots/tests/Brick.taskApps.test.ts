@@ -188,8 +188,8 @@ describe('what a run does with an App', () => {
         expect(await (await fits.apps.open(run()))!.call('search', {})).toBe(words(50_000));
         const big = setUp({ search: RUN('looksUp') }, { call: async () => words(200_000) });
         const cut = await (await big.apps.open(run()))!.call('search', {});
-        expect(cut.startsWith(words(80_000))).toBe(true);
-        expect(cut).toContain('Only the first 80,000 of 200,000 characters fit');
+        expect(cut.startsWith(words(72_000))).toBe(true);
+        expect(cut).toContain('Only the first 72,000 of 200,000 characters fit');
     });
 });
 

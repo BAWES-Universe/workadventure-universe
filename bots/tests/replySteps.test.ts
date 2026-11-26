@@ -160,6 +160,18 @@ describe("a reply's room for tool results", () => {
         for (const result of room.steps[0]!.results) expect(result.content.startsWith('\n[Only the first 0 of')).toBe(true);
     });
 
+    it('for a run, cuts a result that came with its own cut note at its text, and says how long it was before the first cut', () => {
+        const first = `${'t'.repeat(600)}\n[Only the first 600 of 5,000 characters fit in this reply's room for tool results ("Room for tool results in one reply").]`;
+        const room = new StepRoom(500, true);
+        room.add({ ...step(1, first), content: 'x'.repeat(100) });
+        const [result] = room.steps[0]!.results;
+        expect(room.size()).toBeLessThanOrEqual(500);
+        // The note is the one note, at the end, about the whole text; the first note is not cut into
+        expect(result!.content.match(/Only the first/g)).toHaveLength(1);
+        expect(result!.content).toMatch(/^t+\n\[Only the first \d+ of 5,000 characters fit/);
+        expect(result!.content).not.toContain('600 of');
+    });
+
     it('for a run, leaves out the oldest steps whole when what the model said in them leaves no room, never a call apart from its result', () => {
         const room = new StepRoom(1000, true);
         const said = (round: number) => ({ ...step(round, 'r'.repeat(100)), content: String(round).repeat(350) });

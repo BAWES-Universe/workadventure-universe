@@ -17,8 +17,12 @@
 import { clipped, cutNote } from '../ai/replySteps';
 import { BOT_LIMIT_DEFAULTS } from '../ai/types';
 
-/** What an answer can be at most, as text for the model: the same room a chat reply has by default. */
-export const RUN_ANSWER_MAX = BOT_LIMIT_DEFAULTS.roomChars;
+/**
+ * What an answer can be at most, as text for the model: the room a chat reply has by default, less a tenth that is left for what goes
+ * beside it in the run's room (what the model said and called, the lines older results were set aside to). An answer made to fit the whole
+ * room would be cut a second time there, in the middle of an item.
+ */
+export const RUN_ANSWER_MAX = Math.floor(BOT_LIMIT_DEFAULTS.roomChars * 0.9);
 
 /** A text, cut to `max` characters when it is longer, and saying so. As it was when it fits. */
 export function cutWithNote(text: string, max: number = RUN_ANSWER_MAX): string {
@@ -100,12 +104,23 @@ interface Taken {
 
 const leftOut = (text: string) => `[encoded content left out, ${text.length.toLocaleString('en-US')} characters]`;
 
+/** Strings, and numbers (a number is the whole token, so a digit inside a longer one is never taken for a number of its own). */
+const JSON_TOKEN = /"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+/**
+ * JSON text with each whole number too big for a number to hold exactly (a 64-bit id) written as a string, so reading it does not round it:
+ * the model must get back the id it was given.
+ */
+function keepBigNumbers(text: string): string {
+    return text.replace(JSON_TOKEN, (token) => (token.startsWith('"') || /[.eE]/.test(token) || Number.isSafeInteger(Number(token)) ? token : `"${token}"`));
+}
+
 /** A text from an App: JSON written as text (an App's answer is often a text block holding JSON) is read as JSON, so what is in it can be left out. */
 function readJson(text: string): { ok: true; value: unknown } | { ok: false } {
     const start = text.trimStart()[0];
     if (start !== '{' && start !== '[') return { ok: false };
     try {
-        return { ok: true, value: JSON.parse(text) };
+        return { ok: true, value: JSON.parse(keepBigNumbers(text)) };
     } catch {
         return { ok: false };
     }

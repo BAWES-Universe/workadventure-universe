@@ -207,17 +207,30 @@ describe('an answer that is still too long loses whole items, and says how many'
     it('cuts what cannot be shortened (one item, or no list) with the chat notice, never silently', () => {
         const one = { id: 1, text: prose(200_000) };
         const text = fitAppAnswer({ items: [one] });
-        expect(text).toContain('Only the first 80,000 of ');
+        expect(text).toContain('Only the first 72,000 of ');
         expect(text).toMatch(/characters fit in this reply's room for tool results/);
         const plain = fitAppAnswer(prose(250_000));
         expect(plain.startsWith(prose(RUN_ANSWER_MAX))).toBe(true);
-        expect(plain).toContain('Only the first 80,000 of 250,000 characters fit');
+        expect(plain).toContain('Only the first 72,000 of 250,000 characters fit');
     });
 
     it('never ends in half an emoji when it cuts', () => {
         const text = cutWithNote('😀'.repeat(60_000), 80_001);
         expect(text).toContain('Only the first');
         expect(text).not.toMatch(/[\uD800-\uDBFF]\n/);
+    });
+});
+
+describe('numbers in an answer written as text', () => {
+    it('keeps a 64-bit id exactly as it was given when the text is read to take something out of it', () => {
+        const text = `{"id": 1234567890123456789, "thread": 9007199254740993, "small": 42, "price": 12.50, "big": 1e30, "note": "id 1234567890123456789 in words", "raw": "${base64url(prose(30_000))}"}`;
+        const read = JSON.parse(fitAppAnswer([{ type: 'text', text }]))[0].text;
+        expect(read.id).toBe('1234567890123456789');
+        expect(read.thread).toBe('9007199254740993');
+        expect(read.small).toBe(42);
+        expect(read.price).toBe(12.5);
+        expect(read.note).toBe('id 1234567890123456789 in words');
+        expect(read.raw).toMatch(/^\[encoded content left out/);
     });
 });
 

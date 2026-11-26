@@ -567,7 +567,7 @@ describe('the model of a check', () => {
                 runBrickTask: vi.fn(async (opts: any) => {
                     const text: string = await opts.runTool(READ_PAGE_TOOL, { url: 'https://example.com' });
                     // Whole page, valid JSON, when it fits; cut with the chat notice when it does not
-                    if (cut) expect(text).toMatch(/Only the first 80,000 of 200,0\d\d characters fit/);
+                    if (cut) expect(text).toMatch(/Only the first 72,000 of 200,0\d\d characters fit/);
                     else expect(JSON.parse(text)).toEqual({ content });
                     return { ended: 'final' };
                 }),
