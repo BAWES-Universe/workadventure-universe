@@ -85,7 +85,7 @@ function valueText(key: string, value: unknown): string {
 }
 
 /** The arguments in the order the tool names its inputs, then any others, each as a labelled line, exactly as they will run. */
-export function argumentLines(args: Record<string, unknown>, inputSchema?: unknown): AskLine[] {
+function allArgumentLines(args: Record<string, unknown>, inputSchema?: unknown): AskLine[] {
     const declared = isPlain(inputSchema) && isPlain(inputSchema.properties) ? Object.keys(inputSchema.properties) : [];
     const keys = [...declared.filter((key) => key in args), ...Object.keys(args).filter((key) => !declared.includes(key))];
     const lines: AskLine[] = [];
@@ -96,7 +96,12 @@ export function argumentLines(args: Record<string, unknown>, inputSchema?: unkno
         if (!text) continue;
         lines.push({ label: clip(plainLabel(tidyName(key)), LABEL_MAX), text: clip(text, TEXT_MAX) });
     }
-    return capLines(lines);
+    return lines;
+}
+
+/** The arguments as lines, at most what the game shows. */
+export function argumentLines(args: Record<string, unknown>, inputSchema?: unknown): AskLine[] {
+    return capLines(allArgumentLines(args, inputSchema));
 }
 
 /** At most the lines the game shows, the last one saying how many more there are. */
@@ -108,7 +113,7 @@ function capLines(lines: AskLine[]): AskLine[] {
 
 /** A tool's arguments for one action of a batch, on one line: "Query newer_than:7d · Max results 25", or that it needs none. */
 function inlineArguments(args: Record<string, unknown>): string {
-    const parts = argumentLines(args)
+    const parts = allArgumentLines(args)
         .map((line) => (line.label ? `${line.label} ${line.text}` : line.text))
         .filter(Boolean);
     return parts.length ? clip(parts.join(' · '), TEXT_MAX) : 'Nothing to fill in';
@@ -131,9 +136,10 @@ export function cardWords(toolName: string, toolTitle: string | undefined, args:
     const batch = describeBatch(args, appName);
     if (!batch) return { title: cardTitle(toolName, toolTitle), lines: argumentLines(args, inputSchema) };
     const title = clip(batch.title, TITLE_MAX);
-    const own = argumentLines(batchExtras(args), inputSchema);
+    // Every line before the one cap, so the count of hidden details is the true one
+    const own = allArgumentLines(batchExtras(args), inputSchema);
     if (batch.calls.length === 1) {
-        return { title, lines: capLines([...argumentLines(batch.calls[0].args), ...own]) };
+        return { title, lines: capLines([...allArgumentLines(batch.calls[0].args), ...own]) };
     }
     const actions = batch.calls.map((call, index) => ({ label: clip(batch.names[index], LABEL_MAX), text: inlineArguments(call.args) }));
     return {
