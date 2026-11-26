@@ -16,6 +16,7 @@
 import { createHash } from 'crypto';
 import { SCRUBBED_LOOKUPS, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests } from '../mcp/AppLookups';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
 import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
@@ -174,6 +175,8 @@ export class TaskApps {
                 if ('line' in routed) return refused(routed.line);
                 ({ app: entry, args } = routed);
             }
+            // A search or a schemas request on a Brick with several Apps is asked of every App that allows it, and the answers are one
+            if (isJoinedLookup(name) && entry.otherApps?.length) return await this.joinedLookup(run, name, args, entry, state);
             // The check right before the call: the tool, the person and the settings as they are now
             const decided = await this.decideFor(run, name, entry, args);
             entry = decided.app;
@@ -199,6 +202,45 @@ export class TaskApps {
             console.warn(`[TaskApps] A step of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
             return JSON.stringify({ error: 'That did not work just now.' });
         }
+    }
+
+    /**
+     * A search or a schemas request of a Brick with several Apps, as in chat: each App's link only knows its own actions, so it is asked of
+     * every App the gate lets it be used through (a schemas request only of the Apps that own the actions it names) and the answers are
+     * joined, oldest App first, with what is Off in any App taken out. An App that must ask first shows its card before anything is asked,
+     * and the check ends with it.
+     */
+    private async joinedLookup(run: DueRun, name: string, args: Record<string, unknown>, first: ToolServerEntry, state: { waiting: boolean }): Promise<string> {
+        const apps = [first, ...(first.otherApps ?? [])];
+        const readPolicy = this.deps.gate.appPolicy?.bind(this.deps.gate);
+        const policies = readPolicy ? await Promise.all(apps.map((app) => readPolicy(run.brickId, app.serverId))) : apps.map(() => null);
+        const requests = lookupRequests(name, args, apps, policies);
+        const decided = await Promise.all(requests.map(async ({ app, args: own }) => ({ app, args: own, verdict: await this.deps.gate.decide(this.gateCall(run, name, app, own)) })));
+        const usable = decided.filter(({ verdict }) => this.refusal(verdict, name) === null);
+        // No App lets it be used: the first App's refusal stands
+        if (usable.length === 0) return refused(this.refusal(decided[0].verdict, name) ?? `${name} cannot be used.`);
+        for (const { app, args: own, verdict } of usable) {
+            const heading = verdict.kind === 'refuse' ? undefined : verdict.heading;
+            if (verdict.kind === 'refuse' || !heading) continue;
+            if (verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading)) {
+                // eslint-disable-next-line no-await-in-loop
+                return await this.askFor(run, name, app, own, { kind: 'ask', heading, notReviewed: false, policyRevision: verdict.policyRevision!, fingerprint: verdict.fingerprint! }, state);
+            }
+        }
+        const step = stepId(run.runId, name, args);
+        const answers = await Promise.all(
+            usable.map(async ({ app, args: own, verdict }) => {
+                let answer: unknown;
+                try {
+                    answer = await this.deps.call(run.brickId, app, name, own, run.userId, { heading: (verdict as { heading: ToolHeading }).heading, callId: requests.length === 1 ? step : `${step}:${app.serverId}` });
+                } catch (error) {
+                    console.warn(`[TaskApps] A lookup of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
+                    answer = { error: 'That did not work just now.' };
+                }
+                return { app: app.serverName ?? '', answer };
+            })
+        );
+        return asText(await this.withoutOffActions(run.brickId, name, first, joinLookupAnswers(answers)), isMailTool(name, first.serverName));
     }
 
     /**

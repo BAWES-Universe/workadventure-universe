@@ -1037,6 +1037,15 @@ export class MCPConnector {
             if (first && !first.sharedJob && !first.sharedAlt && shared?.sharedJob) first.sharedAlt = { tool, entry: shared };
         }
 
+        // Each server's tools are held here as they are read and added in the order the servers are listed (oldest first), once every server has
+        // answered. Servers answer in no fixed order: adding as they came made the App a shared tool name belonged to depend on who was quicker
+        const staged = new Map<string, Array<Parameters<typeof addUniqueTool>>>();
+        function stageTool(...args: Parameters<typeof addUniqueTool>) {
+            const list = staged.get(args[1].id) ?? [];
+            list.push(args);
+            staged.set(args[1].id, list);
+        }
+
         // Process all servers concurrently with a concurrency cap
         async function discoverServerTools(
             server: McpServerConfig
@@ -1056,7 +1065,7 @@ export class MCPConnector {
                 MCPConnector.health.ok(botId, server.id);
                 const rawByName = new Map(cached.raw.map((tool) => [tool.name, tool]));
                 for (const tool of cached.tools) {
-                    addUniqueTool(tool, server, cached.titles[tool.function.name], rawByName.get(tool.function.name));
+                    stageTool(tool, server, cached.titles[tool.function.name], rawByName.get(tool.function.name));
                 }
                 return;
             }
@@ -1073,7 +1082,7 @@ export class MCPConnector {
                 if (MCPConnector.health.isStale(botId, server.id, credentials)) {
                     // Newer credentials failed while this read was on its way: this reply has the list it read, but neither
                     // the mark nor the cache is touched by it
-                    for (const toolDef of toolDefs) addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
+                    for (const toolDef of toolDefs) stageTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
                     return;
                 }
                 // It answers: any mark it had is gone, and Orbit is told
@@ -1098,7 +1107,7 @@ export class MCPConnector {
                     if (!ok && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
                 });
                 for (const toolDef of toolDefs) {
-                    addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
+                    stageTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
                 }
                 void MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest, read.cut).then((outcome) => {
                     // Orbit did not get the list: forget it here too, so the next read tries to save it again (not in an hour)
@@ -1127,6 +1136,8 @@ export class MCPConnector {
                 );
             }
         }
+        // The oldest App holds a name every App has (Orbit lists them oldest first), whoever answered first
+        for (const server of enabledServers) for (const added of staged.get(server.id) ?? []) addUniqueTool(...added);
 
         const enabledIds = new Set(enabledServers.map((server) => server.id));
         return this.withKeyApps(keyApps, { tools: allTools, toolServerMap, issues: MCPConnector.health.issuesFor(botId, enabledIds) });

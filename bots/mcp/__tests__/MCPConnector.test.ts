@@ -973,6 +973,34 @@ describe('MCPConnector', () => {
             vi.unstubAllEnvs();
         });
 
+        it('gives a name every App has to the oldest App, whichever App answers first', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            const app = (id: string, name: string) => ({ id, botId: 'bot-order', name, serverUrl: `https://${id}.link/mcp`, authType: 'none' as const, enabled: true, readyMade: true, connectionId: `conn-${id}` });
+            const search = { name: 'COMPOSIO_SEARCH_TOOLS', description: 'Search tools', inputSchema: { type: 'object', properties: {} } };
+            // Orbit lists the oldest App first: Gmail. Calendar answers first, Gmail last
+            for (const slowest of ['gmail', 'calendar']) {
+                mockedAxios.get.mockResolvedValueOnce({ data: [app('gmail', 'Gmail'), app('calendar', 'Calendar')] });
+                // The slowest App's list is held back until the other App has answered
+                let fastAnswered!: () => void;
+                const fast = new Promise<void>((resolve) => (fastAnswered = resolve));
+                mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                    const sent = body?.message?.method ?? body?.method;
+                    if (sent === 'tools/list') {
+                        if (String(body?.serverId ?? '') === slowest) await fast;
+                        else void Promise.resolve().then(fastAnswered);
+                    }
+                    const list = { jsonrpc: '2.0', id: '1', result: { tools: [search] } };
+                    return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
+                });
+                // eslint-disable-next-line no-await-in-loop
+                const result = await MCPConnector.discoverToolsWithMapping(`bot-order-${slowest}`, 'https://admin.example.com', 'admin-token', 'bot-service-token');
+                const entry = result.toolServerMap.get('COMPOSIO_SEARCH_TOOLS');
+                expect(entry?.serverId).toBe('gmail');
+                expect((entry?.otherApps ?? []).map((other) => other.serverId)).toEqual(['calendar']);
+            }
+            vi.unstubAllEnvs();
+        });
+
         it("leaves out a ready-made App the person also has their own copy of: only their own copy is offered, and the ready-made link is never asked", async () => {
             vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
             const readyMade = (id: string, name: string, ownCopyServerId: string | null) => ({ id, botId: 'bot-own', name, serverUrl: `https://${id}.link/mcp`, authType: 'none' as const, enabled: true, readyMade: true, connectionId: `conn-${id}`, ownCopyServerId });

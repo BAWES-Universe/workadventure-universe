@@ -473,6 +473,41 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
     });
 
+    it('asks a search of every App that lets it be used and joins what they find, so Calendar’s actions are found beside Gmail’s', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const found = (serverId: string) => [{ type: 'text', text: JSON.stringify({ data: { results: [{ index: 1, primary_tool_slugs: [serverId === 'cal1' ? 'GOOGLECALENDAR_FIND_EVENT' : 'GMAIL_FETCH_EMAILS'] }] } }) }];
+        const asked: string[] = [];
+        const { apps } = setUp({}, { discover: async () => ({ tools: [tool(LOOKUP)], servers: new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }]]) }), gate, call: async (_brick, app) => (asked.push(app.serverId), found(app.serverId)) });
+        const session = (await apps.open(run()))!;
+        const answer = await session.call(LOOKUP, { queries: ['events this week'] });
+        expect(answer).toContain('GOOGLECALENDAR_FIND_EVENT');
+        expect(answer).toContain('GMAIL_FETCH_EMAILS');
+        expect(asked).toEqual(['g1', 'cal1']);
+    });
+
+    it('gives each App’s lookup its own call id, and names an App that did not answer without losing what the other found', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const calls: string[] = [];
+        const { apps } = setUp({}, {
+            discover: async () => ({ tools: [tool(LOOKUP)], servers: new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }]]) }),
+            gate,
+            call: async (_brick, app, _name, _args, _owner, use) => {
+                calls.push(use.callId);
+                if (app.serverId === 'g1') throw new Error('down');
+                return [{ type: 'text', text: '{"data":{"results":[{"index":1,"primary_tool_slugs":["GOOGLECALENDAR_FIND_EVENT"]}]}}' }];
+            },
+        });
+        const session = (await apps.open(run()))!;
+        const answer = await session.call(LOOKUP, { queries: ['events'] });
+        expect(new Set(calls).size).toBe(2);
+        expect(answer).toContain('GOOGLECALENDAR_FIND_EVENT');
+        expect(answer).toContain('Gmail did not answer');
+    });
+
     it('does not offer or run a link tool the Apps share when every one of them has it Off', async () => {
         const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
         const read = vi.fn(async (_bot: string, serverId: string) => {
