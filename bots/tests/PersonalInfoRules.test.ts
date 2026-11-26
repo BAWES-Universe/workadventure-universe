@@ -61,6 +61,15 @@ describe('tastesIn', () => {
         expect(tastesIn('I like sara@example.com')).toEqual({ likes: [], dislikes: [] });
     });
 
+    it('a reaction or a polite phrase is not a taste', () => {
+        expect(tastesIn('I love it!')).toEqual({ likes: [], dislikes: [] });
+        expect(tastesIn('I love it, thanks')).toEqual({ likes: [], dislikes: [] });
+        expect(tastesIn('I hate to bother you')).toEqual({ likes: [], dislikes: [] });
+        expect(tastesIn("I'd love to help you")).toEqual({ likes: [], dislikes: [] });
+        expect(tastesIn('I like to run')).toEqual({ likes: ['to run'], dislikes: [] });
+        expect(tastesIn('I like coffee, no sugar')).toEqual({ likes: ['coffee, no sugar'], dislikes: [] });
+    });
+
     it('stops at the end of the thing', () => {
         expect(tastesIn('I like tea, but not on mondays')).toEqual({ likes: ['tea'], dislikes: [] });
         expect(tastesIn("I like tea because it's calming")).toEqual({ likes: ['tea'], dislikes: [] });

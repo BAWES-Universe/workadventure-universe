@@ -69,18 +69,20 @@ const DISLIKE_VERBS = 'hate|dislike|despise|detest|loathe';
 const MAX_PHRASE_WORDS = 6;
 const MAX_PHRASE_CHARS = 60;
 /** What a phrase starts with when it is a remark about the moment, the bot, or someone else, and not a thing the person likes. */
-const NOT_A_THING = /^(?:how|that|when|the way|it when|it that|if|whether|what|who|why|being|you\b|your\b|my\b|our\b|his\b|her\b|their\b|him\b|them\b|me\b|myself\b|us\b|this\b|these\b|those\b)/iu;
+const NOT_A_THING = /^(?:how|that|when|the way|it when|it that|if|whether|what|who|why|being|you\b|your\b|my\b|our\b|his\b|her\b|their\b|him\b|them\b|me\b|myself\b|us\b|this\b|these\b|those\b|it\b|its\b|there\b|her\b|something\b|anything\b|everything\b|nothing\b|one\b|so\b|too\b)/iu;
+/** A phrase that speaks to the bot ("to bother you") is a remark, not a taste. */
+const ABOUT_THE_BOT = /(?<![\p{L}\p{N}])(?:you|your|yours|you['’]re|you['’]ve|you['’]ll|yourself)(?![\p{L}\p{N}])/iu;
 const CONTACT = /@|https?:\/\/|www\.|\d{5,}/u;
 
 /** The thing itself out of what follows "like": cut where another clause starts, and without the words that only add to it. */
 function thingOf(rest: string): string | null {
     let phrase = rest
-        .split(/\s*(?:[;:()]|\s[-–—]\s|\b(?:but|because|since|so|though|although|except|unless|when|whenever|if|which|that|and then)\b)/iu)[0]
+        .split(/\s*(?:[;:()]|,\s*(?:thanks|thank you|thx|please|pls|lol|haha|honestly|though|ok|okay|really|btw)\b|\s[-–—]\s|\b(?:but|because|since|so|though|although|except|unless|when|whenever|if|which|that|and then)\b)/iu)[0]
         .replace(/\s+(?:too|a lot|a bit|very much|so much|as well|also|though|however|anymore|now|again|right now)$/iu, '')
         .trim()
         .replace(/[\s,.!?…"'`“”]+$/u, '');
     if (!phrase || phrase.length > MAX_PHRASE_CHARS || phrase.split(/\s+/u).length > MAX_PHRASE_WORDS) return null;
-    if (NOT_A_THING.test(phrase) || CONTACT.test(phrase)) return null;
+    if (NOT_A_THING.test(phrase) || ABOUT_THE_BOT.test(phrase) || CONTACT.test(phrase)) return null;
     // A word or two with a letter in it
     if (!/\p{L}/u.test(phrase)) return null;
     return phrase;
