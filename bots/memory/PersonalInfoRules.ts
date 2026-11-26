@@ -57,7 +57,7 @@ const NEGATED = new RegExp(`\\b(?:not|never|no longer|hardly|barely|rarely|dont|
 
 /** Capitalised words that follow "I'm" or "call me" without being a name, whichever way the person introduces themselves. */
 const NOT_A_NAME = new Set([
-    'sorry', 'not', 'just', 'back', 'here', 'there', 'going', 'trying', 'looking',
+    'called', 'named', 'sorry', 'not', 'just', 'back', 'here', 'there', 'going', 'trying', 'looking',
     'only', 'also', 'still', 'really', 'very', 'so', 'too', 'in',
     'on', 'at', 'from', 'with', 'a', 'an', 'the', 'your', 'my', 'now', 'today', 'tomorrow', 'later', 'again', 'maybe', 'please', 'thanks',
     'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
@@ -79,7 +79,19 @@ const NOT_A_NAME_WHEN_BARE = new Set([
     'kenyan', 'ethiopian', 'ghanaian', 'european', 'asian', 'arab', 'arabic', 'hebrew', 'latin', 'swiss', 'belgian', 'austrian', 'icelandic',
     'muslim', 'christian', 'jewish', 'hindu', 'buddhist', 'sikh', 'catholic', 'orthodox', 'atheist', 'agnostic', 'vegan', 'vegetarian',
     'single', 'married', 'divorced', 'engaged', 'retired', 'unemployed', 'bilingual',
+    // Beliefs, origins, politics and health: said about themselves, never a name (a name in this place is said after a greeting anyway)
+    'shia', 'sunni', 'ismaili', 'druze', 'coptic', 'maronite', 'mormon', 'protestant', 'baptist', 'methodist', 'lutheran', 'anglican',
+    'evangelical', 'pentecostal', 'quaker', 'jain', 'bahai', 'zoroastrian', 'pagan', 'wiccan', 'kurdish', 'somali', 'armenian', 'eritrean',
+    'tamil', 'punjabi', 'bengali', 'urdu', 'hindi', 'farsi', 'pashto', 'swahili', 'berber', 'amazigh', 'hispanic', 'latino', 'latina', 'black',
+    'white', 'venezuelan', 'jamaican', 'haitian', 'albanian', 'bosnian', 'taiwanese', 'burmese', 'kazakh', 'uzbek', 'mongolian', 'tibetan',
+    'senegalese', 'congolese', 'ugandan', 'slovak', 'lithuanian', 'maltese', 'cypriot', 'republican', 'democrat', 'conservative', 'liberal',
+    'socialist', 'communist', 'gay', 'lesbian', 'bisexual', 'trans', 'transgender', 'queer', 'deaf', 'blind', 'autistic', 'diabetic', 'pregnant',
+    'disabled', 'straight', 'asexual', 'nonbinary',
 ]);
+/** Words that end like a belief, a nationality or a language: not a name after a bare "I'm", whatever the word. */
+const LOOKS_LIKE_WHO_THEY_ARE = /(?:ish|ese|ist)$/iu;
+/** A greeting, alone or with one word after it ("Hello", "Hi there", "Hello Brick"): what comes right after it is an introduction. */
+const GREETING = /^\s*(?:hi|hello|hey|hiya|howdy|greetings)(?:\s+\p{L}+)?\W*$/iu;
 /** Months are names too ("April", "May"), unless a day follows ("call me May 3rd", "I'm April 5"). */
 const MONTH_NAMES = new Set(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']);
 
@@ -90,7 +102,7 @@ const AFTER_NAME = new RegExp(`^(?:$|\\s*[.,!?;:)]|\\s+\\p{Lu}\\p{Ll}|\\s*\\p{Ex
 const NAME_FORMS: Array<{ form: RegExp; bare: boolean }> = [
     { form: new RegExp(`\\b[Mm]y name(?:${APOS}s| is)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
     { form: new RegExp(`\\b[Cc]all me\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
-    { form: new RegExp(`\\b[Ii](?:${APOS}m| am)\\s+(?:called|named)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
+    { form: new RegExp(`\\b[Ii](?:${APOS}m| am)\\s+(?:[Cc]alled|[Nn]amed)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
     { form: new RegExp(`(?:^|\\b(?:[Hh]i|[Hh]ello|[Hh]ey)\\W+)[Ii](?:${APOS}m| am)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: true },
 ];
 
@@ -100,7 +112,11 @@ const TASK_WORD = /(?<![\p{L}\p{N}])(?:translate|translation|write|rewrite|say|t
 
 /** The person's own name, only when they say it is: "my name is Sara", "call me Sara", "I'm Sara". */
 export function nameIn(message: string): string | null {
+    let greetedBefore = false;
     for (const sentence of sentencesOf(message.replace(QUOTED, ' '))) {
+        // "Hello! I'm Sara": the sentence before was only a greeting
+        const greetedByLine = greetedBefore;
+        greetedBefore = GREETING.test(sentence.text);
         let cursor = 0;
         for (const clause of clausesOf(sentence.text + (sentence.question ? '?' : ''))) {
             // What came before this part in its sentence: "Repeat after me: I am Sara" asks for words, it does not give a name
@@ -115,9 +131,13 @@ export function nameIn(message: string): string | null {
                 const name = match[1];
                 const lower = name.toLowerCase();
                 const rest = clause.text.slice((match.index ?? 0) + match[0].length);
-                if (NOT_A_NAME.has(lower) || (bare && NOT_A_NAME_WHEN_BARE.has(lower))) continue;
+                if (NOT_A_NAME.has(lower) || (bare && (NOT_A_NAME_WHEN_BARE.has(lower) || LOOKS_LIKE_WHO_THEY_ARE.test(lower)))) continue;
                 if (MONTH_NAMES.has(lower) && /^\s*(?:the\s+)?\d/i.test(rest)) continue;
-                if (bare && !AFTER_NAME.test(rest)) continue;
+                if (bare) {
+                    // A plain "I'm Shia" says who they are. It is a name only in an introduction: right after a greeting
+                    const greeted = /^(?:hi|hello|hey)/i.test(match[0]) || GREETING.test(before) || (at === 0 && greetedByLine);
+                    if (!greeted || !AFTER_NAME.test(rest)) continue;
+                }
                 return name;
             }
         }

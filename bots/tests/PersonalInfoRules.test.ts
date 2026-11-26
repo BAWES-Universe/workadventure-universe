@@ -26,11 +26,13 @@ describe('nameIn', () => {
     it('keeps a name that comes with a surname, an emoji or chat words, or next to something else said with a "not"', () => {
         expect(nameIn('My name is Sara Ahmed')).toBe('Sara');
         expect(nameIn('Call me Sara lol')).toBe('Sara');
-        expect(nameIn("I'm Sara \u{1F600}")).toBe('Sara');
-        expect(nameIn("I'm Sara Ahmed")).toBe('Sara');
+        expect(nameIn("Hi, I'm Sara \u{1F600}")).toBe('Sara');
+        expect(nameIn("Hi, I'm Sara Ahmed")).toBe('Sara');
+        expect(nameIn("I'm Sara Ahmed")).toBeNull();
         expect(nameIn("My name is Sara and I don't like coffee")).toBe('Sara');
         expect(nameIn("I don't like coffee, my name is Sara")).toBe('Sara');
-        expect(nameIn("I'm not Sara, I'm Noor")).toBe('Noor');
+        expect(nameIn("I'm not Sara, I'm Noor")).toBeNull();
+        expect(nameIn("I'm not Sara, my name is Noor")).toBe('Noor');
     });
 
     it('never takes a name from words they quote or ask to have written', () => {
