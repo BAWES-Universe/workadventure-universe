@@ -704,6 +704,22 @@ describe("the bot page's Tools screens (game #1655)", () => {
             expect(sends).toContain("+1 more");
         });
 
+        it("says nothing goes under an empty heading, with no choice and no arrow, and words the Changes things hint", async () => {
+            await mountApp();
+            // Gmail has nothing under Changes things in this answer
+            const changes = byTestId("bot-tools-heading-changesThings");
+            expect(changes?.textContent).toContain("Changes things");
+            expect(changes?.textContent).toContain("Makes or edits things others can see, like an issue or labels");
+            expect(byTestId("bot-tools-empty-changesThings")?.textContent).toBe("Nothing in Gmail goes here.");
+            expect(changes?.querySelector("[role=radiogroup], [role=radio]")).toBeNull();
+            expect(byTestId("bot-tools-open-changesThings")).toBeNull();
+            expect(changes?.querySelector(".ts-chev")).toBeNull();
+            // A heading with actions keeps its choice and its arrow
+            expect(byTestId("bot-tools-empty-deletesOrSends")).toBeNull();
+            expect(byTestId("bot-tools-open-deletesOrSends")).not.toBeNull();
+            expect(byTestId("bot-tools-choice-deletesOrSends-asksFirst")).not.toBeNull();
+        });
+
         it("says an action's own choice in search results, not its heading's", async () => {
             await mountApp();
             const search = byTestId("bot-tools-search") as HTMLInputElement;
