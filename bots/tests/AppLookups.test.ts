@@ -23,7 +23,7 @@ describe('joining the answers of several Apps', () => {
     it('adds up lists, joins the per-question results by their index, and keeps the oldest App’s single values', () => {
         const joined = read(
             joinLookupAnswers([
-                { app: 'Gmail', answer: text({ successful: false, data: { results: [{ index: 1, primary_tool_slugs: ['A'] }], statuses: ['x'], session: { id: 's1' } } }) },
+                { app: 'Gmail', answer: text({ successful: true, data: { results: [{ index: 1, primary_tool_slugs: ['A'] }], statuses: ['x'], session: { id: 's1' } } }) },
                 { app: 'Calendar', answer: text({ successful: true, data: { results: [{ index: 1, primary_tool_slugs: ['B'] }, { index: 2, primary_tool_slugs: ['C'] }], statuses: ['x', 'y'], session: { id: 's2' } } }) },
             ])
         );
@@ -49,6 +49,14 @@ describe('joining the answers of several Apps', () => {
     it('names an App that failed beside what the others found', () => {
         const joined = read(joinLookupAnswers([{ app: 'Gmail', answer: { error: 'down' } }, { app: 'Calendar', answer: text({ data: { results: [] } }) }]));
         expect(joined.apps_that_did_not_answer).toEqual(['Gmail did not answer: down']);
+    });
+
+    it('reads a failure the link reports inside its answer, as text or as an MCP part, not only the server’s own error', () => {
+        const joined = read(joinLookupAnswers([{ app: 'Gmail', answer: text({ successful: false, error: 'token expired', data: {} }) }, { app: 'Calendar', answer: text({ successful: true, data: { results: [] } }) }]));
+        expect(joined.apps_that_did_not_answer).toEqual(['Gmail did not answer: token expired']);
+        expect(joined.successful).toBe(true);
+        const silent = read(joinLookupAnswers([{ app: 'Gmail', answer: JSON.stringify({ successful: false, data: {} }) }, { app: 'Calendar', answer: text({ successful: true, data: { results: [] } }) }]));
+        expect(silent.apps_that_did_not_answer).toEqual(['Gmail did not answer: it reported a failure.']);
     });
 
     it('gives the first failure when every App failed', () => {

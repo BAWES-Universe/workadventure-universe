@@ -36,8 +36,16 @@ export function lookupRequests(name: string, args: Record<string, unknown>, apps
     return apps.filter((app) => ownedBy.has(app.serverId)).map((app) => ({ app, args: { ...args, tool_slugs: ownedBy.get(app.serverId) } }));
 }
 
-/** An answer that is a failure (the tool server's own error, or one made of an error), not something the App found. */
-const failureOf = (answer: unknown): string | undefined => (isObject(answer) && typeof answer.error === 'string' && answer.error.trim() !== '' ? answer.error : undefined);
+/**
+ * Why an answer is a failure, or undefined when it is not: the tool server's own error, or an answer that says so itself (the link's
+ * `{ successful: false, error }`, as an object, as JSON text or as the one text part of an MCP answer), not something the App found.
+ */
+function failureOf(answer: unknown): string | undefined {
+    const data = dataOf(answer);
+    if (!isObject(data)) return undefined;
+    if (typeof data.error === 'string' && data.error.trim() !== '') return data.error;
+    return data.successful === false ? 'it reported a failure.' : undefined;
+}
 
 /** The JSON an answer holds: the object, the JSON text of one, or the one text part of an MCP answer that carries it. */
 function dataOf(answer: unknown): unknown {
