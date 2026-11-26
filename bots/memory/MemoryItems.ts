@@ -112,6 +112,7 @@ export function visibleItems(memory: BotPlayerMemory, view: MemoryView): MemoryI
 
 /** The shortest a phrase may be for lines of the chat to be taken out by the words they hold, when no line was noted. */
 const MIN_PHRASE = 4;
+
 /** Matches nothing: an echo that is only looked for in the reply right after its line. */
 const NEVER = /(?!)/;
 
@@ -168,6 +169,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     // Short dislikes ("tea"): the person's lines that say they do not like it, found by what they say and not by the bare word
     const shortDislikes: string[] = [];
     const shortLikes: string[] = [];
+    // Short names ("Ali"): the person's lines that give it ("my name is Ali", "I'm Ali", "call me Ali")
+    const shortNames: RegExp[] = [];
     const takeLines = (at: number | null, phrase: string, ownName = false, taste: 'like' | 'dislike' | null = null) => {
         const dislike = taste === 'dislike';
         if (at !== null) for (const line of history) if (line.timestamp === at && line.sender === 'person') doomedLines.add(line);
@@ -178,6 +181,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         else if (phrase.trim().length > 0) {
             const short = phrase.trim();
             echoes.push({ at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short, dislike ? DISLIKE_WORDS : LIKE_WORDS) });
+            if (ownName) shortNames.push(new RegExp(`(?:my name(?:['’]s| is)|call me|(?<![\\p{L}\\p{N}])i(?:['’]m| am)(?: called| named)?)\\s+${escapeRegExp(short)}(?![\\p{L}\\p{N}])`, 'iu'));
             if (taste === 'dislike') shortDislikes.push(short.toLowerCase());
             else if (taste === 'like') shortLikes.push(short.toLowerCase());
         }
@@ -236,24 +240,28 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         removed++;
     }
 
-    if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0 || shortDislikes.length > 0 || shortLikes.length > 0) {
+    if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0 || shortDislikes.length > 0 || shortLikes.length > 0 || shortNames.length > 0) {
+        // The person's lines this takes: the one it came from, the ones that hold its words, and the ones that say it as a taste or a name
+        const takesPersonLine = (line: BotPlayerMemory['conversationHistory'][number]): boolean => {
+            if (line.sender !== 'person') return false;
+            if (doomedLines.has(line) || phrases.some((phrase) => phrase.test(line.message))) return true;
+            if (shortNames.some((name) => name.test(line.message))) return true;
+            if (shortDislikes.length === 0 && shortLikes.length === 0) return false;
+            const tastes = tastesIn(line.message);
+            return tastes.dislikes.some((one) => shortDislikes.includes(one.toLowerCase())) || tastes.likes.some((one) => shortLikes.includes(plainThing(one).toLowerCase()));
+        };
         memory.conversationHistory = history.filter((line, index) => {
-            if (doomedLines.has(line)) return false;
+            if (takesPersonLine(line)) return false;
+            if (line.sender === 'person') return true;
             const text = line.message;
             if (phrases.some((phrase) => phrase.test(text))) return false;
-            if (line.sender === 'person') {
-                // "I hate tea" / "I like tea" said earlier, where only the last such line was noted
-                if (shortDislikes.length === 0 && shortLikes.length === 0) return true;
-                const tastes = tastesIn(text);
-                return !(tastes.dislikes.some((one) => shortDislikes.includes(one.toLowerCase())) || tastes.likes.some((one) => shortLikes.includes(plainThing(one).toLowerCase())));
-            }
             // The person's own name is not said back by the bot in any later line either: it is the person who forgot it
             if (echoes.some((echo) => echo.ownName && echo.words.test(text))) return false;
             // A later bot line that tells the person what they like back ("You love tea") goes too; one that only has the word stays
             if (echoes.some((echo) => echo.toldBack.test(text))) return false;
-            // The bot's reply right after the line a short value came from, when it says it back ("I like tea" / "Tea it is!")
+            // The bot's reply right after any line this took, when it says a short value back ("I like tea" / "Tea it is!")
             const before = history[index - 1];
-            return !(before && doomedLines.has(before) && echoes.some((echo) => echo.at !== null && before.timestamp === echo.at && echo.words.test(text)));
+            return !(before && takesPersonLine(before) && echoes.some((echo) => echo.words.test(text)));
         });
     }
     if (removed > 0) info.lastInfoUpdate = Date.now();
