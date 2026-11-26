@@ -88,6 +88,8 @@ const NOT_A_NAME_WHEN_BARE = new Set([
     'senegalese', 'congolese', 'ugandan', 'slovak', 'lithuanian', 'maltese', 'cypriot', 'republican', 'democrat', 'conservative', 'liberal',
     'socialist', 'communist', 'gay', 'lesbian', 'bisexual', 'trans', 'transgender', 'queer', 'deaf', 'blind', 'autistic', 'diabetic', 'pregnant',
     'disabled', 'straight', 'asexual', 'nonbinary',
+    'bidoon', 'bedoon', 'shiite', 'alawite', 'alawi', 'salafi', 'sufi', 'ibadi', 'yazidi', 'assyrian', 'chaldean', 'bedouin', 'ajam', 'hadhar',
+    'mizrahi', 'sephardic', 'ashkenazi', 'rohingya', 'uyghur', 'muslima', 'pansexual', 'bi', 'intersex', 'biracial', 'mixed',
 ]);
 /** Words that end like a belief, a nationality or a language: not a name after a bare "I'm", whatever the word. */
 const LOOKS_LIKE_WHO_THEY_ARE = /(?:ish|ese|ist)$/iu;
