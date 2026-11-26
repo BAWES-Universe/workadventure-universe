@@ -123,9 +123,11 @@ function thingOf(rest: string): string | null {
     return phrase;
 }
 
-const LIKE = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+((?:(?:really|absolutely|totally|just|also|still|actually|truly|definitely|always|kind of|sort of|do)\\s+)*)(${LIKE_VERBS}|${DISLIKE_VERBS})\\s+(.+)$`, 'u');
-const NEG_LIKE = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+(?:(?:really|absolutely|totally|just|also|actually|truly|definitely|do)\\s+)*(?:don${APOS}?t|do not|never|no longer|can${APOS}?t stand|cannot stand|can${APOS}?t bear|hardly|barely|dont)\\s+(?:(?:really|actually|truly|much|particularly|even)\\s+)*(${LIKE_VERBS}|care for|enjoy)\\s+(.+)$`, 'iu');
-const CANT_STAND = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+(?:can${APOS}?t|cannot)\\s+(?:stand|bear|stomach)\\s+(.+)$`, 'iu');
+/** Words that may stand between "I" and what they say they do ("I really don't like", "I honestly can't stand"). Never a word that turns it round. */
+const ADVERBS = '(?:really|absolutely|totally|just|also|still|actually|truly|definitely|always|honestly|personally|seriously|genuinely|simply|completely|literally|generally|usually|mostly|probably|quite|kind of|sort of|do)';
+const LIKE = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+((?:${ADVERBS}\\s+)*)(${LIKE_VERBS}|${DISLIKE_VERBS})\\s+(.+)$`, 'u');
+const NEG_LIKE = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+(?:${ADVERBS}\\s+)*(?:don${APOS}?t|do not|never|no longer|can${APOS}?t stand|cannot stand|can${APOS}?t bear|hardly|barely|dont)\\s+(?:(?:really|actually|truly|much|particularly|even|ever|quite)\\s+)*(${LIKE_VERBS}|care for|enjoy)\\s+(.+)$`, 'iu');
+const CANT_STAND = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+(?:${ADVERBS}\\s+)*(?:can${APOS}?t|cannot)\\s+(?:really\\s+)?(?:stand|bear|stomach)\\s+(.+)$`, 'iu');
 const FAVORITE = new RegExp(`\\bmy\\s+(?:all[- ]time\\s+)?favou?rite\\s+((?:\\p{L}+\\s+){0,2}?)(?:is|are)\\s+(.+)$`, 'iu');
 
 /** A sentence with two things said by the person ("I like tea and I hate coffee") as one line for each; "and my sister hates it" is cut off, as it is not theirs. */
