@@ -274,7 +274,7 @@ describe("a ready-made App's actions on a Brick (Ask, Do, Ignore)", () => {
         const lookupsOff = gateFor(gmail([], { ...APP_SETTINGS, looksUp: 'off' }));
         expect(await lookupsOff.gate.decide(appCall({ toolName: 'UNIVERSE_CODE_JOB_START' }))).toMatchObject({ kind: 'refuse', why: 'off' });
         const { gate, check } = gateFor(gmail());
-        check.mockResolvedValue({ allowed: false, kind: 'refused', code: 'not_allowed', line: 'Sam may not change things for you.' });
+        check.mockResolvedValue({ allowed: false, kind: 'refused', code: 'not_allowed', line: "You can't change things here." });
         expect(await gate.decide(appCall({ toolName: 'COMPOSIO_MANAGE_CONNECTIONS' }))).toMatchObject({ kind: 'refuse', why: 'no_permission' });
     });
 
