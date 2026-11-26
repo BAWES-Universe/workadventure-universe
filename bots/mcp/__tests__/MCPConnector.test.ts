@@ -603,6 +603,13 @@ describe('MCPConnector', () => {
             };
             const data = { temperature: 22.5, conditions: 'Partly cloudy' };
 
+            it('keeps the data of a failed call in its error, so a call that partly ran is never taken for one that did not', async () => {
+                const failed = await callWith({ isError: true, content: [{ type: 'text', text: 'Invalid session' }], structuredContent: { results: [{ index: 0, tool_slug: 'A', response: { successful: true } }] } });
+                expect((failed as { error: string }).error).toContain('Invalid session');
+                expect((failed as { error: string }).error).toContain('tool_slug');
+                expect((failed as { outcome: string }).outcome).toBe('failed');
+            });
+
             it('adds the data as text when content holds no text', async () => {
                 expect(await callWith({ content: [], structuredContent: data })).toEqual([
                     { type: 'text', text: JSON.stringify(data) },

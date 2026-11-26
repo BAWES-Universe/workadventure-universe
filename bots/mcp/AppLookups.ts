@@ -153,9 +153,14 @@ const sessionIdOf = (args: Record<string, unknown>): string | undefined => {
 /** Words that say a session id was not accepted (never just the word "session": an event may be called a "Strategy session"). */
 const SESSION_NOT_ACCEPTED = /\b(invalid|unknown|expired|unrecognized|missing)\s+(\w+\s+)?session\b|\bsession(\s+id)?\s+(is\s+)?(not\s+found|invalid|unknown|expired|missing)\b/i;
 
-/** A session id quoted in a refusal ("Invalid session id sess-1"): the word after "session" (or "session id") when it is not one of the refusal's own words. */
-const QUOTED_SESSION = /\bsession(?:\s+id)?\s*[:=]?\s*["'`]?([A-Za-z0-9][\w-]{3,})/gi;
-const REFUSAL_WORDS = new Set(['not', 'found', 'invalid', 'unknown', 'expired', 'missing', 'was', 'does', 'could', 'cannot', 'must', 'that', 'this', 'with', 'from', 'refused', 'rejected']);
+/**
+ * Every word a bare refusal of a session may be made of. A refusal that says anything else ("Invalid session. Action 1 completed.") may
+ * come from a call where some actions ran, so it is never taken for a refusal before anything ran.
+ */
+const REFUSAL_WORDS = new Set([
+    'tool', 'error', 'session', 'id', 'the', 'a', 'an', 'is', 'was', 'are', 'invalid', 'unknown', 'expired', 'unrecognized', 'missing', 'not', 'found',
+    'provided', 'given', 'supplied', 'sent', 'your', 'no', 'such', 'please', 'use', 'start', 'create', 'new', 'again', 'or', 'and', 'for', 'this', 'that', 'link',
+]);
 
 /** What an answer that ran something looks like: results of actions, or a success, in words or in JSON. A refusal before anything ran has none of it. */
 const RAN_SOMETHING = /tool_slug|"results"|"response"|"successful"\s*:\s*true/i;
@@ -164,8 +169,8 @@ const RAN_SOMETHING = /tool_slug|"results"|"response"|"successful"\s*:\s*true/i;
  * Whether a call failed only because the App's link refused the session id it was given, so that nothing ran: the model carries the
  * session id one App's link gave (the joined search keeps the oldest App's) to another App's link, which may not know it. True only for an
  * explicit refusal of the whole call (never a thrown error, an unsure outcome, or an answer that carries any sign that actions ran, at
- * the root, in `data` or in the error's own words) that names an invalid, unknown, expired or missing session, and, when it quotes a
- * session id, quotes the one that was sent.
+ * the root, in `data` or in the error's own words) that names an invalid, unknown, expired or missing session and says nothing more than
+ * that (the session id it quotes can only be the one that was sent).
  */
 export function sessionRefused(answer: unknown, args: Record<string, unknown>): boolean {
     const id = sessionIdOf(args);
@@ -181,10 +186,10 @@ export function sessionRefused(answer: unknown, args: Record<string, unknown>): 
     if (hasResults(isObject(data) ? data : undefined) || hasResults(inner)) return false;
     if (RAN_SOMETHING.test(line)) return false;
     if (!SESSION_NOT_ACCEPTED.test(line)) return false;
-    // A refusal of another session than the one sent says nothing about this one
-    for (const quoted of line.matchAll(QUOTED_SESSION)) {
-        const word = quoted[1].toLowerCase();
-        if (word !== id.toLowerCase() && !REFUSAL_WORDS.has(word)) return false;
+    // Only a bare refusal: its words are the refusal's own and the id that was sent, nothing that could tell of an action
+    const sent = id.toLowerCase();
+    for (const word of line.toLowerCase().match(/[a-z0-9_-]+/g) ?? []) {
+        if (word !== sent && !REFUSAL_WORDS.has(word)) return false;
     }
     return true;
 }

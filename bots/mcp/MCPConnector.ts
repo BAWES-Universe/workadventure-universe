@@ -1375,8 +1375,12 @@ export class MCPConnector {
                 .map((item) => item.text)
                 .join(' ')
                 .trim();
+            // Its data beside the words can tell that some of the work ran: it stays in the error, so nothing takes the call for one that never ran
+            const structured = response.result.structuredContent;
+            const data = structured === undefined || structured === null ? '' : typeof structured === 'string' ? structured : JSON.stringify(structured);
+            const reason = [why, data].filter((part) => part !== '').join(' ');
             console.warn(`[MCPConnector] Tool ${toolName} failed`);
-            return { error: `Tool error: ${why || `${toolName} failed`}`, outcome: 'failed' satisfies ToolCallOutcome };
+            return { error: `Tool error: ${reason || `${toolName} failed`}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 
         if (response.result && Array.isArray(response.result.content)) {

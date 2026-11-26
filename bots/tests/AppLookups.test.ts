@@ -95,6 +95,10 @@ describe('a session the App’s link refused', () => {
         // Results at the root, or signs that actions ran in the error's own words
         expect(sessionRefused(text({ successful: false, error: 'Invalid session', results: [{ index: 0, tool_slug: 'A' }] }), sent)).toBe(false);
         expect(sessionRefused({ error: 'Tool error: {"successful":true,"data":{"results":[{"tool_slug":"A"}]}} then Invalid session', outcome: 'failed' }, sent)).toBe(false);
+        // Only a bare refusal: words about what was done make it a call that may have run
+        expect(sessionRefused({ error: 'Tool error: Invalid session. Action 1 completed.', outcome: 'failed' }, sent)).toBe(false);
+        expect(sessionRefused({ error: 'Invalid session id sess-g1 after the event was created', outcome: 'failed' }, sent)).toBe(false);
+        expect(sessionRefused({ error: 'Tool error: Invalid session id sess-g1', outcome: 'failed' }, sent)).toBe(true);
         // Nothing was sent with a session: nothing to take away
         expect(sessionRefused({ error: 'Invalid session' }, { tools: [] })).toBe(false);
     });
