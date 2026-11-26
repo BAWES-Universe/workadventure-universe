@@ -506,6 +506,34 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "지금 있는 곳",
         inThisRoom: "이 방에 있어요",
     },
+    brick: {
+        computer: {
+            screenInControl: "직접 조작 중 · {name}은(는) 기다리는 중",
+            lastStepLine: "결제하고 제출한 다음 조작을 돌려주세요. {name}은(는) 끝날 때까지 기다립니다.",
+            trustTitle: "{name}은(는) 이 컴퓨터를 모두 사용할 수 있어요",
+            trustLine:
+                "{name}은(는) 여기에 무엇이든 설치하고 실행할 수 있고, 안의 모든 것에 접근할 수 있어요. 여기서 한 로그인은 {name}의 어떤 작업에서든 쓰일 수 있어요.",
+            screenControlLine: "{name}의 컴퓨터에 입력하고 있어요. {name}은(는) 그 안의 모든 것에 접근할 수 있어요.",
+            gettingItReady: "준비하는 중…",
+            runningTitle: "아직 실행 중인 것이 있어요",
+            runningLine:
+                "{name}이(가) 설치한 프로그램이 이 컴퓨터에서 아직 실행 중이에요. 입력하는 내용을 볼 수 있어요. 다시 시작하면 닫혀요.",
+            restartFirst: "먼저 다시 시작",
+            takeOverAnyway: "그래도 직접 조작",
+            restartingHead: "다시 시작하는 중 · {name}이(가) 다시 물어볼 거예요",
+            restartingLine:
+                "{name}의 컴퓨터를 다시 시작하고 있어요. 모든 것이 닫히고, {name}이(가) 페이지를 다시 준비한 뒤 물어봐요.",
+            restartingBar: "{job} · 컴퓨터 다시 시작 중",
+            runningAgainTitle: "아직 실행 중이에요",
+            runningAgainLine:
+                "다시 시작한 뒤에 또 실행되어서, 입력하는 내용을 여전히 볼 수 있어요. 이 단계에서 괜찮을 때만 계속하세요.",
+            notNow: "나중에",
+            screenInControlRunning: "직접 조작 중 · 프로그램이 아직 실행 중",
+            screenControlRunningLine:
+                "{name}의 컴퓨터에 입력하고 있어요. {name}이(가) 설치한 프로그램이 아직 실행 중이라 입력하는 내용을 볼 수 있어요.",
+            notReady: "컴퓨터를 준비하지 못했어요. 아무것도 바뀌지 않았어요. 다시 시도해 주세요.",
+        },
+    },
     artifacts: {
         openPublic: "공개",
         openPublicHelp: "링크가 있는 사람은 게시한 내용만 볼 수 있습니다",

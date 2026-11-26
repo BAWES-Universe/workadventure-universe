@@ -1411,10 +1411,18 @@ export class BotApiService {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer`, {});
     }
 
-    /** One of the owner's calls on a Brick's computer (give, turn off, stop, take over, hand back, fill in details). */
+    /** One of the owner's calls on a Brick's computer (give, turn off, stop, take over, take over anyway, restart first, hand back, fill in details). */
     async brickComputerAction(
         brickId: string,
-        action: "give" | "turn-off" | "stop" | "take-over" | "hand-back" | "fill-details",
+        action:
+            | "give"
+            | "turn-off"
+            | "stop"
+            | "take-over"
+            | "take-over-anyway"
+            | "restart"
+            | "hand-back"
+            | "fill-details",
         /** With "fill-details": what the screen showed Brick is ready to put in, and where. Orbit refuses the tap if Brick named something else since. */
         shown?: { what: string; where: string },
         /** With "stop": this tap's own id, so the same tap sent again (a renewed sign-in resends it) ends the jobs once. */
@@ -1436,6 +1444,9 @@ export class BotApiService {
                   method: "POST",
                   body: JSON.stringify({ what: shown.what, where: shown.where }),
               })
+            : action === "take-over-anyway"
+            ? // The person chose to go on with a program still running (the check before a take over found one): the same take over, said so
+              await this.brickWrite(`${base}/take-over`, { method: "POST", body: JSON.stringify({ anyway: true }) })
             : action === "stop" && confirmedJobIds && confirmedJobIds.length > 0
             ? await this.brickWrite(`${base}/${action}`, {
                   method: "POST",

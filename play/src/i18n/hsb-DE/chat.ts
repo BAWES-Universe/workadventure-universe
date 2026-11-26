@@ -182,6 +182,34 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Nětko w",
         inThisRoom: "Sy w tutej rumnosći",
     },
+    brick: {
+        computer: {
+            screenInControl: "Ty maš kontrolu · {name} čaka",
+            lastStepLine: "Zapłać a pósćel, potom kontrolu wróć. {name} čaka, doniž njejsy hotowy.",
+            trustTitle: "{name} móže tutón ličak połnje wužiwać",
+            trustLine:
+                "{name} móže na nim wšitko instalować a wuwjesć a na wšitko tam přistup měć. Přizjewjenje, kotrež so na nim stawa, móže so w kóždym nadawku {name} wužiwać.",
+            screenControlLine: "Ty pisaš na ličaku {name}. {name} móže na wšitko na nim přistup měć.",
+            gettingItReady: "Přihotuje so…",
+            runningTitle: "Něšto hišće běži",
+            runningLine:
+                "Program, kotryž je {name} instalował, hišće na tutym ličaku běži. Móže widźeć, štož pisaš. Znowastartowanje jón začini.",
+            restartFirst: "Najprjedy znowa startować",
+            takeOverAnyway: "Tola přewzać",
+            restartingHead: "Znowastartowanje · {name} so će znowa prašeć",
+            restartingLine:
+                "Ličak {name} so znowa startuje. Wšitko so začini, potom {name} stronu znowa přihotuje a so će praša.",
+            restartingBar: "{job} · ličak so znowa startuje",
+            runningAgainTitle: "Hišće běži",
+            runningAgainLine:
+                "Po znowastartowanju je so znowa startowało, a tohodla móže hišće widźeć, štož pisaš. Dźi dale jenož, hdyž je to za tutón krok dobre.",
+            notNow: "Nětko nic",
+            screenInControlRunning: "Ty maš kontrolu · program hišće běži",
+            screenControlRunningLine:
+                "Ty pisaš na ličaku {name}. Program, kotryž je {name} instalował, hišće běži a móže widźeć, štož pisaš.",
+            notReady: "Ličak njemóžeše so přihotować. Ničo so njezmě. Spytaj hišće raz.",
+        },
+    },
     artifacts: {
         openPublic: "Zjawny",
         openPublicHelp: "Kóždy z wotkazom widźi jenož to, štož wozjewiš",

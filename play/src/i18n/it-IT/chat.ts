@@ -346,6 +346,34 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Ora in",
         inThisRoom: "Sei in questa stanza",
     },
+    brick: {
+        computer: {
+            screenInControl: "Hai il controllo · {name} attende",
+            lastStepLine: "Paga e invia, poi restituisci il controllo. {name} attende finché non hai finito.",
+            trustTitle: "{name} ha pieno uso del computer",
+            trustLine:
+                "{name} può installare ed eseguire qualsiasi cosa e accedere a tutto ciò che c'è. Un accesso effettuato su questo computer può essere usato in qualsiasi attività di {name}.",
+            screenControlLine: "Stai scrivendo sul computer di {name}. {name} può accedere a tutto ciò che c'è.",
+            gettingItReady: "Preparazione…",
+            runningTitle: "Qualcosa è ancora in esecuzione",
+            runningLine:
+                "Un programma installato da {name} è ancora in esecuzione su questo computer. Potrebbe vedere ciò che scrivi. Un riavvio lo chiude.",
+            restartFirst: "Riavvia prima",
+            takeOverAnyway: "Prendi il controllo comunque",
+            restartingHead: "Riavvio · {name} te lo chiederà di nuovo",
+            restartingLine:
+                "Riavvio del computer di {name}. Tutto si chiude, poi {name} prepara di nuovo la pagina e te lo chiede.",
+            restartingBar: "{job} · riavvio del computer",
+            runningAgainTitle: "È ancora in esecuzione",
+            runningAgainLine:
+                "È ripartito dopo il riavvio, quindi potrebbe ancora vedere ciò che scrivi. Procedi solo se per questo passaggio va bene.",
+            notNow: "Non ora",
+            screenInControlRunning: "Hai il controllo · un programma è ancora in esecuzione",
+            screenControlRunningLine:
+                "Stai scrivendo sul computer di {name}. Un programma installato da {name} è ancora in esecuzione e potrebbe vedere ciò che scrivi.",
+            notReady: "Impossibile preparare il computer. Non è stato modificato nulla. Riprova.",
+        },
+    },
     artifacts: {
         openPublic: "Pubblico",
         openPublicHelp: "Chiunque abbia il link vede solo ciò che pubblichi",

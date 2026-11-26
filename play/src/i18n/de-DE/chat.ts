@@ -250,6 +250,34 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Gerade in",
         inThisRoom: "Sie sind in diesem Raum",
     },
+    brick: {
+        computer: {
+            screenInControl: "Du hast die Kontrolle · {name} wartet",
+            lastStepLine: "Bezahle und sende ab, gib dann zurück. {name} wartet, bis du fertig bist.",
+            trustTitle: "{name} hat vollen Zugriff darauf",
+            trustLine:
+                "{name} kann darauf alles installieren und ausführen und auf alles dort zugreifen. Eine dort vorgenommene Anmeldung kann in jeder Aufgabe von {name} verwendet werden.",
+            screenControlLine: "Du tippst auf dem Computer von {name}. {name} kann auf alles darauf zugreifen.",
+            gettingItReady: "Wird vorbereitet…",
+            runningTitle: "Etwas läuft noch",
+            runningLine:
+                "Ein von {name} installiertes Programm läuft noch auf diesem Computer. Es könnte sehen, was du tippst. Ein Neustart beendet es.",
+            restartFirst: "Zuerst neu starten",
+            takeOverAnyway: "Trotzdem übernehmen",
+            restartingHead: "Neustart · {name} fragt dich erneut",
+            restartingLine:
+                "Der Computer von {name} wird neu gestartet. Alles darauf wird geschlossen, dann bereitet {name} die Seite wieder vor und fragt dich.",
+            restartingBar: "{job} · Computer wird neu gestartet",
+            runningAgainTitle: "Es läuft noch",
+            runningAgainLine:
+                "Es wurde nach dem Neustart wieder gestartet und könnte daher weiterhin sehen, was du tippst. Mach nur weiter, wenn das für diesen Schritt in Ordnung ist.",
+            notNow: "Nicht jetzt",
+            screenInControlRunning: "Du hast die Kontrolle · ein Programm läuft noch",
+            screenControlRunningLine:
+                "Du tippst auf dem Computer von {name}. Ein von {name} installiertes Programm läuft noch und könnte sehen, was du tippst.",
+            notReady: "Der Computer konnte nicht vorbereitet werden. Es wurde nichts geändert. Versuche es erneut.",
+        },
+    },
     artifacts: {
         openPublic: "Öffentlich",
         openPublicHelp: "Alle mit dem Link sehen nur, was du veröffentlichst",

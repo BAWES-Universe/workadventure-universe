@@ -655,6 +655,34 @@ const chat: DeepPartial<Translation["chat"]> = {
         peopleOnline: "{count} personnes en ligne dans ce monde",
         unreadChats: "Messages non lus",
     },
+    brick: {
+        computer: {
+            screenInControl: "Vous avez la main · {name} attend",
+            lastStepLine: "Payez et validez, puis rendez la main. {name} attend que vous ayez terminé.",
+            trustTitle: "{name} a l'usage complet de l'ordinateur",
+            trustLine:
+                "{name} peut y installer et y lancer n'importe quoi, et accéder à tout ce qui s'y trouve. Une connexion faite sur cet ordinateur peut servir dans toute tâche de {name}.",
+            screenControlLine: "Vous tapez sur l'ordinateur de {name}. {name} peut accéder à tout ce qui s'y trouve.",
+            gettingItReady: "Préparation…",
+            runningTitle: "Un programme est encore en cours",
+            runningLine:
+                "Un programme installé par {name} tourne encore sur cet ordinateur. Il pourrait voir ce que vous tapez. Un redémarrage le ferme.",
+            restartFirst: "Redémarrer d'abord",
+            takeOverAnyway: "Prendre la main quand même",
+            restartingHead: "Redémarrage · {name} vous redemandera",
+            restartingLine:
+                "Redémarrage de l'ordinateur de {name}. Tout se ferme, puis {name} remet la page en place et vous redemande.",
+            restartingBar: "{job} · redémarrage de l'ordinateur",
+            runningAgainTitle: "Il tourne encore",
+            runningAgainLine:
+                "Il a redémarré avec l'ordinateur, il pourrait donc encore voir ce que vous tapez. N'avancez que si cela convient pour cette étape.",
+            notNow: "Pas maintenant",
+            screenInControlRunning: "Vous avez la main · un programme tourne encore",
+            screenControlRunningLine:
+                "Vous tapez sur l'ordinateur de {name}. Un programme installé par {name} tourne encore et pourrait voir ce que vous tapez.",
+            notReady: "Impossible de préparer l'ordinateur. Rien n'a été modifié. Réessayez.",
+        },
+    },
     artifacts: {
         openPublic: "Public",
         openPublicHelp: "Toute personne ayant le lien ne voit que ce que vous publiez",

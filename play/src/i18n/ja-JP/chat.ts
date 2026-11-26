@@ -327,6 +327,34 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "今いる場所",
         inThisRoom: "このルームにいます",
     },
+    brick: {
+        computer: {
+            screenInControl: "操作中 · {name} は待機しています",
+            lastStepLine: "支払いと送信を済ませてから、操作を返してください。{name} はあなたが終えるまで待ちます。",
+            trustTitle: "{name} はこのコンピューターを自由に使えます",
+            trustLine:
+                "{name} はここに何でもインストールして実行でき、中のすべてにアクセスできます。ここで行ったサインインは、{name} のどの作業でも使われる可能性があります。",
+            screenControlLine: "{name} のコンピューターに入力しています。{name} はその中のすべてにアクセスできます。",
+            gettingItReady: "準備中…",
+            runningTitle: "まだ何かが動いています",
+            runningLine:
+                "{name} がインストールしたプログラムがこのコンピューターでまだ動いています。入力内容が見られる可能性があります。再起動すると終了します。",
+            restartFirst: "先に再起動",
+            takeOverAnyway: "このまま引き継ぐ",
+            restartingHead: "再起動中 · {name} がもう一度お願いします",
+            restartingLine:
+                "{name} のコンピューターを再起動しています。すべて閉じてから、{name} がページを準備し直して、あらためてお願いします。",
+            restartingBar: "{job} · コンピューターを再起動中",
+            runningAgainTitle: "まだ動いています",
+            runningAgainLine:
+                "再起動のあとにもう一度起動したため、入力内容が見られる可能性があります。この手順で問題ない場合だけ進めてください。",
+            notNow: "今はしない",
+            screenInControlRunning: "操作中 · プログラムがまだ動いています",
+            screenControlRunningLine:
+                "{name} のコンピューターに入力しています。{name} がインストールしたプログラムがまだ動いていて、入力内容が見られる可能性があります。",
+            notReady: "コンピューターを準備できませんでした。何も変更されていません。もう一度お試しください。",
+        },
+    },
     artifacts: {
         openPublic: "公開",
         openPublicHelp: "リンクを知っている人には、公開した内容だけが表示されます",
