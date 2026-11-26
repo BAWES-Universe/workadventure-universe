@@ -46,6 +46,8 @@ const NOT_A_NAME = new Set([
     'on', 'at', 'from', 'with', 'a', 'an', 'the', 'your', 'my', 'now', 'today', 'tomorrow', 'later', 'again', 'maybe', 'please', 'thanks',
     'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
     'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+    'hungry', 'sad', 'tired', 'excited', 'angry', 'frustrated', 'worried', 'scared', 'nervous', 'thirsty', 'bored', 'lonely', 'confused', 'sick', 'ill',
+    'busy', 'late', 'early', 'free', 'online', 'offline', 'stuck', 'lost', 'home', 'out', 'off', 'about', 'wondering', 'thinking', 'having', 'doing', 'being',
     'google', 'gmail', 'github', 'slack', 'notion', 'calendar', 'email', 'universe', 'brick',
 ]);
 
@@ -95,7 +97,7 @@ const CONTACT = /@|https?:\/\/|www\.|\d{5,}/u;
 function thingOf(rest: string): string | null {
     let phrase = rest
         .split(/\s*(?:[;:()]|,\s*(?:thanks|thank you|thx|please|pls|lol|haha|honestly|though|ok|okay|really|btw)\b|\s[-–—]\s|\b(?:but|because|since|so|though|although|except|unless|when|whenever|if|which|that|and then)\b)/iu)[0]
-        .replace(/\s+(?:too|a lot|a bit|very much|so much|as well|also|though|however|anymore|now|again|right now)$/iu, '')
+        .replace(/\s+(?:too|a lot|a bit|very much|so much|as well|also|though|however|anymore|now|again|right now|lol|lmao|haha|btw|please|pls|thanks|thank you|honestly|tbh)$/iu, '')
         .trim()
         .replace(/[\s,.!?…"'`“”]+$/u, '');
     if (!phrase || phrase.length > MAX_PHRASE_CHARS || phrase.split(/\s+/u).length > MAX_PHRASE_WORDS) return null;
@@ -109,6 +111,16 @@ const LIKE = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+((?:(?:really|absolutely|totally
 const NEG_LIKE = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+(?:(?:really|absolutely|totally|just|also|actually|truly|definitely|do)\\s+)*(?:don${APOS}?t|do not|never|no longer|can${APOS}?t stand|cannot stand|can${APOS}?t bear|hardly|barely|dont)\\s+(?:(?:really|actually|truly|much|particularly|even)\\s+)*(${LIKE_VERBS}|care for|enjoy)\\s+(.+)$`, 'iu');
 const CANT_STAND = new RegExp(`(?:^|[\\s,;:(])[Ii]\\s+(?:can${APOS}?t|cannot)\\s+(?:stand|bear|stomach)\\s+(.+)$`, 'iu');
 const FAVORITE = new RegExp(`\\bmy\\s+(?:all[- ]time\\s+)?favou?rite\\s+((?:\\p{L}+\\s+){0,2}?)(?:is|are)\\s+(.+)$`, 'iu');
+
+/** A sentence with two things said by the person ("I like tea and I hate coffee") as one line for each; "and my sister hates it" is cut off, as it is not theirs. */
+const NEXT_SAYING = /\s*(?:,\s*)?\b(?:and|but|while|though|although|then|yet)\s+(?=(?:[Ii]|[Mm]y|[Mm]y)(?![\p{L}\p{N}]|['’]s))/u;
+function sayingsOf(sentence: { text: string; question: boolean }): Array<{ text: string; question: boolean }> {
+    return sentence.text
+        .split(NEXT_SAYING)
+        .map((text) => text.trim())
+        .filter(Boolean)
+        .map((text) => ({ text, question: sentence.question }));
+}
 
 export interface Tastes {
     likes: string[];
@@ -125,7 +137,7 @@ export function tastesIn(message: string): Tastes {
     const push = (list: string[], value: string | null) => {
         if (value && !list.some((kept) => kept.toLowerCase() === value.toLowerCase())) list.push(value);
     };
-    for (const sentence of sentencesOf(message)) {
+    for (const sentence of sentencesOf(message).flatMap(sayingsOf)) {
         if (sentence.question) continue;
         const text = sentence.text;
         const negative = NEG_LIKE.exec(text) ?? CANT_STAND.exec(text);
@@ -172,8 +184,8 @@ export function stateIn(message: string): string | null {
 const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december';
 const BIRTHDAY_TODAY = new RegExp(`\\b(?:it${APOS}?s|today(?: is)?|today${APOS}s)\\s+my\\s+(?:birthday|bday)\\b|\\bmy\\s+(?:birthday|bday)\\s+(?:is\\s+)?today\\b`, 'iu');
 const BIRTHDAY_ON = [
-    new RegExp(`\\bmy\\s+(?:birthday|bday)\\s+(?:(?:is|was)\\s+)?(?:on\\s+)?((?:${MONTHS})\\s+\\d{1,2})\\b`, 'iu'),
-    /\bmy\s+(?:birthday|bday)\s+(?:(?:is|was)\s+)?(?:on\s+)?(\d{1,2}[/-]\d{1,2})\b/iu,
+    new RegExp(`\\bmy\\s+(?:birthday|bday)(?:${APOS}s)?\\s+(?:(?:is|was)\\s+)?(?:on\\s+)?((?:${MONTHS})\\s+\\d{1,2})(?:st|nd|rd|th)?\\b`, 'iu'),
+    /\bmy\s+(?:birthday|bday)(?:['’]s)?\s+(?:(?:is|was)\s+)?(?:on\s+)?(\d{1,2}[/-]\d{1,2})\b/iu,
 ];
 
 /** True when the person says it is their own birthday today (not a friend's, and not "it's not my birthday"). */

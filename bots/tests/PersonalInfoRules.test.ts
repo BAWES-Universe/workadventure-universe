@@ -80,6 +80,13 @@ describe('tastesIn', () => {
         expect(tastesIn('I like coffee, no sugar')).toEqual({ likes: ['coffee, no sugar'], dislikes: [] });
     });
 
+    it('takes each thing they say on its own when two are joined with "and"', () => {
+        expect(tastesIn('I like tea and I hate coffee')).toEqual({ likes: ['tea'], dislikes: ['coffee'] });
+        expect(tastesIn('I love pizza and my sister hates it')).toEqual({ likes: ['pizza'], dislikes: [] });
+        expect(tastesIn("I like tea but I don't like coffee")).toEqual({ likes: ['tea'], dislikes: ['coffee'] });
+        expect(tastesIn('I like tea and coffee')).toEqual({ likes: ['tea and coffee'], dislikes: [] });
+    });
+
     it('stops at the end of the thing', () => {
         expect(tastesIn('I like tea, but not on mondays')).toEqual({ likes: ['tea'], dislikes: [] });
         expect(tastesIn("I like tea because it's calming")).toEqual({ likes: ['tea'], dislikes: [] });
@@ -115,6 +122,8 @@ describe('birthday', () => {
         expect(birthdayIsToday('my birthday is today!')).toBe(true);
         expect(birthdayDateIn('My birthday is on March 3')).toBe('March 3');
         expect(birthdayDateIn('my birthday is 3/3')).toBe('3/3');
+        expect(birthdayDateIn('My birthday is March 3rd')).toBe('March 3');
+        expect(birthdayDateIn('my birthday is on April 1st!')).toBe('April 1');
     });
 
     it("is never someone else's, or not at all", () => {
