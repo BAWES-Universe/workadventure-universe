@@ -562,11 +562,21 @@ export class ConversationMemory {
         // Extract likes and dislikes. What they like and then say they do not (or the other way round) moves to the other list.
         const { likes, dislikes } = tastesIn(message);
         for (const like of likes) {
-            // Said again with other capitals: it is the same thing, and it is stamped under the spelling that is kept
-            const kept = (info.preferences ?? []).find((one) => one.toLowerCase() === like.toLowerCase());
-            const known = kept !== undefined;
-            this.stampInfo(info, `pref:${kept ?? like}`, heard, !known, at);
-            if (!known) {
+            // The same thing ("pizza" and "pizza (favorite food)" are one): said again with other capitals it is stamped under the spelling that is kept
+            const kept = (info.preferences ?? []).find((one) => plainThing(one).toLowerCase() === plainThing(like).toLowerCase());
+            if (kept !== undefined && kept.toLowerCase() === like.toLowerCase()) {
+                this.stampInfo(info, `pref:${kept}`, heard, false, at);
+            } else if (kept !== undefined && plainThing(like) === like) {
+                // "I like pizza" after "my favorite food is pizza": nothing new, and nobody who only heard this hears the favorite
+                (info.drawnFrom ??= {})[`pref:${kept}`] = at;
+            } else {
+                // New, or a favorite that says more than the plain like kept: it replaces it, with the stamp of the line it came from
+                if (kept !== undefined) {
+                    info.preferences = (info.preferences ?? []).filter((one) => one !== kept);
+                    if (info.heard) delete info.heard[`pref:${kept}`];
+                    if (info.drawnFrom) delete info.drawnFrom[`pref:${kept}`];
+                }
+                this.stampInfo(info, `pref:${like}`, heard, true, at);
                 (info.preferences ??= []).push(like);
                 info.lastInfoUpdate = Date.now();
             }

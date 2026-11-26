@@ -338,6 +338,16 @@ describe('what the bot keeps from a chat', () => {
         expect(info.preferences).toEqual(['pizza (favorite food)']);
         expect([...info.facts.keys()].some((key) => key.startsWith('dislike_'))).toBe(false);
     });
+    it('keeps one entry for a like and the same thing as a favorite, whichever came first, with the stamp of the one kept', () => {
+        let info = learnFrom('I like pizza', 'my favorite food is pizza').getMemory(BOT, PERSON)!.personalInfo;
+        expect(info.preferences).toEqual(['pizza (favorite food)']);
+        expect(Object.keys(info.drawnFrom ?? {}).filter((key) => key.startsWith('pref:'))).toEqual(['pref:pizza (favorite food)']);
+
+        info = learnFrom('my favorite food is pizza', 'I like pizza').getMemory(BOT, PERSON)!.personalInfo;
+        expect(info.preferences).toEqual(['pizza (favorite food)']);
+        expect(Object.keys(info.drawnFrom ?? {}).filter((key) => key.startsWith('pref:'))).toEqual(['pref:pizza (favorite food)']);
+    });
+
     it('forgetting a favorite takes the lines that say it plainly, long or short, said once or twice', () => {
         for (const [thing, kind, reply] of [['pizza', 'food', 'Pizza is your favorite food, got it!'], ['tea', 'drink', 'Tea is your favorite drink!']]) {
             const memory = new ConversationMemory();
