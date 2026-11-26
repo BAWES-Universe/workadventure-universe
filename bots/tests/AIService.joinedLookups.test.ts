@@ -256,6 +256,29 @@ describe('a session id that Calendar’s link does not know', () => {
         expect(execute).toHaveBeenCalledTimes(1);
     });
 
+    it('is never tried again when the call may have run some of its actions, or threw, or is a person’s own server', async () => {
+        const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
+        const servers = new Map<string, ToolServerEntry>([[BATCH, { ...GMAIL, otherApps: [CALENDAR] }]]);
+        const two = JSON.stringify({ tools: [{ tool_slug: 'GOOGLECALENDAR_EVENTS_LIST', arguments: {} }, { tool_slug: 'GOOGLECALENDAR_EVENTS_LIST', arguments: { id: 'again' } }], session_id: 'sess-g1' });
+        // Two actions, one ran, and the top-level error says "session": a second try would run the first again
+        execute.mockResolvedValue(text({ successful: false, error: 'Invalid session for one action', data: { results: [{ index: 0, tool_slug: 'GOOGLECALENDAR_EVENTS_LIST', response: { successful: true } }, { index: 1, error: 'Invalid session' }] } }) as never);
+        await service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: two }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+        expect(execute).toHaveBeenCalledTimes(1);
+        // A thrown error comes back as "MCP tool error": it may have been sent
+        execute.mockClear();
+        execute.mockRejectedValue(new Error('Invalid session in the transport'));
+        await service['executeToolCalls']([{ id: 'c2', name: BATCH, arguments: two }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+        expect(execute).toHaveBeenCalledTimes(1);
+        // A person's own server first under the name: session_id may be a real input, so it is never taken away
+        execute.mockClear();
+        execute.mockResolvedValue({ error: 'Invalid session id sess-g1' } as never);
+        const own: ToolServerEntry = { botId: 'b1', serverId: 'own1', serverUrl: 'https://own.example/mcp', authType: 'none', serverName: 'My link', fingerprint: 'fp-own' };
+        const ownRead = vi.fn(async (_bot: string, serverId: string) => (serverId === 'own1' ? ({ serverId: 'own1', kind: 'tools', state: 'notCheckedYet', policyRevision: 1, settings: DEFAULTS, tools: new Map() } as ServerPolicy) : gmailPolicy()));
+        service['toolGate'] = new ToolGate({ read: ownRead } as never, { check: vi.fn(async () => ({ kind: 'allowed', allowed: true })) } as never, { canManageBotTools: async () => false });
+        await service['executeToolCalls']([{ id: 'c3', name: SEARCH, arguments: JSON.stringify({ queries: [], session_id: 'sess-g1' }) }], undefined, undefined, new Map([[SEARCH, { ...own, otherApps: [] }]]) as never, 'uuid-khalid', undefined, 'b1', 7);
+        expect(execute).toHaveBeenCalledTimes(1);
+    });
+
     it('is tried again without the session for a search too', async () => {
         const { callTool, execute } = twoApps(gmailPolicy(), calendarPolicy());
         execute.mockImplementation(async (...args: unknown[]) => {
@@ -266,5 +289,38 @@ describe('a session id that Calendar’s link does not know', () => {
         // Gmail knew it; Calendar did not and was asked again without it
         expect(execute.mock.calls.map((args: unknown[]) => [args[0], 'session_id' in (args[3] as object)])).toEqual([['g1', true], ['cal1', true], ['cal1', false]]);
         expect(JSON.stringify(searched.result)).not.toContain('did not answer');
+    });
+});
+
+describe('a write approved on its card, when the link refuses the session id', () => {
+    const refused = { error: 'Invalid session id sess-g1' };
+
+    it('runs the approved batch once more without the session id, with its own call id, and only once', async () => {
+        const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
+        execute.mockResolvedValueOnce(refused as never).mockResolvedValueOnce(text({ successful: true, data: { ran: true } }) as never);
+        const batch = { tools: [{ tool_slug: 'GOOGLECALENDAR_CREATE_EVENT', arguments: { summary: 'Lunch' } }, { tool_slug: 'GOOGLECALENDAR_UPDATE_EVENT', arguments: { id: 'e1' } }], session_id: 'sess-g1', thought: 'week' };
+        const answer = await service.runApprovedTool('b1', CALENDAR, BATCH, batch, 'uuid-khalid', undefined, { heading: 'changesThings', callId: 'card-1' });
+        expect(execute).toHaveBeenCalledTimes(2);
+        expect(execute.mock.calls.map((args: unknown[]) => 'session_id' in (args[3] as object))).toEqual([true, false]);
+        expect(execute.mock.calls.map((args: unknown[]) => (args[10] as { callId: string }).callId)).toEqual(['card-1', 'card-1:no-session']);
+        expect(wrote(answer).successful).toBe(true);
+        // The actions and their inputs are exactly what the card showed
+        expect((execute.mock.calls[1][3] as { tools: unknown[] }).tools).toEqual(batch.tools);
+    });
+
+    it('runs one approved action once: it carries no session id to refuse', async () => {
+        const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
+        execute.mockResolvedValue(text({ successful: true, data: { ran: true } }) as never);
+        const actionEntry = { ...CALENDAR, appAction: { slug: 'GOOGLECALENDAR_CREATE_EVENT', batchTool: BATCH } };
+        await service.runApprovedTool('b1', actionEntry, 'GOOGLECALENDAR_CREATE_EVENT', { summary: 'Lunch' }, 'uuid-khalid', undefined, { heading: 'changesThings', callId: 'card-2' });
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect('session_id' in (execute.mock.calls[0][3] as object)).toBe(false);
+    });
+
+    it('never runs a third time', async () => {
+        const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
+        execute.mockResolvedValue(refused as never);
+        await service.runApprovedTool('b1', CALENDAR, BATCH, { tools: [{ tool_slug: 'GOOGLECALENDAR_CREATE_EVENT', arguments: {} }], session_id: 'sess-g1' }, 'uuid-khalid', undefined, { heading: 'changesThings', callId: 'card-3' });
+        expect(execute).toHaveBeenCalledTimes(2);
     });
 });

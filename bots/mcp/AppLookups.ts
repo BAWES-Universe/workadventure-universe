@@ -139,12 +139,47 @@ export function joinLookupAnswers(answers: ReadonlyArray<{ app: string; answer: 
     return [...good.map(({ app, answer }) => ({ type: 'text', text: `${app ? `${app}:\n` : ''}${textOf(answer)}` })), ...notes.map((text) => ({ type: 'text', text }))];
 }
 
-/**
- * Whether a call failed because the App's link refused the session it was given: the model carries the session id one App's link gave
- * (the joined search keeps the oldest App's), and another App's link may not know it. Only a failure that names the session counts.
- */
-export const sessionRefused = (answer: unknown): boolean => /session/i.test(failureOf(answer) ?? '');
+/** The link's own tools whose inputs may carry the session id of the link that gave it (search, schemas, batch). */
+const SESSION_TOOLS: ReadonlySet<string> = new Set(['COMPOSIO_SEARCH_TOOLS', 'COMPOSIO_GET_TOOL_SCHEMAS', 'COMPOSIO_MULTI_EXECUTE_TOOL']);
 
+/** The session id the inputs carry: `session_id`, else the `id` of `session`. */
+const sessionIdOf = (args: Record<string, unknown>): string | undefined => {
+    if (typeof args?.session_id === 'string' && args.session_id !== '') return args.session_id;
+    return isObject(args?.session) && typeof args.session.id === 'string' && args.session.id !== '' ? args.session.id : undefined;
+};
+
+/** Words that say a session id was not accepted (never just the word "session": an event may be called a "Strategy session"). */
+const SESSION_NOT_ACCEPTED = /\b(invalid|unknown|expired|unrecognized|missing)\s+(\w+\s+)?session\b|\bsession(\s+id)?\s+(is\s+)?(not\s+found|invalid|unknown|expired|missing)\b/i;
+
+/**
+ * Whether a call failed only because the App's link refused the session id it was given, so that nothing ran: the model carries the
+ * session id one App's link gave (the joined search keeps the oldest App's) to another App's link, which may not know it. True only for a
+ * refusal of the whole call (never a thrown error, an uncertain outcome, or an answer with results of actions) whose words name that
+ * session id: the exact id that was sent, or an invalid, unknown, expired or missing session.
+ */
+export function sessionRefused(answer: unknown, args: Record<string, unknown>): boolean {
+    const id = sessionIdOf(args);
+    if (!id) return false;
+    // A call that threw or whose outcome is not known may have run
+    if (isObject(answer) && (answer.outcome === 'uncertain' || (typeof answer.error === 'string' && answer.error.startsWith('MCP tool error')))) return false;
+    const line = failureOf(answer);
+    if (line === undefined) return false;
+    // An answer that carries the results of actions may have run some of them
+    const data = dataOf(answer);
+    const inner = isObject(data) && isObject(data.data) ? data.data : undefined;
+    if (Array.isArray(inner?.results) && inner.results.length > 0) return false;
+    return line.includes(id) || SESSION_NOT_ACCEPTED.test(line);
+}
+
+/**
+ * The inputs to try again with when this call failed only because its link refused the session id, or undefined when it is not to be
+ * tried again: only an App's own ready-made link and only its own tools (search, schemas, batch), never a person's own server, where
+ * `session_id` can be a real input of the tool.
+ */
+export function retryWithoutSession(entry: { readyMade?: boolean }, toolName: string, args: Record<string, unknown>, answer: unknown): Record<string, unknown> | undefined {
+    if (entry.readyMade !== true || !SESSION_TOOLS.has(toolName.trim().toUpperCase())) return undefined;
+    return sessionRefused(answer, args) ? withoutSession(args) : undefined;
+}
 /** The same inputs without the session they carried (`session_id`, and the `id` of `session`), or undefined when they carried none. */
 export function withoutSession(args: Record<string, unknown>): Record<string, unknown> | undefined {
     const bare: Record<string, unknown> = { ...args };

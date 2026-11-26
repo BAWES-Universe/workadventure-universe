@@ -1,6 +1,6 @@
 /** The link's search and schemas answers of several Apps joined into one (bots/mcp/AppLookups.ts). Pure. */
 import { describe, expect, it } from 'vitest';
-import { isJoinedLookup, joinLookupAnswers, sessionRefused, withoutSession } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, retryWithoutSession, sessionRefused, withoutSession } from '../mcp/AppLookups';
 
 const text = (value: unknown) => [{ type: 'text', text: JSON.stringify(value) }];
 const read = (answer: unknown) => JSON.parse(((answer as Array<{ text: string }>)[0]).text);
@@ -65,11 +65,34 @@ describe('joining the answers of several Apps', () => {
 });
 
 describe('a session the App’s link refused', () => {
-    it('is told from a failure that names the session, never from another failure or a good answer', () => {
-        expect(sessionRefused({ error: 'Invalid session id sess-1' })).toBe(true);
-        expect(sessionRefused(text({ successful: false, error: 'Session not found' }))).toBe(true);
-        expect(sessionRefused({ error: 'The link is not answering.' })).toBe(false);
-        expect(sessionRefused(text({ successful: true, data: { note: 'a session started' } }))).toBe(false);
+    const sent = { tools: [{ tool_slug: 'GOOGLECALENDAR_CREATE_EVENT', arguments: {} }], session_id: 'sess-g1' };
+
+    it('is told only from a refusal of the whole call that names the session id', () => {
+        expect(sessionRefused({ error: 'Invalid session id sess-1' }, sent)).toBe(true);
+        expect(sessionRefused(text({ successful: false, error: 'Session not found' }), sent)).toBe(true);
+        expect(sessionRefused(text({ successful: false, error: 'Unknown session' }), sent)).toBe(true);
+        // The exact id that was sent, even in other words
+        expect(sessionRefused({ error: 'Cannot use sess-g1 here' }, sent)).toBe(true);
+        expect(sessionRefused({ error: 'The link is not answering.' }, sent)).toBe(false);
+        expect(sessionRefused(text({ successful: true, data: { note: 'a session started' } }), sent)).toBe(false);
+    });
+
+    it('is never told from the word session alone, a thrown error, an unsure outcome or an answer with results of actions', () => {
+        expect(sessionRefused({ error: 'Strategy session could not be created' }, sent)).toBe(false);
+        expect(sessionRefused({ error: 'MCP tool error: invalid session in the transport' }, sent)).toBe(false);
+        expect(sessionRefused({ error: 'Invalid session', outcome: 'uncertain' }, sent)).toBe(false);
+        expect(sessionRefused(text({ successful: false, error: 'Invalid session', data: { results: [{ index: 0, tool_slug: 'A', response: { successful: true } }] } }), sent)).toBe(false);
+        // Nothing was sent with a session: nothing to take away
+        expect(sessionRefused({ error: 'Invalid session' }, { tools: [] })).toBe(false);
+    });
+
+    it('is tried again only on a ready-made App’s own tools', () => {
+        const refused = { error: 'Invalid session id sess-g1' };
+        expect(retryWithoutSession({ readyMade: true }, 'COMPOSIO_MULTI_EXECUTE_TOOL', sent, refused)).toEqual({ tools: sent.tools });
+        expect(retryWithoutSession({ readyMade: true }, 'composio_search_tools', { queries: [], session_id: 'sess-g1' }, refused)).toEqual({ queries: [] });
+        // A person's own server: session_id can be a real input of the tool
+        expect(retryWithoutSession({}, 'COMPOSIO_MULTI_EXECUTE_TOOL', sent, refused)).toBeUndefined();
+        expect(retryWithoutSession({ readyMade: true }, 'end_session', { session_id: 'sess-g1' }, refused)).toBeUndefined();
     });
 
     it('drops only the session from the inputs, and says when there was none', () => {

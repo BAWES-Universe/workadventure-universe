@@ -528,6 +528,14 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(answer).not.toContain('Invalid session');
     });
 
+    it('never tries a step again that may have run some of its actions, even when the error says session', async () => {
+        const { apps, call } = withGate({ ...gmail, otherApps: [calendar] });
+        call.mockResolvedValue(JSON.parse(JSON.stringify({ successful: false, error: 'Invalid session for one action', data: { results: [{ index: 0, tool_slug: 'GOOGLECALENDAR_FIND_EVENT', response: { successful: true } }] } })) as never);
+        const session = (await apps.open(run()))!;
+        await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT', 'GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(call).toHaveBeenCalledTimes(1);
+    });
+
     it('never tries a failure again that is not about the session, and never a write that asks first', async () => {
         const { apps, call, propose } = withGate({ ...gmail, otherApps: [calendar] });
         call.mockResolvedValue({ error: 'The link is not answering.' } as never);

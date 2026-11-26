@@ -31,7 +31,7 @@ import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, typ
 import type { ToolHeading } from '../mcp/ToolCatalog';
 import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
-import { isJoinedLookup, joinLookupAnswers, lookupRequests, sessionRefused, withoutSession } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession } from '../mcp/AppLookups';
 import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
@@ -519,14 +519,14 @@ export class AIService {
     ): Promise<unknown> {
         // One action of a ready-made App runs as its App's batch of one, as the link expects
         const call = entry.appAction && toolName === entry.appAction.slug ? { name: entry.appAction.batchTool, args: { tools: [{ tool_slug: toolName, arguments: args }] } } : { name: toolName, args };
-        return this.callMcpTool(entry, call.name, call.args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
+        return this.callWithSessionFallback(entry, call.name, call.args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
     }
 
     /**
-     * One call to an App's link tool, tried once more without the session it carried when its link refused that session. With several Apps
-     * the model carries the session id one App's link gave (a joined search keeps the oldest App's) to another App's link, which may not
-     * know it. Only a refusal that names the session is tried again, and only without the session: what was asked, and what the person
-     * approved, is the same call. The retry is its own try (its own call id).
+     * One call to an App's link tool, tried once more without the session id it carried when its link refused that session. With several
+     * Apps the model carries the session id one App's link gave (a joined search keeps the oldest App's) to another App's link, which may
+     * not know it. Only a ready-made App's own tools, only a refusal of the whole call that names the session (so nothing ran), and only
+     * once, as its own try (its own call id): it is the same call, already allowed or already approved on its card.
      */
     private async callWithSessionFallback(
         entry: ToolServerEntry,
@@ -535,12 +535,11 @@ export class AIService {
         playerUuid: string | undefined,
         abortSignal: AbortSignal | undefined,
         toolTimeoutSeconds: number | null | undefined,
-        use: AppUseRequest & { botId: string; forOthers?: boolean }
+        use: (AppUseRequest & { botId: string; forOthers?: boolean }) | undefined
     ): Promise<any> {
         const answer = await this.callMcpTool(entry, toolName, args, playerUuid, abortSignal, toolTimeoutSeconds, use);
-        if (!sessionRefused(answer)) return answer;
-        const bare = withoutSession(args);
-        if (!bare) return answer;
+        const bare = use ? retryWithoutSession(entry, toolName, args, answer) : undefined;
+        if (!bare || !use) return answer;
         return this.callMcpTool(entry, toolName, bare, playerUuid, abortSignal, toolTimeoutSeconds, { ...use, callId: `${use.callId}:no-session` });
     }
 
