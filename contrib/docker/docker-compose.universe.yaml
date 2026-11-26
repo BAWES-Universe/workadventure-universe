@@ -1,16 +1,18 @@
 # Universe-specific docker-compose override
 # This file overrides image names to use universe images from GHCR
 # Used in conjunction with docker-compose.prod.yaml
-# GITHUB_REPOSITORY_OWNER and VERSION must be set as environment variables
+# UNIVERSE_IMAGE_OWNER (the lowercase GitHub owner of the images, e.g. bawes-universe) and VERSION must be set
+# as environment variables. It is not called GITHUB_REPOSITORY_OWNER because GitHub Actions runners reserve
+# every GITHUB_* name and refuse to override it, and Docker image names must be lowercase.
 
 version: "3.6"
 services:
   play:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/play-universe:${VERSION}
+    image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/play-universe:${VERSION}
   back:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/back-universe:${VERSION}
+    image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/back-universe:${VERSION}
   uploader:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/uploader-universe:${VERSION}
+    image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/uploader-universe:${VERSION}
   map-storage:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/map-storage-universe:${VERSION}
+    image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/map-storage-universe:${VERSION}
 
