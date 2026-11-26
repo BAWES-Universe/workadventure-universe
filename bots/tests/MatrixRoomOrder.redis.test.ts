@@ -42,6 +42,8 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
         const mine = keys.filter((key) => used.some((id) => key.endsWith(id)) || rooms.some((room) => key.endsWith(room)));
         if (mine.length > 0) await client.del(mine);
         for (const id of used) await client.zRem(INBOX_KEY, id);
+        // the outbox's index (its notices went with the keys above: GPT's eighth note G)
+        for (const id of used) await client.zRem('matrix:outbox', id);
         used.length = 0;
         rooms.length = 0;
     });
@@ -488,7 +490,7 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             expect(seen).toEqual([expected, expected]);
         });
 
-        it('the bridge gives the turn the event\'s own time, else the kept time (never the clock), as the moment of consent', async () => {
+        it('the bridge gives the turn the event\'s own time as the moment of consent, and an event with none gets none (not the kept time, never a clock)', async () => {
             const room = roomOf('consent');
             const botId = '0b7c1d2e-1111-4222-8333-944455556666';
             const botUser = `@bot_${botId}:matrix.test`;
@@ -517,7 +519,7 @@ describe.runIf(!!URL)('room order and unfinished entries survive recovery (GPT s
             delete bare.origin_server_ts;
             await bridge.onEvent(bare, hooks);
             await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(1));
-            expect(deps.reply.mock.calls[0][4].eventTs).toBe(1_234_567);
+            expect(deps.reply.mock.calls[0][4].eventTs).toBeUndefined();
             const timed = say(room, fresh('consent-timed'), 'Start another');
             await bridge.onEvent(timed, hooks);
             await vi.waitFor(() => expect(deps.reply).toHaveBeenCalledTimes(2));

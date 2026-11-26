@@ -6,7 +6,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import { ToolGate, type GateDecision } from '../mcp/ToolGate';
-import type { PolicyTool } from '../mcp/ToolPolicy';
+import type { ToolHeading } from '../mcp/ToolCatalog';
+import type { PolicyTool, ServerPolicy, ToolSetting } from '../mcp/ToolPolicy';
 import type { DueRun } from '../server/BrickRunner';
 import { TaskApps, type TaskAppsDeps } from '../server/BrickTaskApps';
 import { ModelTaskRunner } from '../server/BrickTaskModel';
@@ -118,6 +119,13 @@ describe('what a run does with an App', () => {
         expect(call.mock.calls[3][5].callId).not.toBe(first);
     });
 
+    it('lets the gate see what a step asks for, so reconnecting an App asks first while a plain check runs', async () => {
+        const { apps, decide } = setUp({ connect: RUN('changesThings') });
+        const session = (await apps.open(run()))!;
+        await session.call('connect', { reinitiate_all: true });
+        expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ toolName: 'connect', args: { reinitiate_all: true } }));
+    });
+
     it('asks on a card, never runs, for a step that makes something new or sends or deletes, even when it is set to right away', async () => {
         for (const heading of ['makesNew', 'deletesOrSends'] as const) {
             const { apps, call, propose, room } = setUp({ act: RUN(heading) });
@@ -172,15 +180,79 @@ describe('what a run does with an App', () => {
         }
     });
 
-    it('answers a step that fails with a plain error and never throws, and cuts what an App gives back', async () => {
+    it('answers a step that fails with a plain error and never throws', async () => {
         const broken = setUp({ search: RUN('looksUp') }, {
             call: async () => {
                 throw new Error('boom');
             },
         });
         expect(JSON.parse(await (await broken.apps.open(run()))!.call('search', {})).error).toMatch(/did not work/);
-        const big = setUp({ search: RUN('looksUp') }, { call: async () => 'x'.repeat(50_000) });
-        expect((await (await big.apps.open(run()))!.call('search', {})).length).toBe(12_000);
+    });
+
+    it('gives a run the room a chat reply has, and says when it cut what an App gave back', async () => {
+        const sentence = 'The quick brown fox jumps over the lazy dog. ';
+        const words = (n: number) => sentence.repeat(Math.ceil(n / sentence.length)).slice(0, n);
+        // 50,000 characters used to be cut at 12,000 with no word of it
+        const fits = setUp({ search: RUN('looksUp') }, { call: async () => words(50_000) });
+        expect(await (await fits.apps.open(run()))!.call('search', {})).toBe(words(50_000));
+        const big = setUp({ search: RUN('looksUp') }, { call: async () => words(200_000) });
+        const cut = await (await big.apps.open(run()))!.call('search', {});
+        expect(cut.startsWith(words(72_000))).toBe(true);
+        expect(cut).toContain('Only the first 72,000 of 200,000 characters fit');
+    });
+});
+
+describe('a mail answer through a run', () => {
+    const b64 = (text: string) => Buffer.from(text, 'utf8').toString('base64url');
+    const mail = (n: number, body: number) => ({
+        messageId: `m${n}`,
+        sender: `Sender ${n} <s${n}@example.com>`,
+        subject: `Subject ${n}`,
+        messageTimestamp: '2026-11-25T09:00:00Z',
+        preview: { body: `Snippet ${n}` },
+        payload: { parts: [{ mimeType: 'text/html', body: { data: b64(`<html><body>${'<p>Hello there, a paragraph.</p>'.repeat(body)}</body></html>`) } }] },
+    });
+    const answerOf = (messages: unknown[]) => [{ type: 'text', text: JSON.stringify({ data: { messages }, successful: true }) }];
+
+    it('shows the Brick every message of a list whose bodies were what made it long (it used to stop at 12,000 characters, mid-message)', async () => {
+        // About 30,000 characters of encoded body each: five of them were 150,000 characters, and the Brick saw a third of the first
+        const messages = [1, 2, 3, 4, 5].map((n) => mail(n, 900));
+        const { apps } = setUp({ search: RUN('looksUp') }, { call: async () => answerOf(messages) });
+        const text = await (await apps.open(run()))!.call('search', {});
+        expect(text.length).toBeLessThan(12_000);
+        const read = JSON.parse(text)[0].text.data.messages as ReturnType<typeof mail>[];
+        expect(read.map((one) => [one.sender, one.subject, one.preview.body])).toEqual(messages.map((one) => [one.sender, one.subject, one.preview.body]));
+    });
+
+    it('takes the routing headers out only for a mail App, by the tool it called', async () => {
+        const part = { payload: { mimeType: 'text/plain', body: { size: 3, data: 'abc' }, headers: [{ name: 'Subject', value: 'Hi' }, { name: 'Received', value: 'from x' }] } };
+        const blocks = [{ type: 'text', text: JSON.stringify(part) }];
+        const names = (text: string) => {
+            const inner = JSON.parse(text)[0].text;
+            return ((typeof inner === 'string' ? JSON.parse(inner) : inner).payload.headers as { name: string }[]).map((header) => header.name);
+        };
+        const gmail = setUp({ GMAIL_FETCH_EMAILS: RUN('looksUp') }, { call: async () => blocks });
+        const other = setUp({ search: RUN('looksUp') }, { call: async () => blocks });
+        expect(names(await (await gmail.apps.open(run()))!.call('GMAIL_FETCH_EMAILS', {}))).toEqual(['Subject']);
+        expect(names(await (await other.apps.open(run()))!.call('search', {}))).toEqual(['Subject', 'Received']);
+    });
+
+    it('says "Showing 20 of 50" when even without the bodies there is more than fits, and never cuts a message in half', async () => {
+        const messages = Array.from({ length: 50 }, (_, n) => ({ ...mail(n + 1, 10), messageText: `Message ${n + 1}. `.repeat(200) }));
+        const { apps } = setUp({ search: RUN('looksUp') }, { call: async () => answerOf(messages) });
+        const text = await (await apps.open(run()))!.call('search', {});
+        expect(text.length).toBeLessThanOrEqual(80_000);
+        const data = JSON.parse(text)[0].text.data;
+        expect(data.messages.length).toBeLessThan(50);
+        expect(data.messages_note).toMatch(new RegExp(`^Showing ${data.messages.length} of 50:`));
+        for (const read of data.messages) expect(read.messageText.endsWith('. ')).toBe(true);
+    });
+
+    it('still gives the Brick a plain error, not a throw, for an answer that cannot be written', async () => {
+        const circular: Record<string, unknown> = {};
+        circular.me = circular;
+        const { apps } = setUp({ search: RUN('looksUp') }, { call: async () => circular });
+        expect(JSON.parse(await (await apps.open(run()))!.call('search', {})).error).toMatch(/cannot be read/);
     });
 });
 
@@ -305,5 +377,129 @@ describe("a person's own App in a goal or briefing (own Apps first)", () => {
     it('leaves out a tool turned off on its own', async () => {
         const { apps } = await ownExa({ setting: 'off' });
         expect(await apps.open(run())).toBeNull();
+    });
+});
+
+describe('a ready-made App’s lookups in a goal or task', () => {
+    it('never show an action that is Off in any of the Brick’s Apps', async () => {
+        const gmail: ToolServerEntry = { ...entry('COMPOSIO_SEARCH_TOOLS'), serverId: 'g1', serverName: 'Gmail', readyMade: true, orbitUrl: 'https://orbit.example' };
+        const calendar: ToolServerEntry = { ...gmail, serverId: 'cal1', serverName: 'Google Calendar' };
+        const off = (serverId: string, slug: string) => ({ serverId, kind: 'appActions', state: 'confirmed', policyRevision: 1, settings: { looksUp: 'rightAway', makesNew: 'rightAway', changesThings: 'asksFirst', deletesOrSends: 'asksFirst' }, tools: new Map([[slug, { name: slug, title: slug, heading: 'deletesOrSends', fingerprint: 'r', suggestedHeading: 'deletesOrSends', confirmed: true, setting: 'off' }]]) });
+        const appPolicy = vi.fn(async (_bot: string, serverId: string) => (serverId === 'g1' ? off('g1', 'GMAIL_DELETE_MESSAGE') : off('cal1', 'GOOGLECALENDAR_DELETE_EVENT')));
+        const { apps } = setUp(
+            { COMPOSIO_SEARCH_TOOLS: RUN('looksUp') },
+            {
+                discover: async () => ({ tools: [tool('COMPOSIO_SEARCH_TOOLS')], servers: new Map([['COMPOSIO_SEARCH_TOOLS', { ...gmail, otherApps: [calendar] }]]) }),
+                gate: { decide: async () => RUN('looksUp'), appPolicy } as never,
+                call: async () => [{ type: 'text', text: '{"results":[{"tool_slug":"GMAIL_DELETE_MESSAGE"},{"tool_slug":"GOOGLECALENDAR_DELETE_EVENT"},{"tool_slug":"GMAIL_FETCH_EMAILS"}]}' }],
+            }
+        );
+        const session = await apps.open(run());
+        const answer = await session!.call('COMPOSIO_SEARCH_TOOLS', {});
+        expect(answer).toContain('GMAIL_FETCH_EMAILS');
+        expect(answer).not.toContain('GMAIL_DELETE_MESSAGE');
+        expect(answer).not.toContain('GOOGLECALENDAR_DELETE_EVENT');
+    });
+});
+
+describe('a ready-made App’s batch of actions in a run', () => {
+    const BATCH = 'COMPOSIO_MULTI_EXECUTE_TOOL';
+    const gmail: ToolServerEntry = { serverId: 'g1', serverUrl: 'https://link.example', authType: 'none', serverName: 'Gmail', readyMade: true, orbitUrl: 'https://orbit.example', fingerprint: 'fp-batch', title: 'Run actions' };
+    const calendar: ToolServerEntry = { ...gmail, serverId: 'cal1', serverName: 'Google Calendar', fingerprint: 'fp-cal' };
+    type Row = [string, ToolHeading, ToolSetting | null];
+    const policyOf = (serverId: string, rows: Row[]): ServerPolicy => ({
+        serverId,
+        kind: 'appActions',
+        state: 'confirmed',
+        policyRevision: 4,
+        settings: { looksUp: 'rightAway', makesNew: 'rightAway', changesThings: 'asksFirst', deletesOrSends: 'asksFirst' },
+        tools: new Map<string, PolicyTool>(rows.map(([name, heading, setting]) => [name, { name, title: name, heading, fingerprint: `row-${name}`, suggestedHeading: heading, confirmed: true, setting }])),
+    });
+    const GMAIL_ROWS: Row[] = [
+        ['GMAIL_FETCH_EMAILS', 'looksUp', null],
+        ['GMAIL_CREATE_EMAIL_DRAFT', 'makesNew', null],
+        ['GMAIL_SEND_EMAIL', 'deletesOrSends', null],
+        ['GMAIL_DELETE_MESSAGE', 'deletesOrSends', 'off'],
+    ];
+    const CALENDAR_ROWS: Row[] = [['GOOGLECALENDAR_FIND_EVENT', 'looksUp', null]];
+    const actions = (...slugs: string[]) => ({ tools: slugs.map((slug) => ({ tool_slug: slug, arguments: JSON.stringify({ id: slug.toLowerCase() }) })), thought: 'x' });
+
+    function withGate(entry: ToolServerEntry) {
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const made = setUp({}, { discover: async () => ({ tools: [tool(BATCH)], servers: new Map([[BATCH, entry]]) }), gate });
+        return made;
+    }
+
+    it('is offered, and a batch of lookups runs once through its App with only the actions as they were read', async () => {
+        const { apps, call, propose } = withGate(gmail);
+        const session = (await apps.open(run()))!;
+        expect(session.definitions.map((definition) => definition.function.name)).toEqual([BATCH]);
+        expect(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS'))).toContain('Found 3 issues');
+        expect(call).toHaveBeenCalledWith('brick-1', expect.objectContaining({ serverId: 'g1' }), BATCH, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { id: 'gmail_fetch_emails' } }], thought: 'x' }, 'sara-uuid', { heading: 'looksUp', callId: expect.any(String) });
+        expect(propose).not.toHaveBeenCalled();
+    });
+
+    it('never sends a batch with an action that is Off, and asks on a card for one that makes, sends or deletes', async () => {
+        const { apps, call, propose } = withGate(gmail);
+        const session = (await apps.open(run()))!;
+        expect(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS', 'GMAIL_DELETE_MESSAGE'))).toContain('off for');
+        expect(call).not.toHaveBeenCalled();
+        await session.call(BATCH, actions('GMAIL_FETCH_EMAILS', 'GMAIL_SEND_EMAIL'));
+        expect(call).not.toHaveBeenCalled();
+        expect(propose).toHaveBeenCalledWith(expect.objectContaining({ toolName: BATCH, entry: expect.objectContaining({ serverId: 'g1' }), decision: expect.objectContaining({ kind: 'ask', heading: 'deletesOrSends' }), task: { itemId: run().itemId } }));
+    });
+
+    it('asks on a card for a batch that makes something new, even when that is set to right away', async () => {
+        const { apps, call, propose } = withGate(gmail);
+        const session = (await apps.open(run()))!;
+        await session.call(BATCH, actions('GMAIL_CREATE_EMAIL_DRAFT'));
+        expect(call).not.toHaveBeenCalled();
+        expect(propose).toHaveBeenCalledWith(expect.objectContaining({ decision: expect.objectContaining({ kind: 'ask', heading: 'makesNew' }) }));
+    });
+
+    it('offers and runs a link tool the Apps share through the first App that lets it be used', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => {
+            const policy = serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS);
+            return serverId === 'g1' ? { ...policy, settings: { ...policy.settings, looksUp: 'off' as const } } : policy;
+        });
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const { apps, call } = setUp({}, { discover: async () => ({ tools: [tool(LOOKUP)], servers: new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }]]) }), gate });
+        const session = (await apps.open(run()))!;
+        expect(session.definitions.map((definition) => definition.function.name)).toEqual([LOOKUP]);
+        await session.call(LOOKUP, { queries: ['events'] });
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
+    });
+
+    it('does not offer or run a link tool the Apps share when every one of them has it Off', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => {
+            const policy = serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS);
+            return { ...policy, settings: { ...policy.settings, looksUp: 'off' as const } };
+        });
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const entries = new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }]]);
+        const { apps, call } = setUp({}, { discover: async () => ({ tools: [tool(LOOKUP)], servers: entries }), gate });
+        expect(await apps.open(run())).toBeNull();
+        // Turned off while a run was going: the step is refused, and nothing is sent
+        const allowed = setUp({}, { discover: async () => ({ tools: [tool(LOOKUP)], servers: entries }), gate: new ToolGate({ read: async (_bot: string, serverId: string) => policyOf(serverId, GMAIL_ROWS) } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false }) });
+        const session = (await allowed.apps.open(run()))!;
+        (allowed.apps as unknown as { deps: TaskAppsDeps }).deps.gate = gate;
+        expect(await session.call(LOOKUP, { queries: ['events'] })).toContain('turned off');
+        expect(allowed.call).not.toHaveBeenCalled();
+        expect(call).not.toHaveBeenCalled();
+    });
+
+    it('sends a batch through the App its actions belong to, and refuses one that mixes Apps or names none clearly', async () => {
+        const { apps, call } = withGate({ ...gmail, otherApps: [calendar] });
+        const session = (await apps.open(run()))!;
+        await session.call(BATCH, actions('GOOGLECALENDAR_FIND_EVENT'));
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
+        expect(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_FIND_EVENT'))).toContain('in a step of its own');
+        expect(await session.call(BATCH, actions('SLACK_SEND_MESSAGE'))).toContain("isn't clear which of your Apps");
+        expect(call).toHaveBeenCalledTimes(1);
     });
 });

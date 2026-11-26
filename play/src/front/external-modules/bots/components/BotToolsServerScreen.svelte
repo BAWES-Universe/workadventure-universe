@@ -121,7 +121,9 @@
     function whereLine(tool: ServerTool): string {
         const heading = headingOf(tool);
         if (!heading || !data) return text.notSorted();
-        return text.searchWhere({ heading: headingTitle(heading), choice: choiceLabel(data.settings[heading]) });
+        // An App action's own choice wins over its heading's, as on its own controls
+        const choice = (app ? tool.setting : undefined) ?? data.settings[heading];
+        return text.searchWhere({ heading: headingTitle(heading), choice: choiceLabel(choice) });
     }
 </script>
 

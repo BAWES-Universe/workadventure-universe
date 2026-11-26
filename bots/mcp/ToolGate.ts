@@ -101,6 +101,18 @@ const nameOf = (call: GateCall) => call.toolTitle || call.toolName;
 
 const refusal = (why: GateRefusal, line: string): GateDecision => ({ kind: 'refuse', why, line });
 
+/**
+ * Whether a call on the App link's connections tool would replace the account link the App already works with (reinitiate_all), or
+ * whose inputs can't be read to tell. Only offered (no inputs yet) or a plain check is not.
+ */
+function replacesConnection(call: GateCall): boolean {
+    if (call.toolName.trim().toUpperCase() !== 'COMPOSIO_MANAGE_CONNECTIONS' || call.args === undefined) return false;
+    if (typeof call.args !== 'object' || call.args === null || Array.isArray(call.args)) return true;
+    const reinitiate = (call.args as Record<string, unknown>).reinitiate_all;
+    if (typeof reinitiate === 'string') return !['', 'false', '0', 'no'].includes(reinitiate.trim().toLowerCase());
+    return !!reinitiate;
+}
+
 export class ToolGate {
     private readonly managers = new Map<string, { can: boolean; at: number }>();
     private readonly askingManagers = new Map<string, Promise<boolean>>();
@@ -207,6 +219,11 @@ export class ToolGate {
             if (policy.settings[linkHeading] === 'off') return refusal('off', `${nameOf(call)} is turned off for this bot.`);
             const refused = await this.missingPermission(call, linkHeading);
             if (refused) return refused;
+            // Reconnecting an App that already works replaces its working link: that is a change like any other, and asks first when
+            // Changes things does. A plain check of the connection runs as it is
+            if (replacesConnection(call) && policy.settings.changesThings === 'asksFirst') {
+                return { kind: 'ask', heading: 'changesThings', notReviewed: false, policyRevision: policy.policyRevision, fingerprint: call.fingerprint ?? '' };
+            }
             return { kind: 'run', heading: linkHeading, policyRevision: policy.policyRevision, ...(call.fingerprint ? { fingerprint: call.fingerprint } : {}) };
         }
         if (isBatchTool(call.toolName)) {
@@ -220,9 +237,9 @@ export class ToolGate {
             const refused = judged.find((part) => part.decision.kind === 'refuse');
             if (refused) return refused.decision;
             const heading = strictestOf(judged.map((part) => part.heading));
+            // A card shows every action of the call, so it is under the strictest heading of them all
             if (judged.some((part) => part.decision.kind === 'ask')) {
-                const asking = strictestOf(judged.filter((part) => part.decision.kind === 'ask').map((part) => part.heading));
-                return { kind: 'ask', heading: asking, notReviewed: false, policyRevision: policy.policyRevision, fingerprint: call.fingerprint ?? '' };
+                return { kind: 'ask', heading, notReviewed: false, policyRevision: policy.policyRevision, fingerprint: call.fingerprint ?? '' };
             }
             return { kind: 'run', heading, policyRevision: policy.policyRevision, ...(call.fingerprint ? { fingerprint: call.fingerprint } : {}) };
         }

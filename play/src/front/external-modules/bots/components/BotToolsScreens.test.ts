@@ -704,6 +704,18 @@ describe("the bot page's Tools screens (game #1655)", () => {
             expect(sends).toContain("+1 more");
         });
 
+        it("says an action's own choice in search results, not its heading's", async () => {
+            await mountApp();
+            const search = byTestId("bot-tools-search") as HTMLInputElement;
+            search.value = "delete";
+            search.dispatchEvent(new Event("input"));
+            await settle();
+            const results = target.querySelector(".ts-found")?.textContent ?? "";
+            expect(results).toContain("Delete for good");
+            expect(results).not.toContain("Asks first");
+            expect(results).toContain("Off");
+        });
+
         it("shows a bot's own server as before when it is not an App's actions", async () => {
             mocks.getMcpServerTools.mockResolvedValue(answer());
             await mountApp();

@@ -5,6 +5,7 @@
     import { navChat } from "../Stores/ChatStore";
     import LL from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
+    import { unopenedBrickCountOf } from "../Bricks/BrickChat";
     import { chatCarriesItsCloseStore } from "../ChatSidebarWidthStore";
     import { selectedRoomStore } from "../Stores/SelectRoomStore";
     import { INITIAL_SIDEBAR_WIDTH } from "../../Stores/ChatStore";
@@ -45,8 +46,11 @@
         false
     );
 
+    // A Brick the person never opened counts as one unread message, the same count the Brick's row and the chat button carry
+    const unopenedBricks = unopenedBrickCountOf(chat);
+
     $: isInSpecificDiscussion = $selectedRoomStore !== undefined;
-    $: hasUnreadChats = $savedUnread || $proximityUnread;
+    $: hasUnreadChats = $savedUnread || $proximityUnread || $unopenedBricks > 0;
     $: activeTab = $navChat.key === "users" ? "people" : $navChat.key === "chat" ? "chats" : undefined;
 
     // The tabs are as tall as the action bar's buttons beside them. The bar sizes itself on the width left next

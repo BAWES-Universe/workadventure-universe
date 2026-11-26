@@ -9,11 +9,14 @@ import {
     brickPageBot,
     brickPictureUrl,
     openBrickChatWith,
+    ownBrickInChat,
     parseBrickCard,
     parseBrickCards,
     parseDirectChatAnswer,
     readBrickIdeas,
     searchesForBots,
+    unopenedBrickIds,
+    type BrickCard,
     type MakeItMemory,
     type OpenBrickChatSteps,
 } from "../Brick";
@@ -330,5 +333,100 @@ describe("a Brick on its page (#1996)", () => {
             chatInstructions: "",
         });
         expect(brickPageBot(null, brickCard).name).toBe("Brick");
+    });
+});
+
+describe("the Bricks the person never opened", () => {
+    const OTHER = "1c8d2e3f-2222-4333-8444-a55566667777";
+    const OTHER_CHAT = `@bot_${OTHER}:chat.test`;
+    const bricks = new Map<string, BrickCard>([
+        [BRICK_CHAT, { ...card(), id: BRICK } as BrickCard],
+        [OTHER_CHAT, { ...card(), id: OTHER, name: "Recipe Brick", isDefault: false } as BrickCard],
+    ]);
+    const none = new Set<string>();
+    const facts = (over: Partial<Parameters<typeof unopenedBrickIds>[0]> = {}) => ({
+        bricks,
+        partners: new Set<string>(),
+        online: true,
+        opening: none,
+        openedHere: none,
+        ...over,
+    });
+
+    it("counts a Brick whose chat the account never made, as one", () => {
+        expect([...unopenedBrickIds(facts())].sort()).toEqual([BRICK, OTHER].sort());
+        expect(unopenedBrickIds(facts({ bricks: new Map([[BRICK_CHAT, bricks.get(BRICK_CHAT)!]]) }))).toEqual(
+            new Set([BRICK])
+        );
+    });
+
+    it("does not count one opened on another device: the chat server's list of direct chats names it", () => {
+        expect(unopenedBrickIds(facts({ partners: new Set([BRICK_CHAT]) }))).toEqual(new Set([OTHER]));
+        expect(unopenedBrickIds(facts({ partners: new Set([BRICK_CHAT, OTHER_CHAT]) })).size).toBe(0);
+    });
+
+    it("never counts a Brick again after Clear chat or leaving: the list keeps the person, whatever rooms are left", () => {
+        // After Clear chat the device holds no room with the Brick at all; the account's list still names it
+        expect(unopenedBrickIds(facts({ partners: new Set([BRICK_CHAT]) })).has(BRICK)).toBe(false);
+    });
+
+    it("does not count a Brick whose chat is opening right now (a Brick just made with New Brick included)", () => {
+        expect(unopenedBrickIds(facts({ opening: new Set([OTHER]) }))).toEqual(new Set([BRICK]));
+        expect(unopenedBrickIds(facts({ openedHere: new Set([BRICK, OTHER]) })).size).toBe(0);
+    });
+
+    it("counts nothing before the chats are online, before the account's list is read, or before the Bricks are listed", () => {
+        expect(unopenedBrickIds(facts({ online: false })).size).toBe(0);
+        expect(unopenedBrickIds(facts({ partners: undefined })).size).toBe(0);
+        expect(unopenedBrickIds(facts({ bricks: undefined })).size).toBe(0);
+        expect(unopenedBrickIds(facts({ bricks: new Map() })).size).toBe(0);
+    });
+});
+
+describe("the Brick a chat is with", () => {
+    const OTHER_BRICK = "1c8d2e3f-2222-4333-8444-a55566667777";
+    const mine = new Map<string, BrickCard>([
+        [BRICK_CHAT, { ...card(), id: BRICK } as BrickCard],
+        [`@bot_${OTHER_BRICK}:chat.test`, { ...card(), id: OTHER_BRICK, name: "Recipe Brick" } as BrickCard],
+    ]);
+
+    it("is the one of the person's Bricks that is the chat's other member", () => {
+        expect(ownBrickInChat([ME, BRICK_CHAT], ME, mine)?.id).toBe(BRICK);
+        expect(ownBrickInChat([BRICK_CHAT, ME], ME, mine)?.id).toBe(BRICK);
+        // The Brick that has not joined yet is still the other member
+        expect(ownBrickInChat([ME, `@bot_${OTHER_BRICK}:chat.test`], ME, mine)?.name).toBe("Recipe Brick");
+    });
+
+    it("is none for a chat with a person, with someone else's Brick, or with more than two", () => {
+        expect(ownBrickInChat([ME, "@sara:chat.test"], ME, mine)).toBeUndefined();
+        expect(ownBrickInChat([ME, "@bot_9f9f9f9f-0000-4000-8000-000000000000:chat.test"], ME, mine)).toBeUndefined();
+        expect(ownBrickInChat([ME, BRICK_CHAT, "@sara:chat.test"], ME, mine)).toBeUndefined();
+        expect(ownBrickInChat([ME], ME, mine)).toBeUndefined();
+        expect(ownBrickInChat([], ME, mine)).toBeUndefined();
+    });
+});
+
+describe("the chat screen that opens before the chat exists", () => {
+    it("opens at once when this device has no chat with the Brick, before the bot server is asked", async () => {
+        const { steps } = device();
+        const order: string[] = [];
+        const showPending = vi.fn(() => {
+            order.push("screen");
+        });
+        steps.ask.mockImplementation(() => {
+            order.push("ask");
+            return Promise.resolve({ create: true, botChatId: BRICK_CHAT });
+        });
+        await openBrickChatWith(BRICK, { ...steps, showPending });
+        expect(order).toEqual(["screen", "ask"]);
+        expect(showPending).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not open when this device already has the chat: it is shown as before", async () => {
+        const { steps, chats } = device();
+        chats.add(BRICK_CHAT);
+        const showPending = vi.fn();
+        await openBrickChatWith(BRICK, { ...steps, showPending });
+        expect(showPending).not.toHaveBeenCalled();
     });
 });

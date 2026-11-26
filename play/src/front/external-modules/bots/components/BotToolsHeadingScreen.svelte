@@ -44,7 +44,8 @@
     $: whenLine = app
         ? words.whenDoes({ brick: botName, count: tools.length })
         : text.whenUses({ bot: botName, count: tools.length });
-    $: effectOf = (setting: Setting) => (app ? words.effects[setting]() : text.effects[setting]());
+    $: chosen = data && heading !== "unsorted" ? data.settings[heading] : undefined;
+    $: effectLine = chosen ? (app ? words.effects[chosen]() : text.effects[chosen]()) : "";
 
     // Fresh when the page opens: another person may have moved or confirmed a tool since the server's page loaded
     let loadedFor: string | undefined;
@@ -81,12 +82,16 @@
         if (saving) return;
         saving = tool.id;
         problem = null;
+        // One choice saves at a time: the row it was for is cleared when it ends
+        const done = () => {
+            saving = null;
+        };
         try {
             await chooseToolSetting(bot.id, serverId, tool.id, value);
         } catch (error) {
             problem = error instanceof Error && error.message ? error.message : text.saveFailed();
         } finally {
-            saving = null;
+            done();
         }
     }
 
@@ -137,7 +142,7 @@
             }))}
             onPick={choose}
         />
-        <span class="th-effect">{effectOf(data.settings[heading])}</span>
+        <span class="th-effect">{effectLine}</span>
     {/if}
     <div class="th-count">
         <b>{app ? words.count({ count: tools.length }) : text.count({ count: tools.length })}</b>

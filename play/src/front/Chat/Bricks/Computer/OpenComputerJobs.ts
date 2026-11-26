@@ -28,7 +28,9 @@ export function askToEnd(
     }
     return endAtOnce(brick, what)
         .then((ended) => {
-            if (ended) onEnded?.();
+            // It began while the tap was on its way: nothing was cancelled, and the question is asked as for any job that has run
+            if (ended === "started") openModal(ComputerJobsSheet, { brick, start: { face: "ask", what }, onEnded });
+            else if (ended) onEnded?.();
         })
         .catch((error) => console.error(error));
 }

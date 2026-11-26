@@ -139,6 +139,9 @@
     const steps = message.steps ?? readable(undefined);
     $: isSteps = $steps !== undefined && replyDepth === 0 && !isQuotedMessage;
 
+    // A message still on its way to the chat server (words written while a Brick's chat was being made): faded until it is there
+    const sending = message.sending ?? readable(false);
+
     const actions = availableActions(message);
     $: actionable =
         !plain &&
@@ -266,6 +269,8 @@
         <div
             bind:this={bubbleRef}
             class:lifted={menuOpen}
+            class:sending={$sending}
+            aria-busy={$sending}
             class:steps-line={isSteps}
             class="message rounded-md
                     {$isDeleted && !isMyMessage && !messageFromSystem && replyDepth === 0 ? 'bg-white/10' : ''}
@@ -469,6 +474,11 @@
         background: rgb(255 255 255 / 0.14);
         color: #fff;
         pointer-events: none;
+    }
+
+    /* Not at the chat server yet: faded until it is, then as every message. */
+    .message.sending {
+        opacity: 0.55;
     }
 
     .message.lifted {

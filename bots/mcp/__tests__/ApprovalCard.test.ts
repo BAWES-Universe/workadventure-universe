@@ -329,6 +329,23 @@ describe('card words for a batch call', () => {
     const labels = { tool_slug: 'GMAIL_LIST_LABELS', arguments: {} };
     const extra = { thought: 'Look at the inbox', current_step: 'FETCHING_EMAILS', session_id: 'abc', sync_response_to_workbench: false };
 
+    it('reads the inputs of a tool that a tool server sent as JSON text, and never shows unreadable ones as "nothing to fill in"', () => {
+        const text = { tool_slug: 'GMAIL_FETCH_EMAILS', arguments: JSON.stringify({ query: 'is:unread', max_results: 5 }) };
+        const words = cardWords('COMPOSIO_MULTI_EXECUTE_TOOL', undefined, { tools: [text] }, undefined, 'Gmail');
+        expect(words.title).toBe('Fetch emails');
+        expect(words.lines).toEqual([
+            { label: 'Query', text: 'is:unread' },
+            { label: 'Max results', text: '5' },
+        ]);
+        // Text that is not JSON, or JSON that is not an object: the call is shown as the plain tool call it is
+        for (const unreadable of ['not json', '[1,2]', 7]) {
+            const plain = cardWords('COMPOSIO_MULTI_EXECUTE_TOOL', 'Multi Execute', { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: unreadable }] }, undefined, 'Gmail');
+            expect(plain.title).toBe('Multi Execute');
+        }
+        // No inputs at all is simply none
+        expect(cardWords('COMPOSIO_MULTI_EXECUTE_TOOL', undefined, { tools: [{ tool_slug: 'GMAIL_LIST_LABELS' }] }, undefined, 'Gmail').lines).toEqual([]);
+    });
+
     it('counts the hidden details once for one action with many inputs and extras of its own', () => {
         const inputs = Object.fromEntries(Array.from({ length: 22 }, (_, n) => [`field_${String.fromCharCode(97 + n)}`, `v${n}`]));
         const many = { tool_slug: 'GMAIL_SEND_EMAIL', arguments: inputs };

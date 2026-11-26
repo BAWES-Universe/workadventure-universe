@@ -300,6 +300,26 @@ describe("a ready-made App's actions on a Brick (Ask, Do, Ignore)", () => {
         expect(await gate.decide(appCall({ toolName: 'COMPOSIO_MANAGE_CONNECTIONS' }))).toMatchObject({ kind: 'refuse', why: 'no_permission' });
     });
 
+    it('asks first before reconnecting an App that already works, as Changes things says, and runs a plain connection check', async () => {
+        const manage = (args?: unknown) => appCall({ toolName: 'COMPOSIO_MANAGE_CONNECTIONS', fingerprint: 'fp-connect', ...(args !== undefined ? { args } : {}) });
+        const { gate } = gateFor(gmail());
+        expect(await gate.decide(manage({ toolkits: ['gmail'], reinitiate_all: true }))).toMatchObject({ kind: 'ask', heading: 'changesThings', notReviewed: false, fingerprint: 'fp-connect' });
+        expect(await gate.decide(manage({ toolkits: ['gmail'], reinitiate_all: 'true' }))).toMatchObject({ kind: 'ask', heading: 'changesThings' });
+        // Inputs it can't read can't show it is only a check
+        expect(await gate.decide(manage('reinitiate everything'))).toMatchObject({ kind: 'ask', heading: 'changesThings' });
+        expect(await gate.decide(manage({ toolkits: ['gmail'] }))).toMatchObject({ kind: 'run', heading: 'changesThings' });
+        expect(await gate.decide(manage({ toolkits: ['gmail'], reinitiate_all: false }))).toMatchObject({ kind: 'run' });
+        expect(await gate.decide(manage({ toolkits: ['gmail'], reinitiate_all: 'false' }))).toMatchObject({ kind: 'run' });
+        expect(await gate.decide(manage())).toMatchObject({ kind: 'run' });
+        const rightAway = gateFor(gmail([], { ...APP_SETTINGS, changesThings: 'rightAway' }));
+        expect(await rightAway.gate.decide(manage({ reinitiate_all: true }))).toMatchObject({ kind: 'run', heading: 'changesThings' });
+        const off = gateFor(gmail([], { ...APP_SETTINGS, changesThings: 'off' }));
+        expect(await off.gate.decide(manage({ reinitiate_all: true }))).toMatchObject({ kind: 'refuse', why: 'off' });
+        const { gate: noRight, check } = gateFor(gmail());
+        check.mockResolvedValue({ allowed: false, kind: 'refused', code: 'not_allowed', line: "You can't change things here." });
+        expect(await noRight.decide(manage({ reinitiate_all: true }))).toMatchObject({ kind: 'refuse', why: 'no_permission' });
+    });
+
     it('judges any other tool of the provider on the link as an unknown action: its name, else Deletes or sends out', async () => {
         const { gate } = gateFor(gmail());
         expect(await gate.decide(appCall({ toolName: 'COMPOSIO_REMOTE_WORKBENCH' }))).toMatchObject({ kind: 'ask', heading: 'deletesOrSends' });

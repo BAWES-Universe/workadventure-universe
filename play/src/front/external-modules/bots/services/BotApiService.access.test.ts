@@ -323,6 +323,7 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         ["giving a Brick a home", (api) => api.placeBrickHome("b1", "/@/team/universe/room", {})],
         ["reading where a Brick lives", (api) => api.getBrickHome("b1")],
         ["taking a Brick out of its room", (api) => api.takeBrickOut("b1")],
+        ["choosing an App action's own setting", (api) => api.setMcpToolSetting("b1", "s1", "a1", "off")],
     ];
 
     it.each(brickWrites)("fails %s in time when Orbit never answers", async (_name, call) => {
@@ -567,6 +568,24 @@ describe("the calls on one computer job (computers plan, piece 7)", () => {
             ([, init]) => (init?.headers as Record<string, string> | undefined)?.["X-Computer-Command"]
         );
         expect(ids).toEqual(["cmd-00000001", "cmd-00000002", "cmd-00000003", "cmd-00000004", undefined, undefined]);
+    });
+
+    it("sends expected in the body of a Cancel that goes without a question, and in no other call", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(() => Promise.resolve(json({ ok: false, reason: "started" })));
+        const api = service();
+        expect(await api.brickComputerJobAction("b1", "j1", "cancel", { expected: "not_started" })).toEqual({
+            ok: false,
+            reason: "started",
+        });
+        await api.brickComputerJobAction("b1", "j1", "cancel");
+        await api.brickComputerJobAction("b1", "j1", "pause", { expected: "not_started" });
+        expect(fetchMock.mock.calls.map(([, init]) => init?.body ?? null)).toEqual([
+            JSON.stringify({ expected: "not_started" }),
+            null,
+            null,
+        ]);
     });
 
     it("sends the SAME id again when a renewed sign-in resends the request, so the control is done once", async () => {

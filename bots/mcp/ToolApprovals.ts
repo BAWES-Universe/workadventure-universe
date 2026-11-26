@@ -243,7 +243,8 @@ export class ToolApprovals {
     /** A call the gate says needs an OK: a remembered approval that covers it, or a card. Never throws. */
     async propose(input: ProposeInput): Promise<Proposed> {
         // The same call asked for twice at the same moment (a model repeating itself in one round) is one question
-        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly, input.batch ?? null, input.task?.itemId ?? null]);
+        // The App's grant is part of it: two Apps (or two grants) with the same action and inputs are two questions
+        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.entry.serverId, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly, input.batch ?? null, input.task?.itemId ?? null]);
         const running = this.proposing.get(key);
         if (running) return running;
         const run = this.proposeNow(input).finally(() => {
@@ -297,7 +298,7 @@ export class ToolApprovals {
         try {
             // The same call asked for again while its card still waits (a turn asked again, or the model repeating itself)
             // is that card: no second card, so one tap can never run it twice
-            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision, base.conversationKey)) {
+            if (this.findWaiting(botId, roomId, person.uuid, entry.serverId, toolName, args, decision, base.conversationKey)) {
                 return { kind: 'waiting', result: task ? ALREADY_ASKED_TASK_RESULT : nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
             }
             // Making more than the limit is asked every time: nothing allowed before covers it. A goal's step asks every time too.
@@ -459,6 +460,7 @@ export class ToolApprovals {
         botId: string,
         roomId: string,
         requesterKey: string,
+        serverId: string,
         toolName: string,
         args: Record<string, unknown>,
         decision: Extract<GateDecision, { kind: 'ask' }>,
@@ -470,6 +472,8 @@ export class ToolApprovals {
             if (!card.waiting || card.closing || card.botId !== botId || card.roomId !== roomId || card.person.uuid !== requesterKey) continue;
             // The same chat room holds the chat's cards and each goal's own: only the same conversation's card is the same card
             if (action.conversationKey !== conversationKey) continue;
+            // Another App's (or grant's) card is not this one, even for the same action
+            if (action.connectionRef && action.connectionRef !== serverId) continue;
             if (action.toolName !== toolName || action.toolFingerprint !== decision.fingerprint || action.heading !== decision.heading || card.facts.notReviewed !== decision.notReviewed) continue;
             if (!(Date.parse(action.reviewExpiresAt) > this.now())) continue;
             if (JSON.stringify(action.arguments) === wanted) return card;

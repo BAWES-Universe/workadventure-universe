@@ -104,6 +104,23 @@ export function offLine(titles: readonly string[], brick: string, app: string): 
     return `${listed} ${titles.length <= 1 ? 'is' : 'are'} off for ${brick} in ${app}.`;
 }
 
+/** The line for an action no App of the Brick's says is its own, when it has several: it is never guessed. */
+export const whichAppLine = (title: string) => `${title} wasn't done: it isn't clear which of your Apps it belongs to. Ask for it again, naming the App.`;
+
+/**
+ * Which of a Brick's Apps under one tool name an action belongs to: the one whose action list has it, else the one its name names.
+ * 'unclear' when several could own it, 'none' when no App lists it or is named by it. `policies` are the Apps' own, in the same order.
+ */
+export function ownerOfAction(slug: string, apps: readonly ToolServerEntry[], policies: readonly (ServerPolicy | null)[]): ToolServerEntry | 'unclear' | 'none' {
+    const key = slugKey(slug);
+    const listed = apps.filter((_, at) => [...(policies[at]?.tools.values() ?? [])].some((tool) => slugKey(tool.name) === key));
+    if (listed.length === 1) return listed[0];
+    if (listed.length > 1) return 'unclear';
+    const named = apps.filter((app) => !!app.serverName && actionName(slug, app.serverName) !== actionName(slug));
+    if (named.length === 1) return named[0];
+    return named.length > 1 ? 'unclear' : 'none';
+}
+
 /** One action of a batch as the model asked for it: where it was in the list, and the entry exactly as it was written. */
 export interface BatchPart extends BatchCall {
     index: number;
@@ -115,8 +132,8 @@ export function batchParts(args: unknown): BatchPart[] | null {
     const calls = batchCalls(args);
     if (!calls) return null;
     const list = (args as { tools: Record<string, unknown>[] }).tools;
-    // Inputs the card could not show are never sent: an action's `arguments` are an object or nothing
-    if (list.some((item) => item.arguments !== undefined && item.arguments !== null && (typeof item.arguments !== 'object' || Array.isArray(item.arguments)))) return null;
+    // Inputs written as JSON text are read as the object they hold: that object is what a card shows and what is sent (batchOf).
+    // Inputs that can't be read as one make it no batch call at all (batchCalls)
     return calls.map((call, index) => ({ ...call, index, raw: list[index] }));
 }
 
@@ -149,10 +166,8 @@ const HEADING_WORDS: Record<ToolHeading, string> = {
  */
 export function offNote(policy: Pick<ServerPolicy, 'tools' | 'settings'>, app: string): string {
     const off: string[] = [];
-    for (const tool of policy.tools.values()) {
-        if (!tool.heading) continue;
-        if ((tool.setting ?? policy.settings[tool.heading]) === 'off') off.push(tool.title || actionName(tool.name, app));
-    }
+    // The same verdict the gate gives: a row's own choice, else its heading's (an unsorted row's by its name)
+    for (const tool of policy.tools.values()) if (judgeAction(policy, tool.name, app).setting === 'off') off.push(tool.title || actionName(tool.name, app));
     const wholeHeadings = (Object.keys(HEADING_WORDS) as ToolHeading[]).filter((heading) => policy.settings[heading] === 'off');
     if (off.length === 0 && wholeHeadings.length === 0) return '';
     const names = off.slice(0, OFF_NAMES_MAX);
@@ -170,10 +185,8 @@ export const SCRUBBED_LOOKUPS: ReadonlySet<string> = new Set(['COMPOSIO_SEARCH_T
 /** Whether a slug is one of the grant's own actions and is Off for it (only a known action is ever taken out of an answer). */
 export function isOffRow(policy: Pick<ServerPolicy, 'tools' | 'settings'>, slug: string): boolean {
     const key = slugKey(slug);
-    for (const tool of policy.tools.values()) {
-        if (slugKey(tool.name) !== key || !tool.heading) continue;
-        return (tool.setting ?? policy.settings[tool.heading]) === 'off';
-    }
+    // Judged as the gate judges it, so what is refused at the call is never offered in a lookup either
+    for (const tool of policy.tools.values()) if (slugKey(tool.name) === key) return judgeAction(policy, tool.name).setting === 'off';
     return false;
 }
 
@@ -259,4 +272,68 @@ export function withoutOff(result: unknown, isOff: (slug: string) => boolean): u
         return cleaned.changed ? cleaned.value : result;
     }
     return result;
+}
+
+/** What happened to one action of a batch call, in the words of `outcomeOf`. */
+export type PartOutcome = 'succeeded' | 'failed' | 'notSent' | 'uncertain';
+
+/** The batch answer as data: an object, the JSON text of one, or the MCP text parts that carry it. */
+function answerData(answer: unknown): Record<string, unknown> | undefined {
+    if (isObject(answer)) {
+        if (Array.isArray(answer.content)) return answerData(answer.content);
+        return answer;
+    }
+    if (typeof answer === 'string') {
+        const text = answer.trim();
+        if (!text.startsWith('{')) return undefined;
+        try {
+            const value: unknown = JSON.parse(text);
+            return isObject(value) ? value : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+    if (Array.isArray(answer)) {
+        for (const part of answer) {
+            const found = isObject(part) && part.type === 'text' ? answerData(part.text) : undefined;
+            if (found) return found;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Each action's own outcome in a batch call that answered (the provider's documented shape: `{ successful, error?, data: {
+ * results: [{ index, tool_slug, response?, error? }] } }`, results in the order they were sent). An action whose result carries an
+ * error, or that has no result in a list that has some, is not known to be done. An answer whose shape can't be read keeps the
+ * call's own outcome for every action, as before. `slugs` are the actions as sent, in order.
+ */
+export function batchOutcomes(answer: unknown, slugs: readonly string[], whole: PartOutcome): PartOutcome[] {
+    if (whole !== 'succeeded') return slugs.map(() => whole);
+    const data = answerData(answer);
+    const inner = data && isObject(data.data) ? data.data : data;
+    const results = inner?.results;
+    if (!Array.isArray(results)) {
+        // No list to read: an answer that says it was not successful is not known to be done
+        return slugs.map(() => (data?.successful === false ? 'uncertain' : 'succeeded'));
+    }
+    const outcomes: PartOutcome[] = slugs.map(() => 'uncertain');
+    const taken = new Set<number>();
+    results.forEach((item, position) => {
+        if (!isObject(item)) return;
+        const slug = typeof item.tool_slug === 'string' ? slugKey(item.tool_slug) : undefined;
+        const at =
+            typeof item.index === 'number' && Number.isInteger(item.index) && item.index >= 0 && item.index < slugs.length && (!slug || slugKey(slugs[item.index]) === slug)
+                ? item.index
+                : slug
+                ? slugs.findIndex((one, i) => !taken.has(i) && slugKey(one) === slug)
+                : position < slugs.length && !taken.has(position)
+                ? position
+                : -1;
+        if (at < 0 || taken.has(at)) return;
+        taken.add(at);
+        const failed = (typeof item.error === 'string' && item.error.trim() !== '') || item.successful === false;
+        outcomes[at] = failed ? 'uncertain' : 'succeeded';
+    });
+    return outcomes;
 }

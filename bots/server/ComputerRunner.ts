@@ -91,6 +91,9 @@ export interface RunnerJobState {
     resumed?: boolean;
     /** The pause that resumed took the screen back from the person (they held it when the month or a limit was reached): the agent asks them for their step again before touching the page. */
     askAgain?: boolean;
+    /** How many times the person had this job's computer restarted (after the check before a take over found a program still running), and the ask that was open then (until they have had the screen and handed back). */
+    restarts?: number;
+    restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer' | 'person'; what: string | null; where: string | null };
     /** What the person told the job that the agent has not been given yet, in order. */
     notes?: JobNote[];
 }
@@ -256,6 +259,27 @@ export const ASK_AGAIN_HEAD =
 
 /** A resumed job's first turn: told it was paused (and, when the pause took the screen from the person, to ask them first), then the job as at its start. */
 export const resumedPrompt = (job: { jobId: string; title: string; brief: string | null; writes: boolean }, askAgain = false): string => `${askAgain ? ASK_AGAIN_HEAD : RESUMED_HEAD}\n\n${jobPrompt(job)}`;
+
+/**
+ * The first words after the person had the computer restarted (a program was still running and they chose "Restart first"): everything on the computer was closed,
+ * the browser and its pages included, while the job and its files are kept. Brick gets its page ready again, then asks the person the SAME thing again.
+ * (The agent's own instructions: never shown to people.)
+ */
+const RESTARTED_FACTS =
+    'The person had this computer restarted before taking over, so everything on it was closed, the browser and every page you had open included. The job is still on and its files are kept.';
+export const RESTARTED_HEAD = `${RESTARTED_FACTS} Sign-ins the browser saved are usually kept too. Open the page you were on again and get it ready for the person as it was. Do nothing else first, and start nothing again besides the browser: the person restarted to close what was running. Then ask them the same thing again, ending your reply with exactly this line:`;
+/** Said after the line for every ask but a sign-in: a restart keeps what the browser saved to disk, not sign-ins that lasted only while it ran. */
+export const RESTARTED_SIGNED_OUT = 'If the site signed you out, ask for the sign-in instead and end with [[handover signin]].';
+/** A restart after a take over in the middle of Brick's work, with no ask open: nothing to ask again, the person wanted the screen. */
+export const RESTARTED_PERSON = `${RESTARTED_FACTS} Open the page you were on again and change nothing. The person wanted to use the computer themselves: say in one short line that it is ready for them, and end your reply with [[handover answer]].`;
+
+/** The handover line to say again, exactly as it was asked before the restart. */
+export const handoverLineOf = (ask: { kind: string; what: string | null; where: string | null }): string =>
+    ask.kind === 'details' && ask.what && ask.where ? `[[handover details | ${ask.what} | ${ask.where}]]` : ask.kind === 'person' ? '[[handover answer]]' : `[[handover ${ask.kind}]]`;
+
+/** The turn after a restart the person asked for: told it was restarted, to get its page ready again, and to ask again with the same line (or, with no ask open, to say it is ready for them). */
+export const restartedPrompt = (ask: { kind: string; what: string | null; where: string | null }): string =>
+    ask.kind === 'person' ? RESTARTED_PERSON : `${RESTARTED_HEAD}\n${handoverLineOf(ask)}${ask.kind === 'signin' ? '' : `\n${RESTARTED_SIGNED_OUT}`}`;
 
 /** The turn after one that was cut short so the person's new words reach the agent at once. */
 export const NOTE_PROMPT =
@@ -492,6 +516,11 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
      * was lost, and a worker after a pause carries on from it (the agent's conversation is the same one). Forgotten when the job is over.
      */
     const notesGiven = new Map<string, number>();
+    /**
+     * The highest restart the person asked for that the agent of each job has been told about (it took the words of the restart turn), whatever worker told it: a worker after a pause
+     * or a replacement does not tell the same restart again, and a restart turn that was refused or cut short before the agent took it is told again. Forgotten when the job is over.
+     */
+    const restartsGiven = new Map<string, number>();
     /**
      * The highest note number the agent of a job has had and Orbit was not told (its answer was lost, or it was never asked): kept with `notesGiven`, by job, so a worker after a pause
      * or a replacement tells Orbit under its own epoch, and never gives the agent the text again. Forgotten when the job is over.
@@ -1336,6 +1365,8 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         const follow = (prompt: string) => pending ?? prompt;
         // Whether this worker has read that the job was paused before (its first words are then the resumed ones), so it is read once
         let resumedRead = false;
+        // The highest restart the person asked for that the agent has been told about (for this job, across workers), so each restart is told once
+        const restartsTold = (): number => restartsGiven.get(job.jobId) ?? 0;
         // The person's notes: the highest number the agent has had (for this job, across workers), and the highest offered in the words of the turn being read
         const given = (): number => notesGiven.get(job.jobId) ?? 0;
         let offered = 0;
@@ -1350,6 +1381,7 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
         };
         const forget = () => {
             notesGiven.delete(job.jobId);
+            restartsGiven.delete(job.jobId);
             notesUntold.delete(job.jobId);
         };
         /** Tells Orbit the agent has had every note up to `through`, as the job's owner. A replaced worker is told so (its run ends); a lost answer is told again later. */
@@ -1495,6 +1527,14 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                 badTurns = [];
             }
             lastGeneration = generation;
+            // The person had the computer restarted (a program was still running before their take over): the agent is told, once for each restart, to get its page ready
+            // again and ask them the same thing again. Only while that ask is open: after the person has had the screen and handed back, Orbit gives no ask
+            // It counts as told only once the agent has taken the words of the turn (see `accepted.onSent` below): a turn that was refused, cut short or only reconnected to tells it again
+            let restartWords: { text: string; through: number } | null = null;
+            if (state.restartAsk && (state.restarts ?? 0) > restartsTold()) {
+                restartWords = { text: restartedPrompt(state.restartAsk), through: state.restarts ?? 0 };
+                input = follow(restartWords.text);
+            }
             // An action refused as stale: the job changed hands or paused meanwhile. It is read again, and this turn's words are not acted on
             const readAgain = async () => {
                 input = follow(RESUME_PROMPT);
@@ -1565,12 +1605,20 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
             const fresh = input === null ? [] : newNotes(state, given());
             offered = Math.max(given(), ...fresh.map((note) => note.seq));
             let telling: Promise<void> | undefined;
+            // The restart is in these words only when they are the restart's own (the job's first words, kept until the agent has taken a turn, come before it and it is told on the next one)
+            const restartTold = restartWords !== null && input === restartWords.text ? restartWords.through : null;
             accepted.onSent =
-                fresh.length > 0
+                fresh.length > 0 || restartTold !== null
                     ? () => {
-                          notesGiven.set(job.jobId, Math.max(given(), offered));
-                          if (notesGiven.size > NOTES_KEPT) notesGiven.delete(notesGiven.keys().next().value as string);
-                          telling = tellNotesSent(offered);
+                          if (restartTold !== null) {
+                              restartsGiven.set(job.jobId, Math.max(restartsTold(), restartTold));
+                              if (restartsGiven.size > NOTES_KEPT) restartsGiven.delete(restartsGiven.keys().next().value as string);
+                          }
+                          if (fresh.length > 0) {
+                              notesGiven.set(job.jobId, Math.max(given(), offered));
+                              if (notesGiven.size > NOTES_KEPT) notesGiven.delete(notesGiven.keys().next().value as string);
+                              telling = tellNotesSent(offered);
+                          }
                       }
                     : undefined;
             const words = input !== null && fresh.length > 0 ? `${input}\n\n${notesBlock(fresh)}` : input;
@@ -1908,6 +1956,8 @@ export function runnerOrbitFor(admin: Pick<AdminApiService, 'computerRunningJobs
                       ...(job.finishPending ? { finishPending: job.finishPending } : {}),
                       ...(job.resumed ? { resumed: true } : {}),
                       ...(job.askAgain ? { askAgain: true } : {}),
+                      ...(job.restarts ? { restarts: job.restarts } : {}),
+                      ...(job.restartAsk ? { restartAsk: job.restartAsk } : {}),
                       ...(job.notes && job.notes.length > 0 ? { notes: job.notes } : {}),
                   }
                 : null;

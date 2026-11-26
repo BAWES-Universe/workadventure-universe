@@ -183,6 +183,14 @@
                         ></span
                     >
                 </div>
+                <div class="vg-tap" data-testid="brickComputerTrust">
+                    <span class="vg-ico"><IconDeviceDesktop font-size="20" /></span>
+                    <span class="bp-mtx"
+                        ><span class="vg-t">{$LL.chat.brick.computer.trustTitle({ name })}</span><span class="bp-cn"
+                            >{$LL.chat.brick.computer.trustLine({ name })}</span
+                        ></span
+                    >
+                </div>
                 <button
                     type="button"
                     class="vg-go"
@@ -295,6 +303,14 @@
                     >
                 </div>
 
+                <div class="vg-tap" data-testid="brickComputerTrust">
+                    <span class="vg-ico"><IconDeviceDesktop font-size="20" /></span>
+                    <span class="bp-mtx"
+                        ><span class="vg-t">{$LL.chat.brick.computer.trustTitle({ name })}</span><span class="bp-cn"
+                            >{$LL.chat.brick.computer.trustLine({ name })}</span
+                        ></span
+                    >
+                </div>
                 <div class="off">
                     <PageButton tall disabled={busy} testId="brickComputerOff" on:click={() => act("turn-off")}
                         >{$LL.chat.brick.computer.turnOff()}</PageButton

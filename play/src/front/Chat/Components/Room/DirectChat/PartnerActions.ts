@@ -39,8 +39,11 @@ export function locatePartner(partner: DirectPartner, name: string): void {
     locatePerson(personOf(partner), name);
 }
 
-/** A bot's chat account is @bot_<id>:<domain>, so a bot is known even when it isn't on the map right now. */
-function isBotPartner(partner: DirectPartner): boolean {
+/**
+ * A bot's chat account is @bot_<id>:<domain>, so a bot (a Brick, the person's own or someone else's) is known even when
+ * it isn't standing on the map right now: `isBot` alone is only set while it does.
+ */
+export function isBotPartner(partner: DirectPartner): boolean {
     return partner.isBot || partner.chatId?.startsWith("@bot_") === true;
 }
 
@@ -63,7 +66,7 @@ export function openPartnerProfile(partner: DirectPartner): void {
 
 /** Reporting goes through the game's report screen, which needs their account id (known even when they're away). */
 export function canReportPartner(partner: DirectPartner): boolean {
-    return !partner.isBot && partner.uuid !== undefined;
+    return !isBotPartner(partner) && partner.uuid !== undefined;
 }
 
 export function reportPartner(partner: DirectPartner, name: string): void {
@@ -102,6 +105,15 @@ export function partnerFriendAction(
 ): FriendMenuAction | undefined {
     if (!friendsEnabled || isBotPartner(partner) || !partner.uuid || !partner.chatId) return undefined;
     return friendMenuAction(relationships.get(partner.uuid) ?? "none", partner.uuid, name, ll);
+}
+
+/**
+ * Block hides a person's messages, voice and video without telling them. A Brick only speaks when it is written to or for
+ * a job it was given, so Block would leave it working where the person can't see it: its controls are Mute, Turn off and
+ * End visit instead. Never for a Brick, standing on the map or not.
+ */
+export function canBlockPartner(partner: DirectPartner): boolean {
+    return !isBotPartner(partner) && partner.chatId !== undefined;
 }
 
 /**
