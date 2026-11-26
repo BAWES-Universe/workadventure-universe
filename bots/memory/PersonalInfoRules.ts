@@ -93,6 +93,8 @@ const NOT_A_NAME_WHEN_BARE = new Set([
 ]);
 /** Words that end like a belief, a nationality or a language: not a name after a bare "I'm", whatever the word. */
 const LOOKS_LIKE_WHO_THEY_ARE = /(?:ish|ese|ist)$/iu;
+/** First names that end like one ("Trish", "Reese"): they are names after a greeting. The lists above are checked first, so "Danish" is still not one. */
+const NAMES_THAT_END_LIKE_IT = new Set(['trish', 'anish', 'manish', 'harish', 'hamish', 'satish', 'girish', 'tanish', 'reese', 'therese']);
 /** A greeting, alone or with one word after it ("Hello", "Hi there", "Hello Brick"): what comes right after it is an introduction. */
 const GREETING = /^\s*(?:hi|hello|hey|hiya|howdy|greetings)(?:\s+\p{L}+)?\W*$/iu;
 /** Months are names too ("April", "May"), unless a day follows ("call me May 3rd", "I'm April 5"). */
@@ -134,7 +136,7 @@ export function nameIn(message: string): string | null {
                 const name = match[1];
                 const lower = name.toLowerCase();
                 const rest = clause.text.slice((match.index ?? 0) + match[0].length);
-                if (NOT_A_NAME.has(lower) || (bare && (NOT_A_NAME_WHEN_BARE.has(lower) || LOOKS_LIKE_WHO_THEY_ARE.test(lower)))) continue;
+                if (NOT_A_NAME.has(lower) || (bare && (NOT_A_NAME_WHEN_BARE.has(lower) || (LOOKS_LIKE_WHO_THEY_ARE.test(lower) && !NAMES_THAT_END_LIKE_IT.has(lower))))) continue;
                 if (MONTH_NAMES.has(lower) && /^\s*(?:the\s+)?\d/i.test(rest)) continue;
                 if (bare) {
                     // A plain "I'm Shia" says who they are. It is a name only in an introduction: right after a greeting
