@@ -90,6 +90,18 @@ describe('a confirmed tool', () => {
         expect(await gate.decide(call({ person: MANAGER }))).toMatchObject({ kind: 'refuse', why: 'off' });
     });
 
+    it("takes the tool's own choice over its heading's, both ways (a person's own App, like a ready-made App's actions)", async () => {
+        const offOnItsOwn = gateFor(policy({ tools: [['tool', { heading: 'looksUp', setting: 'off' }]] }));
+        expect(await offOnItsOwn.gate.decide(call())).toMatchObject({ kind: 'refuse', why: 'off' });
+        const asksOnItsOwn = gateFor(policy({ tools: [['tool', { heading: 'looksUp', setting: 'asksFirst' }]] }));
+        expect(await asksOnItsOwn.gate.decide(call())).toMatchObject({ kind: 'ask', heading: 'looksUp', notReviewed: false });
+        const rightAwayOnItsOwn = gateFor(policy({ settings: { ...SETTINGS, changesThings: 'asksFirst' }, tools: [['tool', { heading: 'changesThings', setting: 'rightAway' }]] }));
+        expect(await rightAwayOnItsOwn.gate.decide(call())).toMatchObject({ kind: 'run', heading: 'changesThings', policyRevision: 7, fingerprint: 'fp' });
+        // Its permission still counts, whatever its own choice
+        const noPermission = gateFor(policy({ tools: [['tool', { heading: 'changesThings', setting: 'rightAway' }]] }), { allowed: () => false });
+        expect(await noPermission.gate.decide(call())).toMatchObject({ kind: 'refuse', why: 'no_permission' });
+    });
+
     it('is not the tool that was confirmed when it changed since: it needs a review again', async () => {
         const { gate } = gateFor(policy({ tools: [['tool', { heading: 'looksUp', fingerprint: 'old' }]] }));
         expect(await gate.decide(call({ fingerprint: 'new' }))).toMatchObject({ kind: 'refuse', why: 'changed' });
@@ -178,6 +190,16 @@ describe('a tool nobody confirmed', () => {
         const { gate } = gateFor(policy({ tools: [['tool', { fingerprint: 'old', heading: 'looksUp' }]] }));
         expect(await gate.decide(call({ fingerprint: 'new' }))).toMatchObject({ why: 'changed' });
         expect(await gate.decide(call({ fingerprint: 'new', person: MANAGER }))).toMatchObject({ kind: 'ask', notReviewed: true, fingerprint: 'new' });
+    });
+
+    it('does not let a manager try a tool turned off on its own', async () => {
+        const { gate } = gateFor(policy({ tools: [['tool', { confirmed: false, heading: null, suggestedHeading: 'looksUp', setting: 'off' }]] }));
+        expect(await gate.decide(call({ person: MANAGER }))).toMatchObject({ kind: 'refuse', why: 'off' });
+    });
+
+    it("does not let a tool's own choice open a heading that is turned off, for a tool nobody reviewed", async () => {
+        const { gate } = gateFor(policy({ settings: { ...SETTINGS, deletesOrSends: 'off' }, tools: [['tool', { confirmed: false, heading: 'deletesOrSends', setting: 'rightAway', fingerprint: 'old' }]] }));
+        expect(await gate.decide(call({ person: MANAGER, fingerprint: 'new' }))).toMatchObject({ kind: 'refuse', why: 'off' });
     });
 
     it('does not let a manager try a tool whose heading is turned off', async () => {

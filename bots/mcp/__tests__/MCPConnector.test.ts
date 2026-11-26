@@ -959,7 +959,8 @@ describe('MCPConnector', () => {
                 const sent = body?.message?.method ?? body?.method;
                 const list = { jsonrpc: '2.0', id: '1', result: { tools: [batch] } };
                 if (body?.message) return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
-                return sent === 'initialize' ? MOCK_INIT_RESPONSE : { data: list };
+                // The App that is not ready-made has a tool of its own (one with the same name as a ready-made App's would take that name: own Apps first)
+                return sent === 'initialize' ? MOCK_INIT_RESPONSE : { data: { ...list, result: { tools: [{ ...batch, name: 'plain_tool' }] } } };
             });
             const result = await MCPConnector.discoverToolsWithMapping('bot-123', 'https://admin.example.com', 'admin-token', 'bot-service-token');
             const entry = result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL');
@@ -969,6 +970,79 @@ describe('MCPConnector', () => {
             expect([...ids].sort()).toEqual(['calendar', 'gmail']);
             expect(entry?.otherApps?.every((other) => other.readyMade === true && other.orbitUrl === 'https://admin.example.com')).toBe(true);
             expect(result.tools.filter((tool: any) => tool.function.name === 'COMPOSIO_MULTI_EXECUTE_TOOL')).toHaveLength(1);
+            vi.unstubAllEnvs();
+        });
+
+        it("leaves out a ready-made App the person also has their own copy of: only their own copy is offered, and the ready-made link is never asked", async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            const readyMade = (id: string, name: string, ownCopyServerId: string | null) => ({ id, botId: 'bot-own', name, serverUrl: `https://${id}.link/mcp`, authType: 'none' as const, enabled: true, readyMade: true, connectionId: `conn-${id}`, ownCopyServerId });
+            const own = { id: 'own-exa', botId: 'bot-own', name: 'Exa', serverUrl: 'https://mcp.exa.ai/mcp', authType: 'api-key' as const, authConfig: undefined, enabled: true, readyMade: false, connectionId: 'conn-own-exa', ownCopyServerId: null };
+            mockedAxios.get.mockResolvedValueOnce({ data: [readyMade('rm-exa', 'Exa', 'own-exa'), readyMade('rm-gmail', 'Gmail', null), own] });
+            const batch = { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', description: 'Run actions', inputSchema: { type: 'object', properties: {} } };
+            const search = { name: 'web_search_exa', description: 'Search the web', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } };
+            const asked: string[] = [];
+            mockedAxios.post.mockImplementation(async (url: string, body: any) => {
+                const sent = body?.message?.method ?? body?.method;
+                if (body?.message) {
+                    asked.push(String(body?.serverId ?? url));
+                    const list = { jsonrpc: '2.0', id: '1', result: { tools: [batch] } };
+                    return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
+                }
+                asked.push(url);
+                return sent === 'initialize' ? MOCK_INIT_RESPONSE : { data: { jsonrpc: '2.0', id: '1', result: { tools: [search] } } };
+            });
+            const result = await MCPConnector.discoverToolsWithMapping('bot-own', 'https://admin.example.com', 'admin-token', 'bot-service-token');
+            // Their own Exa is offered, as their own (not ready-made)
+            expect(result.toolServerMap.get('web_search_exa')).toMatchObject({ serverId: 'own-exa' });
+            expect(result.toolServerMap.get('web_search_exa')?.readyMade).toBeUndefined();
+            // The ready-made Exa is nowhere: not the App the link tool stands for, and not one of the others
+            const entry = result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL');
+            expect([entry?.serverId, ...(entry?.otherApps ?? []).map((other) => other.serverId)]).toEqual(['rm-gmail']);
+            // Gmail's link knows Exa was left out, so it never carries an Exa action; the person's own Exa is not marked
+            expect(entry?.ownCopyApps).toEqual(['Exa']);
+            expect(result.toolServerMap.get('web_search_exa')?.ownCopyApps).toBeUndefined();
+            expect(asked.some((target) => target.includes('rm-exa'))).toBe(false);
+            vi.unstubAllEnvs();
+        });
+
+        it("gives a tool's name to the person's own App over a ready-made App's, whichever answers first", async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            const batch = { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', description: 'Run actions', inputSchema: { type: 'object', properties: {} } };
+            for (const order of [['rm-first', 'own-second'], ['own-first', 'rm-second']]) {
+                const [a, b] = order;
+                const row = (id: string) => ({ id, botId: `bot-${a}`, name: id, serverUrl: `https://${id}.link/mcp`, authType: 'none' as const, enabled: true, readyMade: id.startsWith('rm'), connectionId: `conn-${id}`, ownCopyServerId: null });
+                mockedAxios.get.mockResolvedValueOnce({ data: [row(a), row(b)] });
+                mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                    const sent = body?.message?.method ?? body?.method;
+                    const list = { jsonrpc: '2.0', id: '1', result: { tools: [{ ...batch, description: body?.message ? 'ready-made' : 'own' }] } };
+                    if (body?.message) return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
+                    return sent === 'initialize' ? MOCK_INIT_RESPONSE : { data: list };
+                });
+                const result = await MCPConnector.discoverToolsWithMapping(`bot-${a}`, 'https://admin.example.com', 'admin-token', 'bot-service-token');
+                const own = order.find((id) => id.startsWith('own'));
+                expect(result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL')).toMatchObject({ serverId: own });
+                expect(result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL')?.readyMade).toBeUndefined();
+                // The ready-made App is kept beside it, as when the own App answered first, so its own actions still go through it
+                expect((result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL')?.otherApps ?? []).map((other) => other.serverId)).toEqual([order.find((id) => id.startsWith('rm'))]);
+                // One definition, and it is the own App's
+                expect(result.tools.filter((tool: any) => tool.function.name === 'COMPOSIO_MULTI_EXECUTE_TOOL').map((tool: any) => tool.function.description)).toEqual(['own']);
+            }
+            vi.unstubAllEnvs();
+        });
+
+        it('keeps a ready-made App when Orbit names no own copy of it', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            const app = (id: string, ownCopyServerId: unknown) => ({ id, botId: 'bot-keep', name: 'Exa', serverUrl: `https://${id}.link/mcp`, authType: 'none' as const, enabled: true, readyMade: true, connectionId: `conn-${id}`, ownCopyServerId });
+            mockedAxios.get.mockResolvedValueOnce({ data: [app('keep-null', null), app('keep-empty', '  ')] });
+            const batch = { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', description: 'Run actions', inputSchema: { type: 'object', properties: {} } };
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                const sent = body?.message?.method ?? body?.method;
+                const list = { jsonrpc: '2.0', id: '1', result: { tools: [batch] } };
+                return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
+            });
+            const result = await MCPConnector.discoverToolsWithMapping('bot-keep', 'https://admin.example.com', 'admin-token', 'bot-service-token');
+            const entry = result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL');
+            expect([entry?.serverId, ...(entry?.otherApps ?? []).map((other) => other.serverId)].sort()).toEqual(['keep-empty', 'keep-null']);
             vi.unstubAllEnvs();
         });
 
