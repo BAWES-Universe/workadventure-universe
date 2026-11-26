@@ -3,108 +3,95 @@
  * message per call. Each step says what the bot does in plain words, about what, and whether it worked. The game draws
  * it from the `universe.steps` field of one direct message that the bot server updates in place.
  */
-import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from "./ArtifactTools";
-import { MAKE_BRICK_TOOL } from "./BrickTools";
-import { FORGET_MEMORY_TOOL } from "./MemoryTools";
-import { COMPUTER_TOOL } from "./ComputerTools";
-import { COMPUTER_JOBS_TOOL } from "./ComputerControlTools";
-import {
-  CHANGE_TASK_TOOL,
-  SET_BRIEFING_TOOL,
-  SET_GOAL_TOOL,
-  SET_REMINDER_TOOL,
-  SET_WATCH_TOOL,
-} from "./BrickTasks";
-import { instantSlugOf, isInstantTool } from "./InstantTools";
-import {
-  actionName,
-  batchExtras,
-  describeBatch,
-  plainLabel,
-  plainWords,
-  withoutProvider,
-} from "../mcp/AppBatch";
+import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
+import { MAKE_BRICK_TOOL } from './BrickTools';
+import { FORGET_MEMORY_TOOL } from './MemoryTools';
+import { COMPUTER_TOOL } from './ComputerTools';
+import { COMPUTER_JOBS_TOOL } from './ComputerControlTools';
+import { CHANGE_TASK_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL } from './BrickTasks';
+import { instantSlugOf, isInstantTool } from './InstantTools';
+import { actionName, batchExtras, describeBatch, plainLabel, plainWords, withoutProvider } from '../mcp/AppBatch';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
-export type StepKind = "read" | "search" | "write";
+export type StepKind = 'read' | 'search' | 'write';
 
 /** The field of the steps message, read by the game. */
-export const STEPS_KEY = "universe.steps";
+export const STEPS_KEY = 'universe.steps';
 
 /** A tool call as the steps line shows it. */
 export interface ToolStep {
-  /** The call's id, so its result finds it. */
-  id: string;
-  /** While it runs, e.g. "Reading workadventu.re" or "Using Generate music". */
-  doing: string;
-  /** Once it ran, e.g. "Read a page". */
-  done: string;
-  /** What it is about: the prompt, search, link or title, on one short line. */
-  detail?: string;
-  /** Steps with the same group are counted together in the summary. */
-  group: string;
-  /** What the call is about; the game shows it as the working emoji. */
-  kind?: StepKind;
-  /** A batch call named by what its tools do. A call announced before its arguments were complete is not, and is renamed once they are. */
-  byActions?: boolean;
+    /** The call's id, so its result finds it. */
+    id: string;
+    /** While it runs, e.g. "Reading workadventu.re" or "Using Generate music". */
+    doing: string;
+    /** Once it ran, e.g. "Read a page". */
+    done: string;
+    /** What it is about: the prompt, search, link or title, on one short line. */
+    detail?: string;
+    /** Steps with the same group are counted together in the summary. */
+    group: string;
+    /** What the call is about; the game shows it as the working emoji. */
+    kind?: StepKind;
+    /** A batch call named by what its tools do. A call announced before its arguments were complete is not, and is renamed once they are. */
+    byActions?: boolean;
 }
 
 /** One labelled line of what a step sent or got back, for a step opened in a direct message (#2061). */
 export interface StepLine {
-  label?: string;
-  text: string;
+    label?: string;
+    text: string;
 }
 
 /** How a call ended. */
 export interface ToolStepResult {
-  id: string;
-  ok: boolean;
-  /** A card waits for the person's OK: nothing ran yet, which is not a failure (#2061). */
-  waiting?: boolean;
-  /** What the call sent and got back, in plain lines. Only set where nobody else reads the reply (a direct message). */
-  shows?: StepLine[];
-  /** It went out and no answer came back: it may have run (#1692). Shown as "no answer", not as didn't work. */
-  unknown?: boolean;
-  /** Why it didn't work, short and without links. */
-  note?: string;
-  /** When the call settled, so a quick call is not timed with the slowest one it ran beside (#2061). */
-  at?: number;
-  /** The call asked a question or changed nothing: neither done nor failed, so it never counts as "didn't work" (the step's own words say what happened). */
-  noChange?: boolean;
-  /** What the step says once it has ended, when "Forgot" or "Read a page" would be untrue ("Didn't forget anything"). */
-  done?: string;
+    id: string;
+    ok: boolean;
+    /** A card waits for the person's OK: nothing ran yet, which is not a failure (#2061). */
+    waiting?: boolean;
+    /** What the call sent and got back, in plain lines. Only set where nobody else reads the reply (a direct message). */
+    shows?: StepLine[];
+    /** It went out and no answer came back: it may have run (#1692). Shown as "no answer", not as didn't work. */
+    unknown?: boolean;
+    /** Why it didn't work, short and without links. */
+    note?: string;
+    /** When the call settled, so a quick call is not timed with the slowest one it ran beside (#2061). */
+    at?: number;
+    /** The call asked a question or changed nothing: neither done nor failed, so it never counts as "didn't work" (the step's own words say what happened). */
+    noChange?: boolean;
+    /** What the step says once it has ended, when "Forgot" or "Read a page" would be untrue ("Didn't forget anything"). */
+    done?: string;
 }
 
 /** unknown: the call went out and no answer came back, so it may have run (#1692). waiting: a card waits for the person's OK (#2061). */
-export type StepState = "running" | "done" | "failed" | "unknown" | "waiting";
+export type StepState = 'running' | 'done' | 'failed' | 'unknown' | 'waiting';
 
 export interface ShownStep {
-  doing: string;
-  done: string;
-  detail?: string;
-  state: StepState;
-  /** The same call with the same detail ran earlier in this reply. */
-  again?: boolean;
-  note?: string;
-  kind?: StepKind;
-  /** How long it took, in seconds (#2061). */
-  secs?: number;
-  /** What it sent and got back (#2061). */
-  shows?: StepLine[];
+    doing: string;
+    done: string;
+    detail?: string;
+    state: StepState;
+    /** The same call with the same detail ran earlier in this reply. */
+    again?: boolean;
+    note?: string;
+    kind?: StepKind;
+    /** How long it took, in seconds (#2061). */
+    secs?: number;
+    /** What it sent and got back (#2061). */
+    shows?: StepLine[];
 }
 
 /** What the `universe.steps` field carries. */
 export interface StepsField {
-  v: 1;
-  /** working: steps are running. done: the answer came. stopped: the reply failed part-way. */
-  state: "working" | "done" | "stopped";
-  /** The line itself: what runs now while working, the summary once done. */
-  line: string;
-  /** When the first step started, for the clock while working. */
-  startedAt: number;
-  /** Once the reply is over: how long the steps took in all, in seconds (#2061). */
-  took?: number;
-  steps: ShownStep[];
+    v: 1;
+    /** working: steps are running. done: the answer came. stopped: the reply failed part-way. */
+    state: 'working' | 'done' | 'stopped';
+    /** The line itself: what runs now while working, the summary once done. */
+    line: string;
+    /** When the first step started, for the clock while working. */
+    startedAt: number;
+    /** Once the reply is over: how long the steps took in all, in seconds (#2061). */
+    took?: number;
+    steps: ShownStep[];
 }
 
 const DETAIL_MAX = 60;
@@ -112,171 +99,68 @@ const DETAIL_MAX = 60;
 const TITLE_MAX = 150;
 const NOTE_MAX = 80;
 /** Arguments worth showing, in order: what the call is about. */
-const DETAIL_KEYS = [
-  "prompt",
-  "query",
-  "q",
-  "search",
-  "url",
-  "title",
-  "topic",
-  "text",
-  "description",
-  "name",
-];
+const DETAIL_KEYS = ['prompt', 'query', 'q', 'search', 'url', 'title', 'topic', 'text', 'description', 'name'];
 /** Never shown, whatever they hold. */
-const PRIVATE_KEY =
-  /key|token|secret|password|passwd|auth|cookie|session|email|phone/i;
+const PRIVATE_KEY = /key|token|secret|password|passwd|auth|cookie|session|email|phone/i;
 const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 /** A long unbroken run of letters and digits with both: what keys and tokens look like, not words. */
-const TOKEN_LIKE =
-  /(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{24,}/;
+const TOKEN_LIKE = /(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{24,}/;
 
 /** Our own tools that are work the person waits for. Moving around the map stays out of the line. */
-const OWN_STEPS: Record<
-  string,
-  (args: Record<string, unknown>) => Omit<ToolStep, "id">
-> = {
-  read_web_page: (args) => {
-    const where = pageName(args.url);
-    return {
-      doing: where ? `Reading ${where}` : "Reading a page",
-      done: "Read a page",
-      detail: shown(args.url),
-      group: "page",
-      kind: "read",
-    };
-  },
-  [MAKE_ARTIFACT_TOOL]: (args) => ({
-    doing: "Making an artifact",
-    done: "Made an artifact",
-    detail: shown(args.title),
-    group: "make_artifact",
-    kind: "write",
-  }),
-  [CHANGE_ARTIFACT_TOOL]: (args) => ({
-    doing: "Changing an artifact",
-    done: "Changed an artifact",
-    detail: shown(args.title),
-    group: "change_artifact",
-    kind: "write",
-  }),
-  // Another Brick for this person (game #1996): "Made Recipe Brick", with what it is for under it. A suggestion is
-  // never a step: its card says it.
-  [MAKE_BRICK_TOOL]: (args) => {
-    const name = shown(args.name);
-    return {
-      doing: name ? `Making ${name}` : "Making a Brick",
-      done: name ? `Made ${name}` : "Made a Brick",
-      detail: asDetail(shown(args.line)),
-      group: `make_brick:${name ?? ""}`,
-      kind: "write",
-    };
-  },
-  // Forgetting something about the person (game #2003): "Forgot", with their own words under it
-  [FORGET_MEMORY_TOOL]: (args) => ({
-    doing: "Forgetting",
-    done: "Forgot",
-    detail: shown(args.about),
-    group: "forget_memory",
-    kind: "write",
-  }),
-  // A job on the Brick's own computer (game #2000)
-  [COMPUTER_TOOL]: (args) => ({
-    doing: "Starting its computer, this takes a minute",
-    done: "Worked on its computer",
-    detail: shown(args.job),
-    group: "computer",
-    kind: "write",
-  }),
-  // Reading its computer's jobs ("how is it going?"). Its controls (pause, cancel...) are no step: the fixed line under the reply says what each did, and a question is not a step taken
-  [COMPUTER_JOBS_TOOL]: () => ({
-    doing: "Checking its computer",
-    done: "Checked its computer",
-    group: "computer_jobs",
-    kind: "read",
-  }),
-  // A reminder the person asked for (game #2002): "Set a reminder", with what it says under it. Reading what is kept is never a step.
-  [SET_REMINDER_TOOL]: (args) => ({
-    doing: "Setting a reminder",
-    done: "Set a reminder",
-    detail: shown(args.text),
-    group: "set_reminder",
-    kind: "write",
-  }),
-  // A briefing, a watch or a goal the person asked for: what it is, with their words under it
-  [SET_BRIEFING_TOOL]: (args) => ({
-    doing: "Setting a briefing",
-    done: "Set a briefing",
-    detail: shown(args.text),
-    group: "set_briefing",
-    kind: "write",
-  }),
-  [SET_WATCH_TOOL]: (args) => ({
-    doing: "Setting a watch",
-    done: "Set a watch",
-    detail: shown(args.text),
-    group: "set_watch",
-    kind: "write",
-  }),
-  [SET_GOAL_TOOL]: (args) => ({
-    doing: "Setting a goal",
-    done: "Set a goal",
-    detail: shown(args.text),
-    group: "set_goal",
-    kind: "write",
-  }),
-  [CHANGE_TASK_TOOL]: (args) => {
-    const [doing, done] =
-      args.action === "snooze"
-        ? ["Snoozing a reminder", "Snoozed a reminder"]
-        : args.action === "run_now"
-        ? ["Running it now", "Ran it now"]
-        : args.action === "cancel"
-        ? ["Stopping it", "Stopped it"]
-        : args.action === "pause"
-        ? ["Pausing it", "Paused it"]
-        : args.action === "resume"
-        ? ["Resuming it", "Resumed it"]
-        : args.action === "close"
-        ? ["Closing it", "Closed it"]
-        : args.action === "keep_going"
-        ? ["Keeping it going", "Kept it going"]
-        : ["Changing it", "Changed it"];
-    return {
-      doing,
-      done,
-      group: `change_task:${String(args.action ?? "")}`,
-      kind: "write",
-    };
-  },
+const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep, 'id'>> = {
+    read_web_page: (args) => {
+        const where = pageName(args.url);
+        return { doing: where ? `Reading ${where}` : 'Reading a page', done: 'Read a page', detail: shown(args.url), group: 'page', kind: 'read' };
+    },
+    [MAKE_ARTIFACT_TOOL]: (args) => ({ doing: 'Making an artifact', done: 'Made an artifact', detail: shown(args.title), group: 'make_artifact', kind: 'write' }),
+    [CHANGE_ARTIFACT_TOOL]: (args) => ({ doing: 'Changing an artifact', done: 'Changed an artifact', detail: shown(args.title), group: 'change_artifact', kind: 'write' }),
+    // Another Brick for this person (game #1996): "Made Recipe Brick", with what it is for under it. A suggestion is
+    // never a step: its card says it.
+    [MAKE_BRICK_TOOL]: (args) => {
+        const name = shown(args.name);
+        return { doing: name ? `Making ${name}` : 'Making a Brick', done: name ? `Made ${name}` : 'Made a Brick', detail: asDetail(shown(args.line)), group: `make_brick:${name ?? ''}`, kind: 'write' };
+    },
+    // Forgetting something about the person (game #2003): "Forgot", with their own words under it
+    [FORGET_MEMORY_TOOL]: (args) => ({ doing: 'Forgetting', done: 'Forgot', detail: shown(args.about), group: 'forget_memory', kind: 'write' }),
+    // A job on the Brick's own computer (game #2000)
+    [COMPUTER_TOOL]: (args) => ({ doing: 'Starting its computer, this takes a minute', done: 'Worked on its computer', detail: shown(args.job), group: 'computer', kind: 'write' }),
+    // Reading its computer's jobs ("how is it going?"). Its controls (pause, cancel...) are no step: the fixed line under the reply says what each did, and a question is not a step taken
+    [COMPUTER_JOBS_TOOL]: () => ({ doing: 'Checking its computer', done: 'Checked its computer', group: 'computer_jobs', kind: 'read' }),
+    // A reminder the person asked for (game #2002): "Set a reminder", with what it says under it. Reading what is kept is never a step.
+    [SET_REMINDER_TOOL]: (args) => ({ doing: 'Setting a reminder', done: 'Set a reminder', detail: shown(args.text), group: 'set_reminder', kind: 'write' }),
+    // A briefing, a watch or a goal the person asked for: what it is, with their words under it
+    [SET_BRIEFING_TOOL]: (args) => ({ doing: 'Setting a briefing', done: 'Set a briefing', detail: shown(args.text), group: 'set_briefing', kind: 'write' }),
+    [SET_WATCH_TOOL]: (args) => ({ doing: 'Setting a watch', done: 'Set a watch', detail: shown(args.text), group: 'set_watch', kind: 'write' }),
+    [SET_GOAL_TOOL]: (args) => ({ doing: 'Setting a goal', done: 'Set a goal', detail: shown(args.text), group: 'set_goal', kind: 'write' }),
+    [CHANGE_TASK_TOOL]: (args) => {
+        const [doing, done] =
+            args.action === 'snooze' ? ['Snoozing a reminder', 'Snoozed a reminder'] : args.action === 'run_now' ? ['Running it now', 'Ran it now'] : args.action === 'cancel' ? ['Stopping it', 'Stopped it'] : args.action === 'pause' ? ['Pausing it', 'Paused it'] : args.action === 'resume' ? ['Resuming it', 'Resumed it'] : args.action === 'close' ? ['Closing it', 'Closed it'] : args.action === 'keep_going' ? ['Keeping it going', 'Kept it going'] : ['Changing it', 'Changed it'];
+        return { doing, done, group: `change_task:${String(args.action ?? '')}`, kind: 'write' };
+    },
 };
 
 /** A Brick's line under its step: "Keeps your mum's recipes" reads "keeps your mum's recipes" there. */
 function asDetail(line: string | undefined): string | undefined {
-  return line && /^[A-Z][a-z]/.test(line)
-    ? line[0].toLowerCase() + line.slice(1)
-    : line;
+    return line && /^[A-Z][a-z]/.test(line) ? line[0].toLowerCase() + line.slice(1) : line;
 }
 
 /** How a group reads in the summary, by count. Groups without one say "<done> 3 times". */
 const OWN_GROUPS: Record<string, (count: number) => string> = {
-  page: (n) => (n === 1 ? "Read 1 page" : `Read ${n} pages`),
-  make_artifact: (n) => (n === 1 ? "Made an artifact" : `Made ${n} artifacts`),
-  change_artifact: (n) =>
-    n === 1 ? "Changed an artifact" : `Changed an artifact ${n} times`,
+    page: (n) => (n === 1 ? 'Read 1 page' : `Read ${n} pages`),
+    make_artifact: (n) => (n === 1 ? 'Made an artifact' : `Made ${n} artifacts`),
+    change_artifact: (n) => (n === 1 ? 'Changed an artifact' : `Changed an artifact ${n} times`),
 };
 
 /** The line once every call has finished and the answer is being written. */
-export const WRITING_LINE = "Writing the answer";
+export const WRITING_LINE = 'Writing the answer';
 
 /** What a tool with no usable name reads as. */
-const NO_NAME = "Use a tool";
+const NO_NAME = 'Use a tool';
 
 /** Whether the line shows this tool: the bot's tool servers, and our own tools above. */
 export function showsAsStep(name: string, fromToolServer: boolean): boolean {
-  // An Instant App run is work the person waits for, and the steps line is where "checking" shows
-  return fromToolServer || name in OWN_STEPS || isInstantTool(name);
+    // An Instant App run is work the person waits for, and the steps line is where "checking" shows
+    return fromToolServer || name in OWN_STEPS || isInstantTool(name);
 }
 
 /**
@@ -284,47 +168,34 @@ export function showsAsStep(name: string, fromToolServer: boolean): boolean {
  * ("generate_music" reads "Generate music"), after "Using" and "Used" so it never reads as an order. The words stay
  * the tool server's: "Used Generate music 6 times".
  */
-export function describeStep(
-  call: { id: string; name: string; arguments?: unknown },
-  title?: string,
-  appName?: string
-): ToolStep {
-  const args = parseArgs(call.arguments);
-  const own = OWN_STEPS[call.name];
-  if (own && !title) return { id: call.id, ...own(args) };
-  // A batch call ("run these tools") is named by what its tools do, once its arguments are complete (game #2131)
-  const batch = describeBatch(args, appName);
-  if (batch) {
-    const kinds = batch.calls.map((inner) =>
-      kindOf(actionName(inner.slug, appName))
-    );
+export function describeStep(call: { id: string; name: string; arguments?: unknown }, title?: string, appName?: string): ToolStep {
+    const args = parseArgs(call.arguments);
+    const own = OWN_STEPS[call.name];
+    if (own && !title) return { id: call.id, ...own(args) };
+    // A batch call ("run these tools") is named by what its tools do, once its arguments are complete (game #2131)
+    const batch = describeBatch(args, appName);
+    if (batch) {
+        const kinds = batch.calls.map((inner) => kindOf(actionName(inner.slug, appName)));
+        return {
+            id: call.id,
+            doing: `Using ${batch.title}`,
+            done: `Used ${batch.title}`,
+            group: `tool:${call.name}`,
+            kind: kinds.includes('write') ? 'write' : kinds.includes('search') ? 'search' : 'read',
+            byActions: true,
+        };
+    }
+    // The provider's name never shows in a tool's title
+    const words = withoutProvider(oneLine(title, TITLE_MAX) ?? tidyName(instantSlugOf(call.name))) || NO_NAME;
+    const named = words !== NO_NAME;
     return {
-      id: call.id,
-      doing: `Using ${batch.title}`,
-      done: `Used ${batch.title}`,
-      group: `tool:${call.name}`,
-      kind: kinds.includes("write")
-        ? "write"
-        : kinds.includes("search")
-        ? "search"
-        : "read",
-      byActions: true,
+        id: call.id,
+        doing: named ? `Using ${words}` : 'Using a tool',
+        done: named ? `Used ${words}` : 'Used a tool',
+        detail: detailOf(args),
+        group: `tool:${call.name}`,
+        kind: kindOf(`${call.name} ${title ?? ''}`),
     };
-  }
-  // The provider's name never shows in a tool's title
-  const words =
-    withoutProvider(
-      oneLine(title, TITLE_MAX) ?? tidyName(instantSlugOf(call.name))
-    ) || NO_NAME;
-  const named = words !== NO_NAME;
-  return {
-    id: call.id,
-    doing: named ? `Using ${words}` : "Using a tool",
-    done: named ? `Used ${words}` : "Used a tool",
-    detail: detailOf(args),
-    group: `tool:${call.name}`,
-    kind: kindOf(`${call.name} ${title ?? ""}`),
-  };
 }
 
 /**
@@ -332,83 +203,52 @@ export function describeStep(
  * only, so "upload", "spreadsheet" and "payload" are not mistaken for loading or reading.
  */
 export function kindOf(words: string): StepKind {
-  const parts = words
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .filter(Boolean);
-  // The first word that is a known verb says what the tool does: "create list" makes something, "list labels" reads
-  for (const part of parts) {
-    if (/^(search|find|lookup|query|queries)/.test(part)) return "search";
-    if (
-      /^(read|fetch|open|scrape|browse|load)/.test(part) ||
-      part === "list" ||
-      part === "get"
-    )
-      return "read";
-    if (WRITE_VERBS.test(part)) return "write";
-  }
-  return "write";
+    const parts = words
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .toLowerCase()
+        .split(/[^a-z]+/)
+        .filter(Boolean);
+    // The first word that is a known verb says what the tool does: "create list" makes something, "list labels" reads
+    for (const part of parts) {
+        if (/^(search|find|lookup|query|queries)/.test(part)) return 'search';
+        if (/^(read|fetch|open|scrape|browse|load)/.test(part) || part === 'list' || part === 'get') return 'read';
+        if (WRITE_VERBS.test(part)) return 'write';
+    }
+    return 'write';
 }
 
 /** Verbs that make or change something. Only used to stop a later "list" or "get" noun from turning a write into a read. */
-const WRITE_VERBS =
-  /^(create|add|send|update|delete|remove|post|write|insert|set|make|generate|upload|reply|forward|move|archive|edit|modify|patch|put|share|invite|schedule|book|cancel|draft|publish|rename|copy|save|import|export|trigger|run|start|stop|merge|close|reopen|assign|label|tag|mark|trash|restore|clear|reset|submit|approve|reject|accept|decline)$/;
+const WRITE_VERBS = /^(create|add|send|update|delete|remove|post|write|insert|set|make|generate|upload|reply|forward|move|archive|edit|modify|patch|put|share|invite|schedule|book|cancel|draft|publish|rename|copy|save|import|export|trigger|run|start|stop|merge|close|reopen|assign|label|tag|mark|trash|restore|clear|reset|submit|approve|reject|accept|decline)$/;
 
 /** "generate_music" and "generateMusic" read "Generate music". */
 export function tidyName(name: string): string {
-  const words = name
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[_\-.]+/g, " ")
-    .trim()
-    .toLowerCase();
-  return words ? words[0].toUpperCase() + words.slice(1) : NO_NAME;
+    const words = name
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/[_\-.]+/g, ' ')
+        .trim()
+        .toLowerCase();
+    return words ? words[0].toUpperCase() + words.slice(1) : NO_NAME;
 }
 
 /** How a tool's result ended, from the shapes our tools and tool servers answer with. */
 export function resultOf(id: string, result: unknown): ToolStepResult {
-  if (result && typeof result === "object" && !Array.isArray(result)) {
-    const r = result as Record<string, unknown>;
-    // A card is waiting for someone's OK: nothing ran, so the step must not read "Used ..." (#1657)
-    if (r.status === "waiting_for_ok")
-      return {
-        id,
-        ok: false,
-        waiting: true,
-        note: "Waiting for your OK. Nothing ran yet",
-      };
-    // Forgetting that removed nothing (asked which memory they mean, a question, already gone): the step must not read
-    // "Forgot" while the memory is still there (game #2020)
-    if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
-      return {
-        id,
-        ok: false,
-        noChange: true,
-        done: "Forgot nothing yet",
-        note:
-          r.unclear === true
-            ? "Asked which one. Nothing forgotten yet"
-            : "Nothing was forgotten",
-      };
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+        const r = result as Record<string, unknown>;
+        // A card is waiting for someone's OK: nothing ran, so the step must not read "Used ..." (#1657)
+        if (r.status === 'waiting_for_ok') return { id, ok: false, waiting: true, note: 'Waiting for your OK. Nothing ran yet' };
+        // Forgetting that removed nothing (asked which memory they mean, a question, already gone): the step must not read
+        // "Forgot" while the memory is still there (game #2020)
+        if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
+            return { id, ok: false, noChange: true, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
+        }
+        if (r.error || r.success === false || r.isError === true) {
+            const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
+            // A tool server call that may have run is not a failure; a cancelled turn stays as it was
+            const unknown = r.outcome === 'uncertain' && r.cancelled !== true;
+            return { id, ok: false, ...(unknown ? { unknown } : {}), note: noteOf(why) };
+        }
     }
-    if (r.error || r.success === false || r.isError === true) {
-      const why =
-        typeof r.error === "string"
-          ? r.error
-          : typeof r.message === "string"
-          ? r.message
-          : undefined;
-      // A tool server call that may have run is not a failure; a cancelled turn stays as it was
-      const unknown = r.outcome === "uncertain" && r.cancelled !== true;
-      return {
-        id,
-        ok: false,
-        ...(unknown ? { unknown } : {}),
-        note: noteOf(why),
-      };
-    }
-  }
-  return { id, ok: true };
+    return { id, ok: true };
 }
 
 /**
@@ -416,223 +256,166 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
  * result only changes the step it belongs to.
  */
 export class ReplySteps {
-  private steps: Array<
-    ToolStep & {
-      state: StepState;
-      again?: boolean;
-      note?: string;
-      began: number;
-      secs?: number;
-      shows?: StepLine[];
+    private steps: Array<ToolStep & { state: StepState; again?: boolean; note?: string; began: number; secs?: number; shows?: StepLine[] }> = [];
+    private state: StepsField['state'] = 'working';
+    private endedAt: number | undefined;
+    readonly startedAt: number;
+
+    constructor(now = Date.now()) {
+        this.startedAt = now;
     }
-  > = [];
-  private state: StepsField["state"] = "working";
-  private endedAt: number | undefined;
-  readonly startedAt: number;
 
-  constructor(now = Date.now()) {
-    this.startedAt = now;
-  }
+    get size(): number {
+        return this.steps.length;
+    }
 
-  get size(): number {
-    return this.steps.length;
-  }
-
-  start(steps: ToolStep[], now = Date.now()): void {
-    for (const step of steps) {
-      // A call is announced when it begins and again when its arguments are complete: the second time only
-      // fills in what it is about
-      const begun = this.steps.find(
-        (s) => s.id === step.id && s.state === "running"
-      );
-      if (begun) {
-        // A batch call announced before its tools were known has the provider's title: it takes its real name now
-        if (step.byActions && !begun.byActions) {
-          Object.assign(begun, {
-            doing: step.doing,
-            done: step.done,
-            kind: step.kind,
-            byActions: true,
-          });
+    start(steps: ToolStep[], now = Date.now()): void {
+        for (const step of steps) {
+            // A call is announced when it begins and again when its arguments are complete: the second time only
+            // fills in what it is about
+            const begun = this.steps.find((s) => s.id === step.id && s.state === 'running');
+            if (begun) {
+                // A batch call announced before its tools were known has the provider's title: it takes its real name now
+                if (step.byActions && !begun.byActions) {
+                    Object.assign(begun, { doing: step.doing, done: step.done, kind: step.kind, byActions: true });
+                }
+                if (!begun.detail && step.detail) {
+                    begun.detail = step.detail;
+                    if (this.steps.some((s) => s !== begun && s.group === begun.group && s.detail === begun.detail)) begun.again = true;
+                }
+                continue;
+            }
+            // Only a call about something can be seen to repeat: two calls without a detail may differ
+            const again = !!step.detail && this.steps.some((s) => s.group === step.group && s.detail === step.detail);
+            this.steps.push({ ...step, state: 'running', began: now, ...(again ? { again } : {}) });
         }
-        if (!begun.detail && step.detail) {
-          begun.detail = step.detail;
-          if (
-            this.steps.some(
-              (s) =>
-                s !== begun &&
-                s.group === begun.group &&
-                s.detail === begun.detail
-            )
-          )
-            begun.again = true;
+    }
+
+    finish(results: ToolStepResult[], now = Date.now()): boolean {
+        let changed = false;
+        for (const result of results) {
+            const step = this.steps.find((s) => s.id === result.id && s.state === 'running');
+            if (!step) continue;
+            step.state = result.ok || result.noChange ? 'done' : result.waiting ? 'waiting' : result.unknown ? 'unknown' : 'failed';
+            step.secs = secondsBetween(step.began, result.at ?? now);
+            if (result.shows?.length) step.shows = result.shows;
+            if (result.note) step.note = result.note;
+            if (result.done) step.done = result.done;
+            changed = true;
         }
-        continue;
-      }
-      // Only a call about something can be seen to repeat: two calls without a detail may differ
-      const again =
-        !!step.detail &&
-        this.steps.some(
-          (s) => s.group === step.group && s.detail === step.detail
-        );
-      this.steps.push({
-        ...step,
-        state: "running",
-        began: now,
-        ...(again ? { again } : {}),
-      });
+        return changed;
     }
-  }
 
-  finish(results: ToolStepResult[], now = Date.now()): boolean {
-    let changed = false;
-    for (const result of results) {
-      const step = this.steps.find(
-        (s) => s.id === result.id && s.state === "running"
-      );
-      if (!step) continue;
-      step.state =
-        result.ok || result.noChange
-          ? "done"
-          : result.waiting
-          ? "waiting"
-          : result.unknown
-          ? "unknown"
-          : "failed";
-      step.secs = secondsBetween(step.began, result.at ?? now);
-      if (result.shows?.length) step.shows = result.shows;
-      if (result.note) step.note = result.note;
-      if (result.done) step.done = result.done;
-      changed = true;
+    /** The answer came: anything still running counts as done, since its result was used. */
+    end(now = Date.now()): void {
+        for (const step of this.steps) {
+            if (step.state !== 'running') continue;
+            step.state = 'done';
+            step.secs = secondsBetween(step.began, now);
+        }
+        this.state = 'done';
+        this.endedAt = now;
     }
-    return changed;
-  }
 
-  /** The answer came: anything still running counts as done, since its result was used. */
-  end(now = Date.now()): void {
-    for (const step of this.steps) {
-      if (step.state !== "running") continue;
-      step.state = "done";
-      step.secs = secondsBetween(step.began, now);
+    /** The reply failed part-way: what didn't finish stays unfinished. */
+    stop(now = Date.now()): void {
+        for (const step of this.steps) {
+            if (step.state !== 'running') continue;
+            step.state = 'failed';
+            step.secs = secondsBetween(step.began, now);
+        }
+        this.state = 'stopped';
+        this.endedAt = now;
     }
-    this.state = "done";
-    this.endedAt = now;
-  }
 
-  /** The reply failed part-way: what didn't finish stays unfinished. */
-  stop(now = Date.now()): void {
-    for (const step of this.steps) {
-      if (step.state !== "running") continue;
-      step.state = "failed";
-      step.secs = secondsBetween(step.began, now);
+    field(): StepsField {
+        return {
+            v: 1,
+            state: this.state,
+            line: this.state === 'working' ? this.liveLine() : summaryOf(this.steps),
+            startedAt: this.startedAt,
+            ...(this.endedAt !== undefined && this.state !== 'working' ? { took: secondsBetween(this.startedAt, this.endedAt) } : {}),
+            steps: this.steps.map(({ doing, done, detail, state, again, note, kind, secs, shows }) => ({
+                doing,
+                done,
+                ...(detail ? { detail } : {}),
+                state,
+                ...(again ? { again } : {}),
+                ...(note ? { note } : {}),
+                ...(kind ? { kind } : {}),
+                ...(secs !== undefined ? { secs } : {}),
+                ...(shows ? { shows } : {}),
+            })),
+        };
     }
-    this.state = "stopped";
-    this.endedAt = now;
-  }
 
-  field(): StepsField {
-    return {
-      v: 1,
-      state: this.state,
-      line: this.state === "working" ? this.liveLine() : summaryOf(this.steps),
-      startedAt: this.startedAt,
-      ...(this.endedAt !== undefined && this.state !== "working"
-        ? { took: secondsBetween(this.startedAt, this.endedAt) }
-        : {}),
-      steps: this.steps.map(
-        ({ doing, done, detail, state, again, note, kind, secs, shows }) => ({
-          doing,
-          done,
-          ...(detail ? { detail } : {}),
-          state,
-          ...(again ? { again } : {}),
-          ...(note ? { note } : {}),
-          ...(kind ? { kind } : {}),
-          ...(secs !== undefined ? { secs } : {}),
-          ...(shows ? { shows } : {}),
-        })
-      ),
-    };
-  }
+    /** The plain text other chat apps show. */
+    text(): string {
+        const field = this.field();
+        const failed = field.steps.filter((s) => s.state === 'failed').length;
+        const unknown = field.steps.filter((s) => s.state === 'unknown').length;
+        const waiting = field.steps.filter((s) => s.state === 'waiting').length;
+        if (field.state === 'working') return `${field.line}…`;
+        return `${field.line}${failed ? ` · ${failed} didn't work` : ''}${unknown ? ` · ${unknown} no answer` : ''}${waiting ? ` · ${waiting} waiting for your OK` : ''}`;
+    }
 
-  /** The plain text other chat apps show. */
-  text(): string {
-    const field = this.field();
-    const failed = field.steps.filter((s) => s.state === "failed").length;
-    const unknown = field.steps.filter((s) => s.state === "unknown").length;
-    const waiting = field.steps.filter((s) => s.state === "waiting").length;
-    if (field.state === "working") return `${field.line}…`;
-    return `${field.line}${failed ? ` · ${failed} didn't work` : ""}${
-      unknown ? ` · ${unknown} no answer` : ""
-    }${waiting ? ` · ${waiting} waiting for your OK` : ""}`;
-  }
-
-  /**
-   * What runs now: the newest running step (the game shows its detail and how many are done beside it). Once every
-   * call has finished, the bot is writing its answer, so the line stops saying "Using".
-   */
-  private liveLine(): string {
-    const running = this.steps.filter((s) => s.state === "running").at(-1);
-    if (running) return running.doing;
-    return this.steps.length ? WRITING_LINE : "";
-  }
+    /**
+     * What runs now: the newest running step (the game shows its detail and how many are done beside it). Once every
+     * call has finished, the bot is writing its answer, so the line stops saying "Using".
+     */
+    private liveLine(): string {
+        const running = this.steps.filter((s) => s.state === 'running').at(-1);
+        if (running) return running.doing;
+        return this.steps.length ? WRITING_LINE : '';
+    }
 }
 
 /** "Read 1 page · Used Generate music 6 times": every group that worked at least once, in the order it first ran. */
-export function summaryOf(
-  steps: Array<{ group?: string; done: string; state: StepState }>
-): string {
-  const groups = new Map<string, { done: string; count: number }>();
-  for (const step of steps) {
-    if (step.state !== "done") continue;
-    // Steps of one group that ended with different words (a memory removal that forgot, and one that found nothing to forget)
-    // are counted apart: one label over a count of both would say something that only some of them did
-    const base = step.group ?? step.done;
-    const key = OWN_GROUPS[base] ? base : `${base}|${step.done}`;
-    const group = groups.get(key);
-    if (group) group.count++;
-    else groups.set(key, { done: step.done, count: 1 });
-  }
-  const parts = [...groups.entries()].map(([key, { done, count }]) =>
-    OWN_GROUPS[key]
-      ? OWN_GROUPS[key](count)
-      : count > 1
-      ? `${done} ${count} times`
-      : done
-  );
-  if (parts.length) return parts.join(" · ");
-  // Nothing worked: the line only counts, and says how many didn't work beside it
-  return steps.length === 1 ? "1 step" : `${steps.length} steps`;
+export function summaryOf(steps: Array<{ group?: string; done: string; state: StepState }>): string {
+    const groups = new Map<string, { done: string; count: number }>();
+    for (const step of steps) {
+        if (step.state !== 'done') continue;
+        // Steps of one group that ended with different words (a memory removal that forgot, and one that found nothing to forget)
+        // are counted apart: one label over a count of both would say something that only some of them did
+        const base = step.group ?? step.done;
+        const key = OWN_GROUPS[base] ? base : `${base}|${step.done}`;
+        const group = groups.get(key);
+        if (group) group.count++;
+        else groups.set(key, { done: step.done, count: 1 });
+    }
+    const parts = [...groups.entries()].map(([key, { done, count }]) =>
+        OWN_GROUPS[key] ? OWN_GROUPS[key](count) : count > 1 ? `${done} ${count} times` : done
+    );
+    if (parts.length) return parts.join(' · ');
+    // Nothing worked: the line only counts, and says how many didn't work beside it
+    return steps.length === 1 ? '1 step' : `${steps.length} steps`;
 }
 
 /** Seconds between two moments, to a tenth, never below zero. */
 function secondsBetween(from: number, to: number): number {
-  return Math.max(0, Math.round((to - from) / 100) / 10);
+    return Math.max(0, Math.round((to - from) / 100) / 10);
 }
 
 function parseArgs(raw: unknown): Record<string, unknown> {
-  if (raw && typeof raw === "object" && !Array.isArray(raw))
-    return raw as Record<string, unknown>;
-  if (typeof raw !== "string" || !raw.trim()) return {};
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+    if (typeof raw !== 'string' || !raw.trim()) return {};
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+        return {};
+    }
 }
 
 function detailOf(args: Record<string, unknown>): string | undefined {
-  for (const key of DETAIL_KEYS) {
-    const found = Object.keys(args).find((k) => k.toLowerCase() === key);
-    if (found && !PRIVATE_KEY.test(found)) {
-      const value = shown(args[found]);
-      if (value) return value;
+    for (const key of DETAIL_KEYS) {
+        const found = Object.keys(args).find((k) => k.toLowerCase() === key);
+        if (found && !PRIVATE_KEY.test(found)) {
+            const value = shown(args[found]);
+            if (value) return value;
+        }
     }
-  }
-  return undefined;
+    return undefined;
 }
 
 /**
@@ -641,24 +424,22 @@ function detailOf(args: Record<string, unknown>): string | undefined {
  * shown at all.
  */
 function shown(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const bare = bareLinks(value);
-  if (EMAIL.test(bare) || TOKEN_LIKE.test(bare)) return undefined;
-  return oneLine(bare);
+    if (typeof value !== 'string') return undefined;
+    const bare = bareLinks(value);
+    if (EMAIL.test(bare) || TOKEN_LIKE.test(bare)) return undefined;
+    return oneLine(bare);
 }
 
 /** Links keep only where they go: no sign-in parts, query or fragment. */
 function bareLinks(value: string): string {
-  return value.replace(/\bhttps?:\/\/\S+/gi, (link) => {
-    try {
-      const url = new URL(link);
-      return `${url.protocol}//${url.host}${
-        url.pathname === "/" ? "" : url.pathname
-      }`;
-    } catch {
-      return "";
-    }
-  });
+    return value.replace(/\bhttps?:\/\/\S+/gi, (link) => {
+        try {
+            const url = new URL(link);
+            return `${url.protocol}//${url.host}${url.pathname === '/' ? '' : url.pathname}`;
+        } catch {
+            return '';
+        }
+    });
 }
 
 /** Keys whose values are never shown, even to the person whose reply it is. */
@@ -668,45 +449,31 @@ const LINE_TEXT_MAX = 160;
 
 /** One argument or result as a plain line: words, numbers and short lists, never a block of JSON. */
 function plainValue(value: unknown): string | undefined {
-  if (typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  if (Array.isArray(value)) {
-    const parts = value.map((item) =>
-      typeof item === "string" || typeof item === "number"
-        ? plainValue(item)
-        : undefined
-    );
-    return parts.length > 0 && parts.every((part) => part !== undefined)
-      ? oneLine(parts.join(", "), LINE_TEXT_MAX)
-      : undefined;
-  }
-  if (typeof value !== "string") return undefined;
-  // A string that holds JSON is data, and may hold a password under a key we cannot see
-  if (/^\s*[[{]/.test(value)) return undefined;
-  const bare = bareLinks(value);
-  if (TOKEN_LIKE.test(bare)) return undefined;
-  // A word in capitals reads as a word ("INBOX" is "Inbox"); anything else stays as it ran
-  return oneLine(plainWords(bare), LINE_TEXT_MAX);
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+        const parts = value.map((item) => (typeof item === 'string' || typeof item === 'number' ? plainValue(item) : undefined));
+        return parts.length > 0 && parts.every((part) => part !== undefined) ? oneLine(parts.join(', '), LINE_TEXT_MAX) : undefined;
+    }
+    if (typeof value !== 'string') return undefined;
+    // A string that holds JSON is data, and may hold a password under a key we cannot see
+    if (/^\s*[[{]/.test(value)) return undefined;
+    const bare = bareLinks(value);
+    if (TOKEN_LIKE.test(bare)) return undefined;
+    // A word in capitals reads as a word ("INBOX" is "Inbox"); anything else stays as it ran
+    return oneLine(plainWords(bare), LINE_TEXT_MAX);
 }
 
 /** What a tool's answer says when it is plain text; an answer that is data (JSON) says nothing here. */
 function plainAnswer(result: unknown): string | undefined {
-  const items = Array.isArray(result) ? result : [result];
-  for (const item of items) {
-    const text =
-      typeof item === "string"
-        ? item
-        : item &&
-          typeof item === "object" &&
-          (item as Record<string, unknown>).type === "text"
-        ? (item as Record<string, unknown>).text
-        : undefined;
-    if (typeof text !== "string") continue;
-    const trimmed = text.trim();
-    if (!trimmed) continue;
-    return /^[[{]/.test(trimmed) ? undefined : plainValue(trimmed);
-  }
-  return undefined;
+    const items = Array.isArray(result) ? result : [result];
+    for (const item of items) {
+        const text = typeof item === 'string' ? item : item && typeof item === 'object' && (item as Record<string, unknown>).type === 'text' ? (item as Record<string, unknown>).text : undefined;
+        if (typeof text !== 'string') continue;
+        const trimmed = text.trim();
+        if (!trimmed) continue;
+        return /^[[{]/.test(trimmed) ? undefined : plainValue(trimmed);
+    }
+    return undefined;
 }
 
 /**
@@ -714,76 +481,57 @@ function plainAnswer(result: unknown): string | undefined {
  * whose reply it is reads this, so an address stays; a key, token or password never does, and data (JSON) is never shown.
  * What the tool answered is left out unless `resultIsSafeToShow` says its answer is an explicit safe summary.
  */
-export function stepDetails(
-  rawArgs: unknown,
-  result?: unknown,
-  resultIsSafeToShow = false,
-  appName?: string
-): StepLine[] | undefined {
-  const lines: StepLine[] = [];
-  const args = parseArgs(rawArgs);
-  const batch = describeBatch(args, appName);
-  // A batch call shows what each of its tools was asked; the model's own notes on it are never shown
-  const shownArgs = batch ? batchExtras(args) : args;
-  if (batch) {
-    batch.calls.forEach((inner, index) => {
-      if (lines.length >= LINES_MAX) return;
-      const parts: string[] = [];
-      for (const [key, value] of Object.entries(inner.args)) {
+export function stepDetails(rawArgs: unknown, result?: unknown, resultIsSafeToShow = false, appName?: string): StepLine[] | undefined {
+    const lines: StepLine[] = [];
+    const args = parseArgs(rawArgs);
+    const batch = describeBatch(args, appName);
+    // A batch call shows what each of its tools was asked; the model's own notes on it are never shown
+    const shownArgs = batch ? batchExtras(args) : args;
+    if (batch) {
+        batch.calls.forEach((inner, index) => {
+            if (lines.length >= LINES_MAX) return;
+            const parts: string[] = [];
+            for (const [key, value] of Object.entries(inner.args)) {
+                if (SECRET_KEY.test(key)) continue;
+                const text = plainValue(value);
+                if (text) parts.push(`${plainLabel(tidyName(key))} ${text}`);
+            }
+            lines.push({ label: batch.names[index], text: parts.length ? oneLine(parts.join(' · '), LINE_TEXT_MAX) ?? 'Nothing to fill in' : 'Nothing to fill in' });
+        });
+    }
+    for (const [key, value] of Object.entries(shownArgs)) {
+        if (lines.length >= LINES_MAX) break;
         if (SECRET_KEY.test(key)) continue;
         const text = plainValue(value);
-        if (text) parts.push(`${plainLabel(tidyName(key))} ${text}`);
-      }
-      lines.push({
-        label: batch.names[index],
-        text: parts.length
-          ? oneLine(parts.join(" · "), LINE_TEXT_MAX) ?? "Nothing to fill in"
-          : "Nothing to fill in",
-      });
-    });
-  }
-  for (const [key, value] of Object.entries(shownArgs)) {
-    if (lines.length >= LINES_MAX) break;
-    if (SECRET_KEY.test(key)) continue;
-    const text = plainValue(value);
-    if (text) lines.push({ label: plainLabel(tidyName(key)), text });
-  }
-  // A tool server's answer is its own words and can carry a password or a code in plain text, so it is shown only for a tool
-  // whose answer is known to be a safe summary (none of the tool servers' tools are, for now)
-  const answer = resultIsSafeToShow ? plainAnswer(result) : undefined;
-  if (answer) lines.push({ label: "Result", text: answer });
-  return lines.length ? lines : undefined;
+        if (text) lines.push({ label: plainLabel(tidyName(key)), text });
+    }
+    // A tool server's answer is its own words and can carry a password or a code in plain text, so it is shown only for a tool
+    // whose answer is known to be a safe summary (none of the tool servers' tools are, for now)
+    const answer = resultIsSafeToShow ? plainAnswer(result) : undefined;
+    if (answer) lines.push({ label: 'Result', text: answer });
+    return lines.length ? lines : undefined;
 }
 
 function oneLine(value: unknown, max = DETAIL_MAX): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const line = value.replace(/\s+/g, " ").trim();
-  if (!line) return undefined;
-  const chars = Array.from(line);
-  return chars.length > max
-    ? `${chars
-        .slice(0, max - 1)
-        .join("")
-        .trimEnd()}…`
-    : line;
+    if (typeof value !== 'string') return undefined;
+    const line = value.replace(/\s+/g, ' ').trim();
+    if (!line) return undefined;
+    const chars = Array.from(line);
+    return chars.length > max ? `${chars.slice(0, max - 1).join('').trimEnd()}…` : line;
 }
 
 function pageName(url: unknown): string | undefined {
-  if (typeof url !== "string") return undefined;
-  try {
-    return new URL(url).hostname.replace(/^www\./, "") || undefined;
-  } catch {
-    return undefined;
-  }
+    if (typeof url !== 'string') return undefined;
+    try {
+        return new URL(url).hostname.replace(/^www\./, '') || undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 /** A failure in a few words: the tool's own message, without links (they can carry tokens) or our prefix. */
 function noteOf(why: string | undefined): string | undefined {
-  if (!why) return undefined;
-  const words = why
-    .replace(/^(?:MCP )?tool error:\s*/i, "")
-    .replace(/\bhttps?:\/\/\S+/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return oneLine(words, NOTE_MAX);
+    if (!why) return undefined;
+    const words = why.replace(/^(?:MCP )?tool error:\s*/i, '').replace(/\bhttps?:\/\/\S+/gi, '').replace(/\s+/g, ' ').trim();
+    return oneLine(words, NOTE_MAX);
 }
