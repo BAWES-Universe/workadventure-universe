@@ -253,6 +253,24 @@ describe('the actions that make new things', () => {
     });
 });
 
+describe('several batches that run right away', () => {
+    it('run one after another, in the order they were asked, so a later action can use what an earlier one made', async () => {
+        const { service, execute } = brickService(gmailPolicy());
+        const events: string[] = [];
+        execute.mockImplementation((async (...args: unknown[]) => {
+            const slugs = (args[3] as { tools: Array<{ tool_slug: string }> }).tools.map((tool) => tool.tool_slug).join(',');
+            events.push(`start ${slugs}`);
+            await new Promise<void>((resolve) => queueMicrotask(resolve));
+            await new Promise<void>((resolve) => queueMicrotask(resolve));
+            events.push(`end ${slugs}`);
+            return [{ type: 'text', text: `ran ${slugs}` }];
+        }) as never);
+        const [result] = await call(service, batchArgs('GMAIL_CREATE_EMAIL_DRAFT', 'GMAIL_FETCH_EMAILS'));
+        expect(events).toEqual(['start GMAIL_CREATE_EMAIL_DRAFT', 'end GMAIL_CREATE_EMAIL_DRAFT', 'start GMAIL_FETCH_EMAILS', 'end GMAIL_FETCH_EMAILS']);
+        expect(result.result.summary).toContain('Done now: Create email draft, Fetch emails.');
+    });
+});
+
 describe('what runs is what the card showed', () => {
     it('sends each action as its slug and its inputs only, never other keys the model added', async () => {
         const { service, execute, propose } = brickService(gmailPolicy());

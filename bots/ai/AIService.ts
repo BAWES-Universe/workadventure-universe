@@ -5806,20 +5806,19 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         }
         const oneApp = new Set(running.map((part) => part.entry.serverId)).size <= 1;
         const asker = this.gatePerson(botId, playerId, botClient, spaceName);
-        const results = await Promise.all(
-            [...groups.values()].map(async (group) => {
-                const { entry, heading } = group[0];
-                const answer = await this.callMcpTool(entry, input.toolName, batchOf(args, group), input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
-                    botId,
-                    callId: groups.size === 1 ? input.callId : oneApp ? `${input.callId}:${heading}` : `${input.callId}:${entry.serverId}:${heading}`,
-                    heading,
-                    ...(asker.signedIn && asker.identifier ? { requesterKey: asker.identifier } : {}),
-                });
-                // Each action's own result in the answer says whether it was done; a call that failed fails them all
-                const outcomes = batchOutcomes(answer, group.map((part) => part.slug), outcomeOf(answer));
-                return { group, answer, outcomes };
-            })
-        );
+        // One after another, in the order they were asked: a later action may need what an earlier one made or changed
+        const results: Array<{ group: AppPart[]; answer: Awaited<ReturnType<AIService['callMcpTool']>>; outcomes: PartOutcome[] }> = [];
+        for (const group of groups.values()) {
+            const { entry, heading } = group[0];
+            const answer = await this.callMcpTool(entry, input.toolName, batchOf(args, group), input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
+                botId,
+                callId: groups.size === 1 ? input.callId : oneApp ? `${input.callId}:${heading}` : `${input.callId}:${entry.serverId}:${heading}`,
+                heading,
+                ...(asker.signedIn && asker.identifier ? { requesterKey: asker.identifier } : {}),
+            });
+            // Each action's own result in the answer says whether it was done; a call that failed fails them all
+            results.push({ group, answer, outcomes: batchOutcomes(answer, group.map((part) => part.slug), outcomeOf(answer)) });
+        }
         const outcomeOfPart = new Map<AppPart, PartOutcome>();
         for (const { group, outcomes } of results) group.forEach((part, at) => outcomeOfPart.set(part, outcomes[at]));
         // The things it made go back to the limit when the call that would have made them proved it made nothing
