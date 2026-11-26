@@ -543,9 +543,11 @@ export class MatrixChatMessage implements ChatMessage {
                 replacedNew && typeof replacedNew === "object" ? (replacedNew as Record<string, unknown>) : undefined,
             ts: replacing?.getTs(),
         };
-        if (!replaced.content && !replaced.ts) return bundled;
-        if (!bundled.content && bundled.ts === undefined) return replaced;
-        // Both are there: the later one by the server's clock wins, and a bundle with no time is not known to be later
+        // An edit with nothing readable (redacted, or cleared) never wins on being newer: only readable ones are compared
+        const readable = [bundled, replaced].filter((edit) => edit.content);
+        if (readable.length === 0) return { content: undefined, ts: undefined };
+        if (readable.length === 1) return readable[0];
+        // Both are readable: the later one by the server's clock wins, and a bundle with no time is not known to be later
         return bundled.ts !== undefined && (replaced.ts === undefined || bundled.ts >= replaced.ts)
             ? bundled
             : replaced;
