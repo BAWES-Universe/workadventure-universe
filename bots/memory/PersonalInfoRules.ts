@@ -167,10 +167,27 @@ const CONTACT = /@|https?:\/\/|www\.|\d{5,}/u;
 /** The thing itself out of what follows "like": cut where another clause starts, and without the words that only add to it. */
 /**
  * Two words or more, each with a capital ("No Doubt", "One Piece", "It Follows", "This Is Us"): a name of something, even when it
- * starts with a word that alone is no thing. Only for the small words that cannot be about a person or a feeling: never "My Husband John", "Her Sister Mona", "Being Alone".
+ * starts with a word that alone is no thing. Only for the small words that cannot be about a person or a feeling (never "My Husband John", "Her Sister Mona", "Being Alone"),
+ * and never when a later word is about a person or a feeling ("This Guy Ahmed", "One Of My Friends", "This Feeling").
  */
 const TITLE_STARTERS = '(?:No|One|It|This|Nothing|Something)(?![\\p{L}\\p{N}])';
 const ATITLE = new RegExp(`^(?=${TITLE_STARTERS})\\p{Lu}[\\p{L}\\p{N}'’-]*(?:\\s+\\p{Lu}[\\p{L}\\p{N}'’-]*)+$`, 'u');
+const ABOUT_SOMEONE = new Set([
+    'one', 'my', 'your', 'our', 'his', 'her', 'their', 'him', 'them', 'myself', 'yourself', 'himself', 'herself', 'themselves', 'someone', 'anyone', 'everyone', 'everybody', 'nobody',
+    'guy', 'guys', 'girl', 'girls', 'man', 'men', 'woman', 'women', 'boy', 'boys', 'person', 'people', 'lady', 'dude', 'bro', 'mate', 'kid', 'kids', 'child', 'children',
+    'friend', 'friends', 'family', 'wife', 'husband', 'partner', 'boyfriend', 'girlfriend', 'mom', 'mum', 'mother', 'dad', 'father', 'brother', 'sister', 'son', 'daughter',
+    'boss', 'teacher', 'colleague', 'neighbour', 'neighbor', 'roommate', 'ex', 'me',
+    'feeling', 'feelings', 'alone', 'lonely', 'sad', 'tired', 'sick', 'ill', 'angry', 'anxious', 'depressed', 'scared', 'afraid', 'stressed', 'worried', 'hungry',
+    'cancer', 'illness', 'disease', 'depression', 'anxiety', 'diabetes', 'pregnancy',
+]);
+// "Us" ends real titles ("It Ends With Us"), so it only counts before the last word
+const ABOUT_SOMEONE_UNLESS_LAST = new Set(['us']);
+
+function isATitle(phrase: string): boolean {
+    if (!ATITLE.test(phrase)) return false;
+    const words = phrase.split(/\s+/u).map((word) => word.toLowerCase().replace(/['’-].*$/u, ''));
+    return !words.slice(1).some((word, at, rest) => ABOUT_SOMEONE.has(word) || (ABOUT_SOMEONE_UNLESS_LAST.has(word) && at < rest.length - 1));
+}
 
 function thingOf(rest: string): string | null {
     let phrase = rest
@@ -179,7 +196,7 @@ function thingOf(rest: string): string | null {
         .trim()
         .replace(/[\s,.!?…"'`“”]+$/u, '');
     if (!phrase || phrase.length > MAX_PHRASE_CHARS || phrase.split(/\s+/u).length > MAX_PHRASE_WORDS) return null;
-    if ((NOT_A_THING.test(phrase) && !ATITLE.test(phrase)) || ABOUT_THE_BOT.test(phrase) || CONTACT.test(phrase)) return null;
+    if ((NOT_A_THING.test(phrase) && !isATitle(phrase)) || ABOUT_THE_BOT.test(phrase) || CONTACT.test(phrase)) return null;
     // A word or two with a letter in it
     if (!/\p{L}/u.test(phrase)) return null;
     return phrase;
