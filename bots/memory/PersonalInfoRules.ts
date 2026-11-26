@@ -10,8 +10,8 @@
  */
 
 const APOS = `['’]`;
-// A period ends a sentence unless it ends a title or an initial: "I love Dr. Pepper", "I like J. K. Rowling" are one sentence each
-const SENTENCE_END = /(?<=[.!?\n])(?<!(?:^|[^\p{L}])(?:[mM][rR]|[mM][rR][sS]|[mM][sS]|[mM][xX]|[dD][rR]|[pP][rR][oO][fF]|[sS][tT]|[jJ][rR]|[sS][rR]|[vV][sS]|[eE][tT][cC]|[iI][nN][cC]|[lL][tT][dD]|[mM][tT]|[fF][tT]|[gG][eE][nN]|[cC][oO][lL]|[cC][aA][pP][tT]|[lL][tT]|[sS][gG][tT]|[rR][eE][vV]|[hH][oO][nN]|[sS][eE][nN]|[rR][eE][pP]|[gG][oO][vV]|[fF][rR])\.)(?<!(?:^|[^\p{L}])\p{Lu}\.)\s+|\n+/u;
+// A period ends a sentence unless it ends a title or an initial: "I love Dr. Pepper", "I like J. K. Rowling" are one sentence each; "Plan B. I hate tea" is two
+const SENTENCE_END = /(?<=[.!?\n])(?<!(?:^|[^\p{L}])(?:[mM][rR]|[mM][rR][sS]|[mM][sS]|[mM][xX]|[dD][rR]|[pP][rR][oO][fF]|[sS][tT]|[jJ][rR]|[sS][rR]|[vV][sS]|[eE][tT][cC]|[iI][nN][cC]|[lL][tT][dD]|[mM][tT]|[fF][tT]|[gG][eE][nN]|[cC][oO][lL]|[cC][aA][pP][tT]|[lL][tT]|[sS][gG][tT]|[rR][eE][vV]|[hH][oO][nN]|[sS][eE][nN]|[rR][eE][pP]|[gG][oO][vV]|[fF][rR])\.)(?!(?<=(?:^|[^\p{L}])\p{Lu}\.)\s+(?:\p{Lu}\.|\p{Lu}\p{Ll}))\s+|\n+/u;
 
 /** A question that starts with one of these asks about the whole of it ("Do I like tea or coffee?"). */
 const ASKS = /^(?:am i|are you|are we|is|are|was|were|do|does|did|can|could|would|will|shall|should|may|might|has|have|what|who|whom|whose|why|how|when|where|which)(?![\p{L}\p{N}])/iu;
@@ -104,11 +104,14 @@ const MONTH_NAMES = new Set(['january', 'february', 'march', 'april', 'may', 'ju
 // the end, a mark, a surname, an emoji, or a plain word of chat. After "my name is" or "call me" anything may follow.
 const AFTER_NAME = new RegExp(`^(?:$|\\s*[.,!?;:)]|\\s+\\p{Lu}\\p{Ll}|\\s*\\p{Extended_Pictographic}|\\s+(?:so|from|here|btw|by the way|nice|hi|hello|lol|haha|please|pls|thanks|too|again|now|today)\\b|\\s*[-–—]\\s)`, 'u');
 
+// One capital then lowercase, and again for "McDonald", "DeShawn", "JoAnn"
+const NAME_WORD = '\\p{Lu}\\p{Ll}{1,19}(?:\\p{Lu}\\p{Ll}{1,10})*';
+
 const NAME_FORMS: Array<{ form: RegExp; bare: boolean }> = [
-    { form: new RegExp(`\\b[Mm]y name(?:${APOS}s| is)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
-    { form: new RegExp(`\\b[Cc]all me\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
-    { form: new RegExp(`\\b[Ii](?:${APOS}m| am)\\s+(?:[Cc]alled|[Nn]amed)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
-    { form: new RegExp(`(?:^|\\b(?:[Hh]i|[Hh]ello|[Hh]ey)\\W+)[Ii](?:${APOS}m| am)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: true },
+    { form: new RegExp(`\\b[Mm]y name(?:${APOS}s| is)\\s+(${NAME_WORD})`, 'u'), bare: false },
+    { form: new RegExp(`\\b[Cc]all me\\s+(${NAME_WORD})`, 'u'), bare: false },
+    { form: new RegExp(`\\b[Ii](?:${APOS}m| am)\\s+(?:[Cc]alled|[Nn]amed)\\s+(${NAME_WORD})`, 'u'), bare: false },
+    { form: new RegExp(`(?:^|\\b(?:[Hh]i|[Hh]ello|[Hh]ey)\\W+)[Ii](?:${APOS}m| am)\\s+(${NAME_WORD})`, 'u'), bare: true },
 ];
 
 // Text a person quotes is not theirs: "translate "my name is Sara" into French". Neither is what they ask to have written.
