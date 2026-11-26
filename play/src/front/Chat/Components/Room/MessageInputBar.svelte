@@ -12,6 +12,7 @@
     import { selectedChatMessageToReply } from "../../Stores/ChatStore";
     import LL from "../../../../i18n/i18n-svelte";
     import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
+    import { PendingBrickChatRoom } from "../../Bricks/PendingBrickChat";
     import KeyPasteStrip from "../../Bricks/Apps/KeyPasteStrip.svelte";
     import { looksLikeAKeyPastedWords } from "../../Bricks/Apps/KeyShapes";
     import { openAppsPage } from "../../Bricks/Apps/OpenApps";
@@ -179,7 +180,8 @@
     const hasSpaceDrafts = spaceGenerationOf(room) !== undefined;
     // The chat with the Brick for guests is kept on the device for a guest and goes with them: an unsent line is not saved
     // under a key every guest on the device would share, and nothing is left behind when the chat is dropped (#1997).
-    const keepsDraft = room.id !== GUEST_BRICK_ID;
+    // The screen of a Brick's chat being made keeps none either: what is typed there goes to the real chat's box when it takes over.
+    const keepsDraft = room.id !== GUEST_BRICK_ID && !(room instanceof PendingBrickChatRoom);
     // The stay the composer opened in: text left when that stay ends is kept there as unsent, never sent on.
     const mountSessionId = room instanceof ProximityChatRoom ? room.currentSessionId : undefined;
     // Back with the same people within a few minutes: what you'd typed before walking away goes back in here.
@@ -252,7 +254,7 @@
 
     // Something that looks like a key, written to a Brick: held here and never sent (game #2044). The server takes it out too.
     // Tracked on its own: a partner that turns out to be a bot after the box opened holds the text too (Sentry on #2048)
-    $: keysHeldHere = holdsKeys(partner, room instanceof GuestBrickChatRoom);
+    $: keysHeldHere = holdsKeys(partner, room instanceof GuestBrickChatRoom || room instanceof PendingBrickChatRoom);
     $: keyHeld = keysHeldHere && looksLikeAKeyPastedWords(message);
 
     function clearHeldKey() {
@@ -591,6 +593,11 @@
                 }
             }
         }
+        // The screen of a Brick's chat being made, shown again: what was typed and not sent when it was left comes back
+        if (room instanceof PendingBrickChatRoom) {
+            const kept = room.takeLeftTyped();
+            if (kept) message = kept;
+        }
         draftLoaded = true;
     });
 
@@ -780,6 +787,11 @@
         emojiPickerOpen = false;
         emojiPicker?.hide();
         emoteMenuStore.closeEmoteMenu();
+    }
+
+    /** What is in the box now and not sent: the screen of a Brick's chat being made hands it to the real chat. */
+    export function currentText(): string {
+        return keyHeld ? "" : message;
     }
 
     /** Words the person chose to edit (a voice bot's draft, #1664): into the box, after anything already typed, ready to change and send. */

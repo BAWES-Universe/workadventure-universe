@@ -2,7 +2,7 @@ import type { MatrixClient } from "matrix-js-sdk";
 import { EventType } from "matrix-js-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Readable } from "svelte/store";
-import { readable, writable } from "svelte/store";
+import { get, readable, writable } from "svelte/store";
 import { MapStore } from "@workadventure/store-utils";
 import type { MatrixRoomFolder } from "../MatrixRoomFolder";
 import type { MatrixChatRoom } from "../MatrixChatRoom";
@@ -634,6 +634,55 @@ describe("MatrixChatConnection: the chat with one person", () => {
             expect(createRoom).not.toHaveBeenCalled();
         });
 
+        it("withholds the list of people the account has a chat with as soon as opening a chat starts a repair, then reads it again", async () => {
+            const room = addRoom("!chat", { type: "multiple", dmInviter: ALICE });
+            let finishSave: (() => void) | undefined;
+            setAccountData.mockImplementationOnce(
+                (_type: string, next: Record<string, string[]>) =>
+                    new Promise((resolve) => {
+                        finishSave = () => {
+                            directMap = next;
+                            resolve({});
+                        };
+                    })
+            );
+            // The list was read before: an older answer is there
+            connection["_directChatPartners"].set(new Set(["@old:matrix.test"]));
+
+            const opening = connection.createDirectRoom(ALICE);
+            await vi.waitFor(() => expect(finishSave).toBeDefined());
+            expect(get(connection.directChatPartners)).toBeUndefined();
+
+            finishSave?.();
+            await expect(opening).resolves.toBe(room);
+            await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
+        });
+
+        it("reads the list of people the account has a chat with again when a repair never ends", async () => {
+            vi.useFakeTimers();
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            try {
+                addRoom("!stuck", { type: "multiple", dmInviter: ALICE });
+                setAccountData.mockImplementationOnce(
+                    () =>
+                        new Promise(() => {
+                            // never answers
+                        })
+                );
+                directMap = { "@bob:matrix.test": ["!bob"] };
+                connection["repairDirectAccountData"]();
+                await vi.advanceTimersByTimeAsync(10);
+                expect(get(connection.directChatPartners)).toBeUndefined();
+
+                await vi.advanceTimersByTimeAsync(31_000);
+                expect(get(connection.directChatPartners)?.has("@bob:matrix.test")).toBe(true);
+                expect(warn).toHaveBeenCalledTimes(1);
+            } finally {
+                warn.mockRestore();
+                vi.useRealTimers();
+            }
+        });
+
         it("opening the chat goes on after a few seconds when the repair is stuck", async () => {
             vi.useFakeTimers();
             try {
@@ -682,6 +731,23 @@ describe("MatrixChatConnection: the chat with one person", () => {
             connection["repairDirectAccountData"]();
             await vi.waitFor(() => expect(directMap).toEqual({ [ALICE]: ["!chat"] }));
             expect(setAccountData).toHaveBeenCalledOnce();
+        });
+
+        it("still counts a chat as one with its person when the list cannot be saved, and saves it again next time", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            addRoom("!chat", { type: "multiple", dmInviter: ALICE });
+            setAccountData.mockRejectedValueOnce(new Error("offline"));
+
+            connection["repairDirectAccountData"]();
+            await vi.waitFor(() => expect(setAccountData).toHaveBeenCalledOnce());
+            await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
+            expect(directMap).toBeUndefined();
+
+            // Not listed, so the next repair saves it
+            connection["repairDirectAccountData"]();
+            await vi.waitFor(() => expect(directMap).toEqual({ [ALICE]: ["!chat"] }));
+            expect(setAccountData).toHaveBeenCalledTimes(2);
+            warn.mockRestore();
         });
 
         it("saves all the missing ones in one write", async () => {
@@ -836,6 +902,46 @@ describe("MatrixChatConnection: the chat with one person", () => {
                 await settle();
 
                 expect(createMessagesRequest).toHaveBeenCalledTimes(2);
+            });
+
+            it("does not say who the account has a direct chat with while a repair is running, then says it with the repaired chat", async () => {
+                addRoom("!r1", { type: "multiple" });
+                firstEvents["!r1"] = [directInvite(ALICE)];
+                const seen: Array<ReadonlySet<string> | undefined> = [];
+                const stop = connection.directChatPartners.subscribe((partners) => seen.push(partners));
+
+                connection["repairDirectAccountData"]();
+                connection["refreshDirectChatPartners"]();
+                // The chat is about to be listed: Alice is not offered as someone with no chat yet
+                expect(get(connection.directChatPartners)).toBeUndefined();
+
+                await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
+                stop();
+                expect(seen.every((partners) => partners === undefined || partners.has(ALICE))).toBe(true);
+            });
+
+            it("withholds the list again, not keeping the older one, when a repair starts after the list was already read", async () => {
+                addRoom("!r1", { type: "multiple" });
+                firstEvents["!r1"] = [directInvite(ALICE)];
+                // The list was read before: an older answer is there
+                connection["_directChatPartners"].set(new Set(["@old:matrix.test"]));
+
+                connection["repairDirectAccountData"]();
+                connection["refreshDirectChatPartners"]();
+                expect(get(connection.directChatPartners)).toBeUndefined();
+
+                await vi.waitFor(() => expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true));
+            });
+
+            it("counts the people of a chat whose first invite could not be read as chat partners, so it is not one nobody opened", async () => {
+                addRoom("!r1", { type: "multiple" });
+                createMessagesRequest.mockRejectedValueOnce(new Error("offline"));
+
+                connection["repairDirectAccountData"]();
+                await vi.waitFor(() => expect(get(connection.directChatPartners)).toBeDefined());
+
+                expect(get(connection.directChatPartners)?.has(ALICE)).toBe(true);
+                expect(get(connection.directChatPartners)?.has(ME)).toBe(false);
             });
 
             it("when the list cannot be saved, still finds the chat for Message, and tries the save again next time", async () => {
