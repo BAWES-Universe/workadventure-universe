@@ -113,6 +113,7 @@ vi.mock("../Reconnect", () => ({
     signInInPopup: vi.fn(() => Promise.resolve("done")),
 }));
 
+import { get } from "svelte/store";
 import { reconnectApp } from "../Reconnect";
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
@@ -120,7 +121,6 @@ import AddManagerSheet from "../AddManagerSheet.svelte";
 import AppPage from "../AppPage.svelte";
 import AppsPage from "../AppsPage.svelte";
 import { appBrickStart, requestAppBrick, requestAppPage, takeAppBrickStart } from "../AppLink";
-import { get } from "svelte/store";
 import { forgetMyApps } from "../AppsStore";
 import GitHubWaitingSheet from "../GitHubWaitingSheet.svelte";
 import LendSheet from "../LendSheet.svelte";
