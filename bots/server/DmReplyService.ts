@@ -25,7 +25,8 @@ import type { BotConfiguration } from './AdminApiService';
 import { BrickLimitReached } from '../ai/BrickLimit';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
 import { withJobLines } from '../ai/JobStatusLine';
-import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
+import type { AppOfferNote, BrickNote, BrickOfferNote, ReportSentNote } from '../ai/BrickTools';
+import { reportSentText } from '../ai/ReportTools';
 import type { BotManager } from './BotManager';
 
 /** Label stored with direct messages in memory and analytics, where bubble messages store their space name. */
@@ -822,6 +823,9 @@ export class DmReplyService extends BaseBehavior {
         // its chat one tap away instead of a "couldn't answer" note
         const madeOne = bricks.find((note) => note.kind === 'made');
         if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
+        // A note sent to the Universe team with no words around it: the fixed line, so the chat still shows what was sent and Take it back under it
+        const reports = bricks.filter((note): note is ReportSentNote => note.kind === 'report');
+        if (!replyText.trim() && reports.length > 0) replyText = reportSentText(reports);
         // A reply that names a computer job but has no words of its own (the model made only a card or a file) says so in one fixed sentence: the job is confirmed to Orbit only once the person
         // received an event that tells them of it, so there is always one
         // Every job this reply names has its fixed status line APPENDED to the reply's own words, built from what Orbit really said of it (started, waiting and not started yet, still going, done,

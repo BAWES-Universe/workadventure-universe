@@ -5,6 +5,7 @@
  */
 import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 import { MAKE_BRICK_TOOL } from './BrickTools';
+import { REPORT_TOOL } from './ReportTools';
 import { FORGET_MEMORY_TOOL } from './MemoryTools';
 import { COMPUTER_TOOL } from './ComputerTools';
 import { COMPUTER_JOBS_TOOL } from './ComputerControlTools';
@@ -120,6 +121,8 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
         const name = shown(args.name);
         return { doing: name ? `Making ${name}` : 'Making a Brick', done: name ? `Made ${name}` : 'Made a Brick', detail: asDetail(shown(args.line)), group: `make_brick:${name ?? ''}`, kind: 'write' };
     },
+    // A note to the Universe team (mock "Brick reports inbox"): "Sent to the Universe team", with its title under it
+    [REPORT_TOOL]: (args) => ({ doing: 'Sending to the Universe team', done: 'Sent to the Universe team', detail: shown(args.title), group: 'send_to_universe_team', kind: 'write' }),
     // Forgetting something about the person (game #2003): "Forgot", with their own words under it
     [FORGET_MEMORY_TOOL]: (args) => ({ doing: 'Forgetting', done: 'Forgot', detail: shown(args.about), group: 'forget_memory', kind: 'write' }),
     // A job on the Brick's own computer (game #2000)

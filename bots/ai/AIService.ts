@@ -144,6 +144,7 @@ import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
+import { REPORT_TOOL, reportToolDefinition, runReportTool } from './ReportTools';
 import {
     InstantOffers,
     endInstantTask,
@@ -3805,6 +3806,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: lead the owner to add a key for a service, and make a page take a payment (game #2044). The same Bricks, in the same chats.
         if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...keyToolDefinitions());
 
+        // Tool: a note to the Universe team where the Brick hit a wall (mock "Brick reports inbox"). Every Brick, on by default, wherever it talks with Orbit there
+        if ((botClient || channel === 'dm') && botId && adminApiService?.isConfigured?.()) tools.push(reportToolDefinition());
+
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
@@ -4571,6 +4575,42 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return runKeyTool(name, args, { where: side, botId: where.botId, userId: memory.userUuid, apps });
     }
 
+    /**
+     * Runs send_to_universe_team (mock "Brick reports inbox"). In a direct message the note waits with the reply, so the game shows "Sent to the
+     * Universe team" under it; on the map the Brick says it in its words. The person is passed only for Orbit's one-way count; what they wrote is
+     * used here only to refuse a note that quotes them, and is never sent.
+     */
+    private async runReportToolCall(
+        args: Record<string, unknown>,
+        where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; botClient?: BotClient; spaceName?: string; channel: 'world' | 'dm'; source?: string }
+    ): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        if (!admin || !where.botId) return { error: "That can't be done in this chat right now." };
+        let personKey: string | undefined;
+        if (where.channel === 'dm') {
+            const uuid = memory?.userUuid;
+            if (uuid && !uuid.startsWith('temp-')) personKey = `${memory?.isGuest === false ? 'person' : 'guest'}:${uuid}`;
+        } else {
+            const asker = this.gatePerson(where.botId, where.playerId, where.botClient, where.spaceName);
+            const guest = where.playerId !== undefined ? this.chatCallFor(where.botId, where.playerId, where.botClient, where.spaceName)?.person.identifier : undefined;
+            personKey = asker.signedIn && asker.identifier ? `person:${asker.identifier}` : guest ? `guest:${guest}` : undefined;
+        }
+        if (personKey && !/^(person|guest):[A-Za-z0-9_.:-]{1,255}$/.test(personKey)) personKey = undefined;
+        const said = (memory?.conversationHistory ?? []).filter((line) => line.sender === 'person').map((line) => line.message);
+        const release = process.env.RELEASE_VERSION?.trim();
+        return runReportTool(args, {
+            admin,
+            botId: where.botId,
+            ...(personKey ? { personKey } : {}),
+            said,
+            ...(memory?.playerName ? { name: memory.playerName } : {}),
+            // Only a direct message shows the line under the answer; a note pushed on the map would wait for the next direct reply
+            notes: where.channel === 'dm' && memory ? (memory.pendingBricks ??= []) : null,
+            context: { ownKey: where.source === 'own-key', ...(release ? { gameVersion: release.slice(0, 40) } : {}) },
+        });
+    }
+
     /** Runs offer_app for the person in this direct message. What the game shows for it waits with the reply. */
     private async runAppToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
@@ -5317,6 +5357,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runAppToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId }
+                        );
+                        break;
+
+                    case REPORT_TOOL:
+                        result = await this.runReportToolCall(
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId, botClient, spaceName, channel, source }
                         );
                         break;
 

@@ -1,0 +1,197 @@
+<script lang="ts">
+    import { fly } from "svelte/transition";
+    import { closeModal } from "svelte-modals";
+    import LL from "../../../i18n/i18n-svelte";
+    import PageButton from "../../external-modules/bots/components/page/PageButton.svelte";
+    import { canTakeBack, type BrickReport } from "./BrickReport";
+    import { takeBackReport, takenBackReports } from "./BrickReportStore";
+    import { keepFocusInside } from "./keepFocusInside";
+    import { IconX } from "@wa-icons";
+    import "./BrickGroups.css";
+
+    /**
+     * What a Brick sent to the Universe team (mock "Brick reports inbox", screen 7): the note exactly as Orbit kept it, what is never sent,
+     * and Take it back for 24 hours. Anyone in the chat can. This is the only control, and it is per note, not a setting.
+     */
+    export let isOpen: boolean;
+    export let report: BrickReport;
+    export let messageAt: number | null = null;
+
+    let busy = false;
+    let problem: "failed" | "too_late" | null = null;
+
+    $: taken = $takenBackReports.has(report.id);
+    $: offerTakeBack = !taken && canTakeBack(report, messageAt, Date.now());
+
+    function takeBack() {
+        if (busy) return;
+        busy = true;
+        problem = null;
+        takeBackReport(report.id, report.key)
+            .then((outcome) => {
+                if (outcome === "taken") closeModal();
+                else problem = outcome;
+            })
+            .catch(() => (problem = "failed"))
+            .finally(() => (busy = false));
+    }
+</script>
+
+{#if isOpen}
+    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+    <div class="rs-scrim" on:click|self={closeModal}>
+        <div
+            class="rs u-surface"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="report-sheet-title"
+            data-testid="brickReportSheet"
+            use:keepFocusInside={closeModal}
+            transition:fly={{ y: 16, duration: 200 }}
+        >
+            <button
+                type="button"
+                class="u-close absolute top-2 end-2"
+                aria-label={$LL.chat.brick.report.close()}
+                data-testid="brickReportClose"
+                on:click={closeModal}
+            >
+                <IconX font-size="20" />
+            </button>
+            <h2 id="report-sheet-title" class="u-display rs-title">{$LL.chat.brick.report.sheetTitle()}</h2>
+            <dl class="rs-fields">
+                <div>
+                    <dt>{$LL.chat.brick.report.kind()}</dt>
+                    <dd data-testid="brickReportKind">
+                        {$LL.chat.brick.report.kinds[report.kind]()} · {$LL.chat.brick.report.areas[report.area]()}
+                    </dd>
+                </div>
+                <div>
+                    <dt>{$LL.chat.brick.report.title()}</dt>
+                    <dd data-testid="brickReportTitle">{report.title}</dd>
+                </div>
+                {#if report.tried}
+                    <div>
+                        <dt>{$LL.chat.brick.report.tried()}</dt>
+                        <dd>{report.tried}</dd>
+                    </div>
+                {/if}
+                {#if report.stopped}
+                    <div>
+                        <dt>{$LL.chat.brick.report.stopped()}</dt>
+                        <dd>{report.stopped}</dd>
+                    </div>
+                {/if}
+                {#if report.idea}
+                    <div>
+                        <dt>{$LL.chat.brick.report.idea()}</dt>
+                        <dd>{report.idea}</dd>
+                    </div>
+                {/if}
+            </dl>
+            <p class="rs-never">{$LL.chat.brick.report.never()}</p>
+            {#if taken}
+                <p class="rs-note" data-testid="brickReportSheetTakenBack">{$LL.chat.brick.report.takenBack()}</p>
+            {/if}
+            {#if problem}
+                <p class="rs-note" role="alert" data-testid="brickReportProblem">
+                    {problem === "too_late" ? $LL.chat.brick.report.tooLate() : $LL.chat.brick.report.takeBackFailed()}
+                </p>
+            {/if}
+            <div class="rs-btns">
+                <PageButton tall go testId="brickReportDone" on:click={closeModal}
+                    >{$LL.chat.brick.report.done()}</PageButton
+                >
+                {#if offerTakeBack && problem !== "too_late"}
+                    <PageButton tall danger disabled={busy} testId="brickReportTakeBack" on:click={takeBack}
+                        >{$LL.chat.brick.report.takeBack()}</PageButton
+                    >
+                {/if}
+            </div>
+        </div>
+    </div>
+{/if}
+
+<style>
+    .rs-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 2001;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.5);
+        pointer-events: auto;
+    }
+    .rs {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 428px;
+        max-height: 100%;
+        margin: 0;
+        padding: 20px;
+        overflow-y: auto;
+        border-radius: 20px;
+        color: #fff;
+        text-align: start;
+        font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    @media (max-width: 640px) {
+        .rs-scrim {
+            align-items: flex-end;
+            padding: 0;
+        }
+        .rs {
+            max-width: none;
+            padding-bottom: calc(20px + env(safe-area-inset-bottom));
+            border-radius: 20px 20px 0 0;
+        }
+    }
+    .rs-title {
+        margin: 0;
+        padding-inline-end: 40px;
+        font-size: 1.25rem;
+        line-height: 1.15;
+        font-weight: 800;
+        text-transform: none;
+        letter-spacing: normal;
+        font-family: inherit;
+    }
+    .rs-fields {
+        display: grid;
+        gap: 10px;
+        margin: 0;
+    }
+    .rs-fields dt {
+        font-size: 10.5px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .rs-fields dd {
+        margin: 2px 0 0;
+        font-size: 14px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+    }
+    .rs-never,
+    .rs-note {
+        margin: 0;
+        font-size: 12.5px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .rs-btns {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        gap: 10px;
+        margin-top: 4px;
+    }
+</style>

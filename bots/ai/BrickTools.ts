@@ -68,7 +68,27 @@ export interface AppOfferNote {
     other: { label: string; line: string; search: string } | null;
 }
 
-export type BrickNote = MadeBrickNote | BrickOfferNote | AppOfferNote;
+/**
+ * A note this turn sent to the Universe team (mock "Brick reports inbox"): the game shows "Sent to the Universe team" under the answer,
+ * with what was sent and Take it back. See ReportTools.ts.
+ */
+export interface ReportSentNote {
+    kind: 'report';
+    /** Orbit's id of the note, and the key anyone in the chat takes it back with (24 hours). */
+    id: string;
+    key: string;
+    /** The note as Orbit kept it, after cleaning. `noteKind` is Problem, Can't do, Friction or Idea (`kind` above says this is a report). */
+    noteKind: 'problem' | 'cant_do' | 'friction' | 'idea';
+    area: string;
+    title: string;
+    tried: string;
+    stopped: string;
+    idea: string;
+    /** When it was sent (ms), so the chat stops offering Take it back after 24 hours. */
+    sentAt: number;
+}
+
+export type BrickNote = MadeBrickNote | BrickOfferNote | AppOfferNote | ReportSentNote;
 
 const NAME_MAX = 40;
 const LINE_MAX = 120;

@@ -704,6 +704,27 @@ export class BotApiService {
     }
 
     /**
+     * Takes back a note a Brick sent to the Universe team (mock "Brick reports inbox") with the key its message carries, within 24 hours.
+     * "taken" also when it was taken back already; "too_late" past 24 hours; "failed" when Orbit could not be asked or did not know it.
+     */
+    async takeBackBrickReport(id: string, key: string): Promise<"taken" | "too_late" | "failed"> {
+        try {
+            const response = await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, (signal) =>
+                this.fetch("/api/me/brick-reports/take-back", {
+                    method: "POST",
+                    body: JSON.stringify({ id, key }),
+                    signal,
+                })
+            );
+            const data = (await response.json()) as { takenBack?: unknown; reason?: unknown };
+            if (data.takenBack === true) return "taken";
+            return data.reason === "too_late" ? "too_late" : "failed";
+        } catch {
+            return "failed";
+        }
+    }
+
+    /**
      * How many things in Orbit wait for this player's answer (pending invitations for now), for the count on the
      * Orbit button. Null when it can't be known: a guest, no Orbit, or Orbit didn't answer.
      */

@@ -169,6 +169,26 @@ export interface ArtifactMediaUpload {
     body: Uint8Array;
 }
 
+/** One note a Brick sends to the Universe team (mock "Brick reports inbox"). Only general words: the tool and Orbit both clean it. */
+export interface BrickReportSend {
+    botId: string;
+    /** Who was in the chat (person:<id>, guest:<id>): Orbit keeps only a one-way hash, to count different people. */
+    personKey?: string;
+    kind: 'problem' | 'cant_do' | 'friction' | 'idea';
+    area: 'apps' | 'computer' | 'pages' | 'chat' | 'voice' | 'map' | 'memory' | 'files' | 'credit' | 'other';
+    title: string;
+    tried: string;
+    stopped: string;
+    idea: string;
+    effect: 'stopped' | 'slowed' | 'idea';
+    context?: { model?: string; ownKey?: boolean; gameVersion?: string; tools?: string[] };
+}
+
+/** The note as Orbit kept it, after cleaning: what the chat shows under "What was sent". */
+export type BrickReportKept = Pick<BrickReportSend, 'kind' | 'area' | 'title' | 'tried' | 'stopped' | 'idea' | 'effect'>;
+
+export type BrickReportOutcome = { sent: true; id: string; takeBackKey: string; note: BrickReportKept } | { sent: false; reason: 'empty' | 'limit' | 'unknown_brick' };
+
 /** Orbit said no, or could not be asked. `code` is Orbit's (edit_not_found, change_not_allowed, ...) or orbit_unavailable. */
 export class ArtifactCallError extends Error {
     constructor(
@@ -1481,6 +1501,28 @@ export class AdminApiService {
             after: typeof response.data?.after === 'number' && response.data.after >= 2 ? response.data.after : 3,
             topics: topics.map((one: unknown) => (one as { topic?: unknown } | null)?.topic).filter((topic: unknown): topic is string => typeof topic === 'string'),
         };
+    }
+
+    /**
+     * A Brick's note to the Universe team (mock "Brick reports inbox"): Orbit cleans it (no emails, phone numbers, links, @names or long numbers),
+     * counts it into a problem and answers it as kept, with the key the chat holds to take it back. A refusal (`empty`, `limit`, `unknown_brick`)
+     * is an answer, not an error. Throws only when Orbit cannot be reached or says something else.
+     */
+    async sendBrickReport(report: BrickReportSend): Promise<BrickReportOutcome> {
+        const response = await this.brickCall<Record<string, unknown>>('post', 'api/bricks/reports', report);
+        const data = response.data ?? {};
+        if (data.sent === true && typeof data.id === 'string' && typeof data.takeBackKey === 'string' && data.note && typeof data.note === 'object') {
+            const note = data.note as Record<string, unknown>;
+            const words = (value: unknown) => (typeof value === 'string' ? value : '');
+            return {
+                sent: true,
+                id: data.id,
+                takeBackKey: data.takeBackKey,
+                note: { kind: report.kind, area: report.area, effect: report.effect, title: words(note.title), tried: words(note.tried), stopped: words(note.stopped), idea: words(note.idea) },
+            };
+        }
+        const reason = data.reason === 'limit' || data.reason === 'empty' || data.reason === 'unknown_brick' ? data.reason : 'empty';
+        return { sent: false, reason };
     }
 
     /** May the suggestion for this topic be shown now? Orbit says yes once per person and topic, on every device (#1996). */
