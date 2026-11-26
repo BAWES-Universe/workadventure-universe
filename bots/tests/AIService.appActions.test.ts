@@ -452,6 +452,16 @@ describe('an action approved on its own card', () => {
         expect(await service.findToolEntry('b1', 'GOOGLECALENDAR_DELETE_EVENT', 'cal1')).toMatchObject({ serverId: 'cal1', appAction: { slug: 'GOOGLECALENDAR_DELETE_EVENT', batchTool: BATCH } });
         expect(await service.findToolEntry('b1', BATCH, 'cal1')).toBe(calendar);
     });
+
+    it('finds a link tool saved on the Brick’s other ready-made App as that App’s own tool, never as an action in a batch', async () => {
+        const service = new AIService(null!, { adminApiToken: 't' } as never, '');
+        const calendar: ToolServerEntry = { ...GMAIL, serverId: 'cal1', serverName: 'Google Calendar', fingerprint: 'fp-cal-connections' };
+        const connections = { ...GMAIL, fingerprint: 'fp-connections', otherApps: [calendar] };
+        vi.spyOn(MCPConnector, 'discoverToolsWithMapping').mockResolvedValue({ tools: [], toolServerMap: new Map([['COMPOSIO_MANAGE_CONNECTIONS', connections], [BATCH, { ...GMAIL, otherApps: [calendar] }]]) } as never);
+        const found = await service.findToolEntry('b1', 'COMPOSIO_MANAGE_CONNECTIONS', 'cal1');
+        expect(found).toBe(calendar);
+        expect(found).not.toHaveProperty('appAction');
+    });
 });
 
 describe('reading each action’s outcome from a batch answer', () => {

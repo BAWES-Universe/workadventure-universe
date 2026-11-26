@@ -484,6 +484,9 @@ export class AIService {
         const entry = found.toolServerMap.get(toolName) ?? null;
         // A card saved before the server was known (or by another App with a tool of the same name) is not this App's
         if (entry && (!serverId || entry.serverId === serverId)) return entry;
+        // A tool every ready-made App's link has (search, connections, the batch tool) saved on another of the Brick's Apps is that App's own tool
+        const own = serverId && entry ? appsOf(entry).find((one) => one.readyMade && one.serverId === serverId) : undefined;
+        if (own) return own;
         // One action of a ready-made App saved on its own card (game "Ask, Do, Ignore" for Bricks): it runs through that App's batch tool
         const batch = found.toolServerMap.get(APP_BATCH_TOOL);
         const app = serverId && batch && (batch.readyMade || batch.otherApps?.length) ? appsOf(batch).find((one) => one.readyMade && one.serverId === serverId) : undefined;
