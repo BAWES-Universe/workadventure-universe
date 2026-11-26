@@ -959,7 +959,8 @@ describe('MCPConnector', () => {
                 const sent = body?.message?.method ?? body?.method;
                 const list = { jsonrpc: '2.0', id: '1', result: { tools: [batch] } };
                 if (body?.message) return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
-                return sent === 'initialize' ? MOCK_INIT_RESPONSE : { data: list };
+                // The App that is not ready-made has a tool of its own (one with the same name as a ready-made App's would take that name: own Apps first)
+                return sent === 'initialize' ? MOCK_INIT_RESPONSE : { data: { ...list, result: { tools: [{ ...batch, name: 'plain_tool' }] } } };
             });
             const result = await MCPConnector.discoverToolsWithMapping('bot-123', 'https://admin.example.com', 'admin-token', 'bot-service-token');
             const entry = result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL');
@@ -1001,6 +1002,29 @@ describe('MCPConnector', () => {
             expect(entry?.ownCopyApps).toEqual(['Exa']);
             expect(result.toolServerMap.get('web_search_exa')?.ownCopyApps).toBeUndefined();
             expect(asked.some((target) => target.includes('rm-exa'))).toBe(false);
+            vi.unstubAllEnvs();
+        });
+
+        it("gives a tool's name to the person's own App over a ready-made App's, whichever answers first", async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            const batch = { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', description: 'Run actions', inputSchema: { type: 'object', properties: {} } };
+            for (const order of [['rm-first', 'own-second'], ['own-first', 'rm-second']]) {
+                const [a, b] = order;
+                const row = (id: string) => ({ id, botId: `bot-${a}`, name: id, serverUrl: `https://${id}.link/mcp`, authType: 'none' as const, enabled: true, readyMade: id.startsWith('rm'), connectionId: `conn-${id}`, ownCopyServerId: null });
+                mockedAxios.get.mockResolvedValueOnce({ data: [row(a), row(b)] });
+                mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                    const sent = body?.message?.method ?? body?.method;
+                    const list = { jsonrpc: '2.0', id: '1', result: { tools: [{ ...batch, description: body?.message ? 'ready-made' : 'own' }] } };
+                    if (body?.message) return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
+                    return sent === 'initialize' ? MOCK_INIT_RESPONSE : { data: list };
+                });
+                const result = await MCPConnector.discoverToolsWithMapping(`bot-${a}`, 'https://admin.example.com', 'admin-token', 'bot-service-token');
+                const own = order.find((id) => id.startsWith('own'));
+                expect(result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL')).toMatchObject({ serverId: own });
+                expect(result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL')?.readyMade).toBeUndefined();
+                // One definition, and it is the own App's
+                expect(result.tools.filter((tool: any) => tool.function.name === 'COMPOSIO_MULTI_EXECUTE_TOOL').map((tool: any) => tool.function.description)).toEqual(['own']);
+            }
             vi.unstubAllEnvs();
         });
 
