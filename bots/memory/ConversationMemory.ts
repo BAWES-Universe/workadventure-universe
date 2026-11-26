@@ -567,8 +567,8 @@ export class ConversationMemory {
             if (kept !== undefined && kept.toLowerCase() === like.toLowerCase()) {
                 this.stampInfo(info, `pref:${kept}`, heard, false, at);
             } else if (kept !== undefined && plainThing(like) === like) {
-                // "I like pizza" after "my favorite food is pizza": nothing new, and nobody who only heard this hears the favorite
-                (info.drawnFrom ??= {})[`pref:${kept}`] = at;
+                // "I like pizza" after "my favorite food is pizza": nothing is new, so nothing changes: not who heard the favorite, and not
+                // the line it was drawn from (that would tell Forget it was said again after it was forgotten)
             } else {
                 // New, or a favorite that says more than the plain like kept: it replaces it, with the stamp of the line it came from
                 if (kept !== undefined) {

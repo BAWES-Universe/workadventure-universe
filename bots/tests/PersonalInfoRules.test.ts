@@ -348,6 +348,28 @@ describe('what the bot keeps from a chat', () => {
         expect(Object.keys(info.drawnFrom ?? {}).filter((key) => key.startsWith('pref:'))).toEqual(['pref:pizza (favorite food)']);
     });
 
+    it('a plain like said after a favorite changes nothing: a forget made before it still takes the favorite, with the line it came from', () => {
+        const SARA = 'uuid-sara';
+        const memory = new ConversationMemory();
+        memory.useHeard((_botId, _playerId, spaceName) => (spaceName === 'dm' ? heardInDm() : { place: 'nearby', with: [SARA] }));
+        const say = (text: string, at: number, spaceName: string) => {
+            memory.addMessage(BOT, PERSON, text, 'person', spaceName, false);
+            memory.getMemory(BOT, PERSON)!.conversationHistory.at(-1)!.timestamp = at;
+            memory.extractPersonalInfo(BOT, PERSON, text, spaceName, at);
+        };
+        say('my favorite food is pizza', 1000, 'group');
+        // A copy that still holds the favorite hears the plain like after the forget (made at 1500)
+        say('I like pizza', 2000, 'dm');
+        const stored = memory.getMemory(BOT, PERSON)!;
+        const target = memoryItemsOf(stored).find((item) => item.kind === 'pref')!;
+        expect(stored.personalInfo.drawnFrom?.['pref:pizza (favorite food)']).toBe(1000);
+        expect(dropItems(stored, new Set([target.id]), new Map([[target.id, 1500]]))).toBe(1);
+        expect(stored.personalInfo.preferences).toEqual([]);
+        expect(memoryItemsOf(stored).filter((item) => item.kind === 'pref')).toEqual([]);
+        expect(stored.conversationHistory.map((line) => line.message)).not.toContain('my favorite food is pizza');
+        expect(Object.keys(stored.personalInfo.heard ?? {}).filter((key) => key.startsWith('pref:'))).toEqual([]);
+    });
+
     it('forgetting a favorite takes the lines that say it plainly, long or short, said once or twice', () => {
         for (const [thing, kind, reply] of [['pizza', 'food', 'Pizza is your favorite food, got it!'], ['tea', 'drink', 'Tea is your favorite drink!']]) {
             const memory = new ConversationMemory();
