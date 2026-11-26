@@ -18,6 +18,22 @@ function sentencesOf(message: string): Array<{ text: string; question: boolean }
     return parts.map((text) => ({ text, question: /\?\s*$/u.test(text) }));
 }
 
+const CLAUSE_END = /\s*(?:[,;:]|\b(?:and|but|though|although|however|because|while|yet)\b)\s*/iu;
+
+/**
+ * The parts of a message that each say one thing ("I'm not hungry, I'm tired" is two), each with whether its sentence was a
+ * question. A "not" is only looked for in the part that holds the thing, so "my name is Sara and I don't like tea" keeps the name.
+ */
+function clausesOf(message: string): Array<{ text: string; question: boolean }> {
+    return sentencesOf(message).flatMap((sentence) =>
+        sentence.text
+            .split(CLAUSE_END)
+            .map((text) => text.trim())
+            .filter(Boolean)
+            .map((text) => ({ text, question: sentence.question })),
+    );
+}
+
 /** Words said just before "like" / "feel" / "am" that turn it around, or put it in another's mouth. */
 const NEGATED = new RegExp(`\\b(?:not|never|no longer|hardly|barely|rarely|dont|cannot|can${APOS}?t|won${APOS}?t|isn${APOS}?t|wasn${APOS}?t|don${APOS}?t|doesn${APOS}?t|didn${APOS}?t|n${APOS}t)\\b|n${APOS}t\\b`, 'iu');
 
@@ -33,27 +49,28 @@ const NOT_A_NAME = new Set([
     'google', 'gmail', 'github', 'slack', 'notion', 'calendar', 'email', 'universe', 'brick',
 ]);
 
-// What may follow a name for it to be a name and not the start of a longer phrase ("I'm Google mail" is not a name)
-const AFTER_NAME = new RegExp(`^(?:$|\\s*[.,!?;:)]|\\s+(?:and|but|so|from|here|btw|by the way|nice|hi|hello)\\b|\\s*[-–—]\\s)`, 'u');
+// What may follow a bare "I'm Sara" for it to be a name and not the start of a longer phrase ("I'm Google mail" is not a name):
+// the end, a mark, a surname, an emoji, or a plain word of chat. After "my name is" or "call me" anything may follow.
+const AFTER_NAME = new RegExp(`^(?:$|\\s*[.,!?;:)]|\\s+\\p{Lu}\\p{Ll}|\\s*\\p{Extended_Pictographic}|\\s+(?:so|from|here|btw|by the way|nice|hi|hello|lol|haha|please|pls|thanks|too|again|now|today)\\b|\\s*[-–—]\\s)`, 'u');
 
-const NAME_FORMS: RegExp[] = [
-    new RegExp(`\\b[Mm]y name(?:${APOS}s| is)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'),
-    new RegExp(`\\b[Cc]all me\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'),
-    new RegExp(`\\b[Ii](?:${APOS}m| am)\\s+(?:called|named)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'),
-    new RegExp(`(?:^|[.!?,;:]\\s*|\\b(?:[Hh]i|[Hh]ello|[Hh]ey)\\W+)[Ii](?:${APOS}m| am)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'),
+const NAME_FORMS: Array<{ form: RegExp; bare: boolean }> = [
+    { form: new RegExp(`\\b[Mm]y name(?:${APOS}s| is)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
+    { form: new RegExp(`\\b[Cc]all me\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
+    { form: new RegExp(`\\b[Ii](?:${APOS}m| am)\\s+(?:called|named)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: false },
+    { form: new RegExp(`(?:^|\\b(?:[Hh]i|[Hh]ello|[Hh]ey)\\W+)[Ii](?:${APOS}m| am)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: true },
 ];
 
 /** The person's own name, only when they say it is: "my name is Sara", "call me Sara", "I'm Sara". */
 export function nameIn(message: string): string | null {
-    for (const sentence of sentencesOf(message)) {
+    for (const sentence of clausesOf(message)) {
         if (sentence.question || NEGATED.test(sentence.text)) continue;
-        for (const form of NAME_FORMS) {
+        for (const { form, bare } of NAME_FORMS) {
             const match = form.exec(sentence.text);
             if (!match?.[1]) continue;
             const name = match[1];
             if (NOT_A_NAME.has(name.toLowerCase())) continue;
             const rest = sentence.text.slice((match.index ?? 0) + match[0].length);
-            if (!AFTER_NAME.test(rest)) continue;
+            if (bare && !AFTER_NAME.test(rest)) continue;
             return name;
         }
     }
@@ -142,7 +159,7 @@ const STATE = new RegExp(`\\bi(?:${APOS}m| am| feel)\\s+(${STATES})\\b(?!\\s+(?:
 
 /** How the person says they feel now ("I'm tired"), and not what they say they do not ("I'm not tired", "am I tired?"). */
 export function stateIn(message: string): string | null {
-    for (const sentence of sentencesOf(message)) {
+    for (const sentence of clausesOf(message)) {
         if (sentence.question || NEGATED.test(sentence.text)) continue;
         const match = STATE.exec(sentence.text);
         if (match?.[1]) return match[1].toLowerCase();
@@ -161,12 +178,12 @@ const BIRTHDAY_ON = [
 
 /** True when the person says it is their own birthday today (not a friend's, and not "it's not my birthday"). */
 export function birthdayIsToday(message: string): boolean {
-    return sentencesOf(message).some((sentence) => !sentence.question && !NEGATED.test(sentence.text) && BIRTHDAY_TODAY.test(sentence.text));
+    return clausesOf(message).some((sentence) => !sentence.question && !NEGATED.test(sentence.text) && BIRTHDAY_TODAY.test(sentence.text));
 }
 
 /** The day the person says their own birthday is, as they wrote it ("March 3", "3/3"). */
 export function birthdayDateIn(message: string): string | null {
-    for (const sentence of sentencesOf(message)) {
+    for (const sentence of clausesOf(message)) {
         if (sentence.question || NEGATED.test(sentence.text)) continue;
         for (const form of BIRTHDAY_ON) {
             const match = form.exec(sentence.text);

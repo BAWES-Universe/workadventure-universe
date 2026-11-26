@@ -22,6 +22,16 @@ describe('nameIn', () => {
         expect(nameIn('I am called Sara')).toBe('Sara');
     });
 
+    it('keeps a name that comes with a surname, an emoji or chat words, or next to something else said with a "not"', () => {
+        expect(nameIn('My name is Sara Ahmed')).toBe('Sara');
+        expect(nameIn('Call me Sara lol')).toBe('Sara');
+        expect(nameIn("I'm Sara \u{1F600}")).toBe('Sara');
+        expect(nameIn("I'm Sara Ahmed")).toBe('Sara');
+        expect(nameIn("My name is Sara and I don't like coffee")).toBe('Sara');
+        expect(nameIn("I don't like coffee, my name is Sara")).toBe('Sara');
+        expect(nameIn("I'm not Sara, I'm Noor")).toBe('Noor');
+    });
+
     it('never takes a name from a task or a verb phrase', () => {
         expect(nameIn('Please connect my Google mail')).toBeNull();
         expect(nameIn('can you open my Calendar and read it')).toBeNull();
@@ -84,6 +94,18 @@ describe('stateIn', () => {
         expect(stateIn('I am never sad')).toBeNull();
         expect(stateIn('Am I tired?')).toBeNull();
         expect(stateIn("I'm sick of waiting")).toBeNull();
+    });
+});
+
+describe('a "not" is only looked for beside the thing it is about', () => {
+    it('keeps a feeling or a birthday said next to something unrelated that has a "not"', () => {
+        expect(stateIn("I'm tired but I don't want to stop")).toBe('tired');
+        expect(stateIn("I'm not hungry, I'm tired")).toBe('tired');
+        expect(stateIn("I'm not tired but I'm hungry")).toBe('hungry');
+        expect(stateIn("I'm not tired and not hungry")).toBeNull();
+        expect(birthdayIsToday("it's my birthday and I can't wait")).toBe(true);
+        expect(birthdayDateIn("My birthday is March 3, don't forget")).toBe('March 3');
+        expect(birthdayIsToday("it's not my birthday, it's tomorrow")).toBe(false);
     });
 });
 
