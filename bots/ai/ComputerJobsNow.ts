@@ -105,18 +105,12 @@ const sameTitle = (title: string): string => title.replace(/[\u0000-\u001f\u007f
 /**
  * The jobs that ended lately, less any that may be a job `live` (read a moment before, apart from them) still lists as working, waiting or in line: a job that ended between
  * the two reads is told in one state only, the live one, never as both going and ended. Neither read carries ids, so a live job is matched by its title and by Orbit's own
- * times: the newest ended job of that title that ended after the live one was asked for may be that same job, and it is left out, even when a new job of the same title took
- * its place in between. One that ended before the live one was asked for is another job and stays. With no time to tell (no askedAt, or no endedAt), the newest one of the title
- * is left out: when in doubt, never both.
+ * times: EVERY ended job of that title that ended after the live one was asked for may be that same job (other jobs of the title can start and end in between too), and all
+ * of them are left out. One that ended before the live one was asked for is another job and stays. With no time to tell (no askedAt, or no endedAt), it is left out: when in
+ * doubt, never both.
  */
 export function endedNotLive(ended: EndedJobNow[], live: ReadonlyArray<{ title: string; askedAt?: number }>): EndedJobNow[] {
-    const out = new Set<number>();
-    for (const job of live) {
-        // `ended` is newest first: the first match is the one that ended last
-        const at = ended.findIndex((one, index) => !out.has(index) && sameTitle(one.title) === sameTitle(job.title) && (job.askedAt === undefined || one.endedAt === null || one.endedAt >= job.askedAt));
-        if (at >= 0) out.add(at);
-    }
-    return ended.filter((_, index) => !out.has(index));
+    return ended.filter((one) => !live.some((job) => sameTitle(one.title) === sameTitle(job.title) && (job.askedAt === undefined || one.endedAt === null || one.endedAt >= job.askedAt)));
 }
 
 /** "just now", "5 minutes ago", "3 hours ago", "2 days ago". */

@@ -280,8 +280,8 @@ describe('endedNotLive keeps each job in one state', () => {
     const live = (title: string, askedAgo?: number) => ({ title, ...(askedAgo !== undefined ? { askedAt: min(-askedAgo) } : {}) });
     const done = (title: string, ago: number | null): EndedJobNow => ({ ...airbnb, title, endedAt: ago === null ? null : min(-ago) });
 
-    it('leaves out the newest ended job of a live title that ended after the live one was asked for', () => {
-        expect(endedNotLive([done('A', 1), done('B', 2), done('A', 3)], [live('A', 10)]).map((job) => job.endedAt)).toEqual([min(-2), min(-3)]);
+    it('leaves out the ended jobs of a live title that ended after the live one was asked for', () => {
+        expect(endedNotLive([done('A', 1), done('B', 2), done('A', 3)], [live('A', 10)]).map((job) => job.endedAt)).toEqual([min(-2)]);
     });
 
     it('a job that ended and a new one of the same title that began between the reads: the ended one is still left out', () => {
@@ -296,13 +296,14 @@ describe('endedNotLive keeps each job in one state', () => {
         expect(endedNotLive(rerun, [])).toEqual(rerun);
     });
 
-    it('with no time to tell them apart, the newest one of the title is left out, never both', () => {
-        expect(endedNotLive([done('A', 1), done('A', 30)], [live('A')]).map((job) => job.endedAt)).toEqual([min(-30)]);
-        expect(endedNotLive([done('A', null)], [live('A', 10)])).toEqual([]);
+    it('with no time to tell them apart, every ended job of the title is left out, never both', () => {
+        expect(endedNotLive([done('A', 1), done('A', 30)], [live('A')])).toEqual([]);
+        expect(endedNotLive([done('A', null), done('A', 30)], [live('A', 10)]).map((job) => job.endedAt)).toEqual([min(-30)]);
     });
 
-    it('one live job leaves out at most one ended job', () => {
-        expect(endedNotLive([done('A', 1), done('A', 2)], [live('A', 10)]).map((job) => job.endedAt)).toEqual([min(-2)]);
+    it('a job that ended, then a new one of the same title that started AND ended, all between the reads: neither is told as ended', () => {
+        // Live read: A (asked 10 min ago). Then A ends, B of the same title starts and ends. Ended read: B, then A. A must not be told as ended beside its live line
+        expect(endedNotLive([done('A', 1), done('A', 2), done('A', 30)], [live('A', 10)]).map((job) => job.endedAt)).toEqual([min(-30)]);
     });
 
     it('matches titles however their spaces were written, and as far as the jobs line keeps them', () => {
