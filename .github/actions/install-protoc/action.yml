@@ -1,0 +1,24 @@
+name: Install Protoc
+description: Installs protoc 3.20.3 (the last 3.x release) from its release file, with retries, so a failed GitHub API lookup can't fail the job.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        version=3.20.3
+        for attempt in 1 2 3 4 5; do
+          if curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${version}/protoc-${version}-linux-x86_64.zip" -o "${RUNNER_TEMP}/protoc.zip"; then
+            break
+          fi
+          if [ "${attempt}" = 5 ]; then
+            echo "protoc ${version} could not be downloaded" >&2
+            exit 1
+          fi
+          sleep $((attempt * 5))
+        done
+        mkdir -p "${RUNNER_TEMP}/protoc"
+        unzip -q -o "${RUNNER_TEMP}/protoc.zip" -d "${RUNNER_TEMP}/protoc"
+        echo "${RUNNER_TEMP}/protoc/bin" >> "${GITHUB_PATH}"
+        "${RUNNER_TEMP}/protoc/bin/protoc" --version
