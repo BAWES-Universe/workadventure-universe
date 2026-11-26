@@ -235,13 +235,13 @@ describe('Brick reads its computer fresh with every message', () => {
 
 describe('the jobs tool lists what ended lately too', () => {
     const emptyLine = { ok: true, view: { job: null, queued: [], on: true } };
-    const run = (endedLately?: () => Promise<ComputerJobsNow | null>, line: unknown = emptyLine) => {
+    const run = (endedLately?: () => Promise<EndedJobNow[] | null>, line: unknown = emptyLine) => {
         const controlComputerJobs = vi.fn(async (_bot: string, _user: string, _ask: ComputerControlAsk) => controlAnswerOf(line));
         return runComputerControlTool(COMPUTER_JOBS_TOOL, {}, { admin: { controlComputerJobs }, botId: BRICK, userId: 'uuid-alice', state: newControlState(), confirmations: new ConfirmationQueue(), inbound: { eventId: '$msg:one' }, ...(endedLately ? { endedLately } : {}) });
     };
 
     it('nothing live but a finished job: it is listed, and the Brick is told never to say there was no job', async () => {
-        const result = await run(async () => ({ live: [], ended: [{ ...airbnb, endedAt: Date.now() - 9 * 60_000 }] }));
+        const result = await run(async () => [{ ...airbnb, endedAt: Date.now() - 9 * 60_000 }]);
         expect(result.jobs).toEqual([]);
         expect(result.endedLately).toEqual(['“Airbnb Bangkok search”: finished 9 minutes ago. It left no files.']);
         expect(result.note).toContain('never say there was no job');
@@ -249,7 +249,7 @@ describe('the jobs tool lists what ended lately too', () => {
     });
 
     it('nothing live and nothing ended lately: it says so plainly', async () => {
-        const result = await run(async () => ({ live: [], ended: [] }));
+        const result = await run(async () => []);
         expect(result).not.toHaveProperty('endedLately');
         expect(result.note).toContain('no job ended lately');
     });
@@ -265,33 +265,47 @@ describe('the jobs tool lists what ended lately too', () => {
     });
 
     it('a job that ended between the live read and the ended read is told only as live, never as both', async () => {
-        // The live list still has the Airbnb search working; by the second read it had finished. An earlier run of the same title stays told as ended
-        const working = { ok: true, view: { job: { id: 'job-2', title: 'Airbnb Bangkok search', status: 'running', stepDone: 3, stepTotal: null, control: 'brick' }, queued: [], on: true } };
+        // The live list still has the Airbnb search working (asked 5 minutes ago); by the second read it had finished. An earlier run of the same title stays told as ended
+        const working = { ok: true, view: { job: { id: 'job-2', title: 'Airbnb Bangkok search', status: 'running', stepDone: 3, stepTotal: null, control: 'brick', askedAt: new Date(Date.now() - 5 * 60_000).toISOString() }, queued: [], on: true } };
         const earlier = { ...airbnb, endedAt: Date.now() - 2 * 60 * 60_000 };
-        const result = await run(async () => ({ live: [], ended: [{ ...airbnb, endedAt: Date.now() }, earlier] }), working);
+        const result = await run(async () => [{ ...airbnb, endedAt: Date.now() }, earlier], working);
         expect((result.jobs as unknown[]).length).toBe(1);
         expect(result.endedLately).toEqual(['“Airbnb Bangkok search”: finished 2 hours ago. It left no files.']);
     });
 });
 
 describe('endedNotLive keeps each job in one state', () => {
-    const live = (title: string): LiveJobNow => ({ title, status: 'running', queuedFor: null, waitingFor: null, control: 'brick', stepDone: 0, stepTotal: null, stepLabel: null, startedAt: null });
-    const done = (title: string, ago: number): EndedJobNow => ({ ...airbnb, title, endedAt: min(-ago) });
+    const live = (title: string, askedAgo?: number) => ({ title, ...(askedAgo !== undefined ? { askedAt: min(-askedAgo) } : {}) });
+    const done = (title: string, ago: number | null): EndedJobNow => ({ ...airbnb, title, endedAt: ago === null ? null : min(-ago) });
 
-    it('drops only the newest ended job of a title the snapshot no longer has live', () => {
-        expect(endedNotLive({ live: [], ended: [done('A', 1), done('B', 2), done('A', 3)] }, [live('A')]).map((job) => job.endedAt)).toEqual([min(-2), min(-3)]);
+    it('leaves out the newest ended job of a live title that ended after the live one was asked for', () => {
+        expect(endedNotLive([done('A', 1), done('B', 2), done('A', 3)], [live('A', 10)]).map((job) => job.endedAt)).toEqual([min(-2), min(-3)]);
     });
 
-    it('drops nothing when the snapshot still has the job live, or a new job began in between', () => {
-        const ended = [done('A', 1), done('B', 2)];
-        expect(endedNotLive({ live: [live('A')], ended }, [live('A')])).toEqual(ended);
-        expect(endedNotLive({ live: [live('A'), live('C')], ended }, [live('A')])).toEqual(ended);
-        expect(endedNotLive({ live: [], ended }, [])).toEqual(ended);
+    it('a job that ended and a new one of the same title that began between the reads: the ended one is still left out', () => {
+        // Live read: A (asked 10 min ago) working. Then A ends and A2 of the same title starts. Ended read: A. Both reads have one "A" live, yet A must not be told as ended too
+        expect(endedNotLive([done('A', 0)], [live('A', 10)])).toEqual([]);
+    });
+
+    it('keeps an ended job of the same title that ended before the live one was asked for: that is another job', () => {
+        const rerun = [done('A', 30)];
+        expect(endedNotLive(rerun, [live('A', 10)])).toEqual(rerun);
+        expect(endedNotLive([done('B', 1)], [live('A', 10)])).toEqual([done('B', 1)]);
+        expect(endedNotLive(rerun, [])).toEqual(rerun);
+    });
+
+    it('with no time to tell them apart, the newest one of the title is left out, never both', () => {
+        expect(endedNotLive([done('A', 1), done('A', 30)], [live('A')]).map((job) => job.endedAt)).toEqual([min(-30)]);
+        expect(endedNotLive([done('A', null)], [live('A', 10)])).toEqual([]);
+    });
+
+    it('one live job leaves out at most one ended job', () => {
+        expect(endedNotLive([done('A', 1), done('A', 2)], [live('A', 10)]).map((job) => job.endedAt)).toEqual([min(-2)]);
     });
 
     it('matches titles however their spaces were written, and as far as the jobs line keeps them', () => {
-        expect(endedNotLive({ live: [], ended: [done('Visa form', 1)] }, [live('  Visa   form ')])).toEqual([]);
+        expect(endedNotLive([done('Visa form', 1)], [live('  Visa   form ', 10)])).toEqual([]);
         const long = 'x'.repeat(150);
-        expect(endedNotLive({ live: [], ended: [done(long, 1)] }, [live(long.slice(0, 120))])).toEqual([]);
+        expect(endedNotLive([done(long, 1)], [live(long.slice(0, 120), 10)])).toEqual([]);
     });
 });

@@ -4340,7 +4340,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // The message this control was asked in: every control of it goes to Orbit under an id made from that message, so one sent again is done once
             ...(memory.dmEventId ? { inbound: { eventId: memory.dmEventId } } : {}),
             // The jobs that ended lately, so the jobs list never reads a finished job as "no job" (the Brick chat audit, 26 Nov)
-            ...(admin.computerState ? { endedLately: async () => (await admin.computerState(where.botId!, userId)).jobs ?? null } : {}),
+            ...(admin.computerState ? { endedLately: async () => (await admin.computerState(where.botId!, userId)).jobs?.ended ?? null } : {}),
         });
         // What the bar says has changed: read it fresh next time
         this.computerOnCache.delete(`${where.botId}|${userId}`);
