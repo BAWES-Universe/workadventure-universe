@@ -50,7 +50,7 @@ class FakeOrbit {
         const action = this.actions.get(id)!;
         return { claimed: true as const, action: this.put(action, { status: 'running' }), attemptId: `att_${id}` };
     }
-    async finish(_bot: string, id: string) {
+    async finish(_bot: string, id: string, _input?: Record<string, any>) {
         return this.put(this.actions.get(id)!, { status: 'done' });
     }
     async supersede() {
@@ -171,6 +171,30 @@ describe('the card before making more than the limit', () => {
         await s.approvals.handleTap('b1', ROOM, SARA, { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'approve' } });
         await settle();
         expect(s.run).toHaveBeenCalledTimes(1);
+        expect(s.approvals.madeSoFar('b1', ROOM, SARA)).toBe(0);
+    });
+
+    it('ends an approved batch of actions as not sure, and keeps its count, when its tool answers with its own error, whatever it says', async () => {
+        const BATCH = 'COMPOSIO_MULTI_EXECUTE_TOOL';
+        const tools = [{ tool_slug: 'GOOGLECALENDAR_CREATE_EVENT', arguments: { summary: 'Lunch' } }, { tool_slug: 'GOOGLECALENDAR_UPDATE_EVENT', arguments: { id: 'e1' } }];
+        s.run.mockResolvedValueOnce({ error: 'Tool error: Invalid session. Action 1 completed.', outcome: 'failed' } as never);
+        const finished = vi.spyOn(s.orbit, 'finish');
+        await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: BATCH, entry: ENTRY, args: { tools, n: 2 }, decision: ASK, batch: { kind: 'over', count: 2, unit: 'events', limit: 1 } });
+        await s.approvals.handleTap('b1', ROOM, SARA, { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'approve' } });
+        await settle();
+        expect(s.run).toHaveBeenCalledTimes(1);
+        expect(finished.mock.calls.map((call) => (call[2] as { outcome: string }).outcome)).toEqual(['uncertain']);
+        // What it was to make stays counted: some of it may have been made
+        expect(s.approvals.madeSoFar('b1', ROOM, SARA)).toBe(2);
+    });
+
+    it('still ends a single action that answers with its own error as failed, and counts nothing', async () => {
+        s.run.mockResolvedValueOnce({ error: 'Tool error: No such poster style', outcome: 'failed' } as never);
+        const finished = vi.spyOn(s.orbit, 'finish');
+        await s.approvals.propose({ botId: 'b1', roomId: ROOM, person: SARA, toolName: 'make_posters', entry: ENTRY, args: ARGS, decision: ASK, batch: over });
+        await s.approvals.handleTap('b1', ROOM, SARA, { ask: 'act_1', revision: 1, tap: { action: 'decide', option: 'approve' } });
+        await settle();
+        expect(finished.mock.calls.map((call) => (call[2] as { outcome: string }).outcome)).toEqual(['failed']);
         expect(s.approvals.madeSoFar('b1', ROOM, SARA)).toBe(0);
     });
 
