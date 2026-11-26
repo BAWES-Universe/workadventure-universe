@@ -197,6 +197,11 @@ describe('a tool nobody confirmed', () => {
         expect(await gate.decide(call({ person: MANAGER }))).toMatchObject({ kind: 'refuse', why: 'off' });
     });
 
+    it("does not let a tool's own choice open a heading that is turned off, for a tool nobody reviewed", async () => {
+        const { gate } = gateFor(policy({ settings: { ...SETTINGS, deletesOrSends: 'off' }, tools: [['tool', { confirmed: false, heading: 'deletesOrSends', setting: 'rightAway', fingerprint: 'old' }]] }));
+        expect(await gate.decide(call({ person: MANAGER, fingerprint: 'new' }))).toMatchObject({ kind: 'refuse', why: 'off' });
+    });
+
     it('does not let a manager try a tool whose heading is turned off', async () => {
         const { gate } = gateFor(policy({ settings: { ...SETTINGS, deletesOrSends: 'off' }, tools: [['tool', { confirmed: false, heading: null }]] }));
         expect(await gate.decide(call({ person: MANAGER }))).toMatchObject({ kind: 'refuse', why: 'off' });

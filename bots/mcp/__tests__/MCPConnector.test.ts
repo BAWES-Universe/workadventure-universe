@@ -997,6 +997,9 @@ describe('MCPConnector', () => {
             // The ready-made Exa is nowhere: not the App the link tool stands for, and not one of the others
             const entry = result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL');
             expect([entry?.serverId, ...(entry?.otherApps ?? []).map((other) => other.serverId)]).toEqual(['rm-gmail']);
+            // Gmail's link knows Exa was left out, so it never carries an Exa action; the person's own Exa is not marked
+            expect(entry?.ownCopyApps).toEqual(['Exa']);
+            expect(result.toolServerMap.get('web_search_exa')?.ownCopyApps).toBeUndefined();
             expect(asked.some((target) => target.includes('rm-exa'))).toBe(false);
             vi.unstubAllEnvs();
         });

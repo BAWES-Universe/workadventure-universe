@@ -165,6 +165,11 @@ export interface ToolServerEntry {
      * names, so the model is offered the first one, and each action of a batch is sent through the App it belongs to.
      */
     otherApps?: ToolServerEntry[];
+    /**
+     * On a ready-made App's entry: the names of this Brick's other ready-made Apps that were left out because the person has their own
+     * copy of them (own Apps first). An action named after one of them is never sent through this App's link: their own copy is used.
+     */
+    ownCopyApps?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -977,6 +982,7 @@ export class MCPConnector {
         const allTools: McpToolDefinition[] = [];
         // A ready-made App the person also has their own copy of is left out: their own copy is the one used, never the one Universe pays for
         const enabledServers = servers.filter((s) => s.enabled && !hasOwnCopy(s));
+        const ownCopyApps = [...new Set(servers.filter((s) => s.enabled && hasOwnCopy(s)).map((s) => s.name).filter((name) => typeof name === 'string' && name.trim() !== ''))];
 
         // Track seen tool names across all servers to avoid duplicates
         const seenToolNames = new Set<string>();
@@ -993,6 +999,7 @@ export class MCPConnector {
                 serverName: server.name,
                 ...(server.connectionId ? { connectionId: server.connectionId } : {}),
                 ...(server.readyMade === true && server.orbitUrl ? { readyMade: true, orbitUrl: server.orbitUrl } : {}),
+                ...(server.readyMade === true && ownCopyApps.length > 0 ? { ownCopyApps } : {}),
                 ...(raw ? { fingerprint: fingerprintTool(raw, server) } : {}),
                 ...(raw?.inputSchema !== undefined ? { inputSchema: raw.inputSchema } : {}),
                 ...(title ? { title } : {}),

@@ -311,6 +311,12 @@ const appsOf = (entry: ToolServerEntry): ToolServerEntry[] => [entry, ...(entry.
 /** One action of a ready-made App's batch, judged on its own, with the App it is sent through. */
 type AppPart = JudgedPart & { entry: ToolServerEntry };
 
+/** The person's own copy of an App this action is named after, when Universe's ready-made copy was left out for it (own Apps first). */
+const ownCopyOf = (slug: string, apps: readonly string[] | undefined): string | undefined => apps?.find((app) => actionName(slug, app) !== actionName(slug));
+
+/** The line for an action of an App the person has their own copy of: it is never sent through another App's link. */
+const ownCopyLine = (title: string, app: string) => `${title} wasn't done here: use your owner's own ${app} App for it.`;
+
 /** The line for an action no App of the Brick's says is its own, when it has several: it is never guessed. */
 const whichAppLine = (title: string) => `${title} wasn't done: it isn't clear which of your Apps it belongs to. Ask for it again, naming the App.`;
 
@@ -5618,6 +5624,25 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const person = this.gatePerson(botId, playerId, botClient, spaceName);
         const apps = appsOf(first);
         const parts = batchParts(args);
+        // An action of an App the person has their own copy of is never sent through another ready-made App's link (own Apps first): it is
+        // refused with a line that sends the Brick to their own copy, and the rest of the batch is judged as usual
+        const ownCopy = parts?.filter((part) => ownCopyOf(part.slug, first.ownCopyApps)) ?? [];
+        if (parts && ownCopy.length > 0) {
+            const refusedParts: AppPart[] = ownCopy.map((part) => {
+                const app = ownCopyOf(part.slug, first.ownCopyApps)!;
+                const title = actionName(part.slug, app);
+                return { ...part, title, heading: 'deletesOrSends', decision: { kind: 'refuse', why: 'off', line: ownCopyLine(title, app) }, entry: first };
+            });
+            const rest = parts.filter((part) => !ownCopy.includes(part));
+            if (rest.length === 0) return { kind: 'parts', parts: refusedParts };
+            const others = await this.splitAppBatch(botId, toolName, { ...first, ownCopyApps: undefined }, batchOf(args, rest), playerId, botClient, spaceName);
+            // The other actions are not judged one by one: the call is not sent at all, since part of it would go to the wrong App
+            if (others.kind === 'whole') return { kind: 'refuse', decision: refusedParts[0].decision as Extract<GateDecision, { kind: 'refuse' }> };
+            if (others.kind === 'refuse') return others;
+            // Each keeps its place in the call as the model wrote it
+            const placed = others.parts.map((part) => ({ ...part, index: rest[part.index].index, raw: rest[part.index].raw }));
+            return { kind: 'parts', parts: [...refusedParts, ...placed].sort((a, b) => a.index - b.index) };
+        }
         if (apps.length === 1 || !parts) {
             const split = await this.toolGate.split(this.gateCallFor(botId, toolName, first, person, botClient, args));
             return split.kind === 'parts' ? { kind: 'parts', parts: split.parts.map((part) => ({ ...part, entry: first })) } : split;

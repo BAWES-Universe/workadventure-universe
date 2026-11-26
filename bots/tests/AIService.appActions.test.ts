@@ -378,3 +378,33 @@ describe('an action approved on its own card', () => {
         expect(await service.findToolEntry('b1', BATCH, 'cal1')).toBe(calendar);
     });
 });
+
+describe("an action of an App the person has their own copy of (own Apps first)", () => {
+    // Universe's ready-made Exa was left out because the person has their own Exa: Gmail's link must never carry an Exa action
+    const withOwnExa = () => new Map<string, ToolServerEntry>([...SERVERS].map(([name, entry]) => [name, { ...entry, ownCopyApps: ['Exa'] }]));
+    const callWith = (service: AIService, servers: Map<string, ToolServerEntry>, args: unknown) =>
+        service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify(args) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+
+    it('is never sent through another ready-made App, and the Brick is sent to their own copy; the rest runs', async () => {
+        const { service, execute, propose } = brickService(gmailPolicy());
+        const [result] = await callWith(service, withOwnExa(), batchArgs('GMAIL_FETCH_EMAILS', 'EXA_SEARCH'));
+        expect(sentSlugs(execute)).toEqual([['GMAIL_FETCH_EMAILS']]);
+        expect(propose).not.toHaveBeenCalled();
+        expect(result.result.notDone).toEqual(["Search wasn't done here: use your owner's own Exa App for it."]);
+    });
+
+    it('alone: nothing is sent and no card is shown', async () => {
+        const { service, execute, propose } = brickService(gmailPolicy());
+        const [result] = await callWith(service, withOwnExa(), batchArgs('EXA_SEARCH', 'EXA_ANSWER'));
+        expect(execute).not.toHaveBeenCalled();
+        expect(propose).not.toHaveBeenCalled();
+        expect(result.result.outcome).toBe('not_sent');
+        expect(result.result.error).toContain("use your owner's own Exa App");
+    });
+
+    it('changes nothing when no App was left out', async () => {
+        const { service, execute } = brickService(gmailPolicy());
+        await call(service, batchArgs('GMAIL_FETCH_EMAILS', 'GMAIL_LIST_LABELS'));
+        expect(sentSlugs(execute)).toEqual([['GMAIL_FETCH_EMAILS', 'GMAIL_LIST_LABELS']]);
+    });
+});
