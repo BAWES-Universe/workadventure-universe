@@ -424,14 +424,18 @@ describe('a Brick with several ready-made Apps', () => {
     });
 
     it('a batch where one App ran and the other waits for an OK is recorded for the App that ran only (CodeRabbit)', async () => {
-        const { service, servers, sentTo, propose } = twoApps(gmailPolicy(), calendarPolicy({ GOOGLECALENDAR_DELETE_EVENT: 'asksFirst' }));
+        const { service, sentTo, propose } = twoApps(gmailPolicy(), calendarPolicy({ GOOGLECALENDAR_DELETE_EVENT: 'asksFirst' }));
+        // Real connection ids (a note keeps only a UUID), so the note can name the App that ran
+        const gmailId = '11111111-1111-4111-8111-111111111111';
+        const calendarId = '22222222-2222-4222-8222-222222222222';
+        const servers = new Map<string, ToolServerEntry>([[BATCH, { ...GMAIL, connectionId: gmailId, otherApps: [{ ...CALENDAR, connectionId: calendarId }] }]]);
         const turn = newReportTurn('$event-2');
-        const sources = { apps: new Map([[BATCH, { connectionId: 'c1' }]]), offered: new Set([BATCH]) };
+        const sources = { apps: new Map([[BATCH, { connectionId: gmailId }]]), offered: new Set([BATCH]) };
         await service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify(batchArgs('GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_DELETE_EVENT')) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7,
             undefined, undefined, false, undefined, undefined, undefined, false, false, false, undefined, 'dm', undefined, turn, sources);
         expect(sentTo()).toEqual([['g1', ['GMAIL_FETCH_EMAILS']]]);
         expect(propose).toHaveBeenCalledTimes(1);
-        expect(turn.steps.map((step) => ({ apps: step.apps, connection: step.appConnectionId }))).toEqual([{ apps: undefined, connection: undefined }]);
+        expect(turn.steps.map((step) => ({ apps: step.apps, connection: step.appConnectionId }))).toEqual([{ apps: undefined, connection: gmailId }]);
     });
 
     it('never lets another App’s looser choice run an action that is Off in its own App', async () => {
