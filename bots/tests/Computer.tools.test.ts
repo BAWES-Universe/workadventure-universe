@@ -46,7 +46,8 @@ describe('use_computer (#2000)', () => {
         expect(isComputerTool('make_brick')).toBe(false);
         expect(tool.function.description).toMatch(/nothing else can do/);
         expect(tool.function.description).toMatch(/Never when an app/);
-        expect(computerToolsNote()).toMatch(/answer yourself, then an app you have, and only then the computer/);
+        expect(computerToolsNote()).toMatch(/answer yourself, then an App you have, then the computer/);
+        expect(computerToolsNote()).toMatch(/without hesitation/);
         expect(computerToolsNote()).toMatch(/Paying/);
     });
 

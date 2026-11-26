@@ -13,6 +13,12 @@ import type { AppOfferNote, BrickNote } from './BrickTools';
 
 export const OFFER_APP_TOOL = 'offer_app';
 
+/** The Apps Orbit lists for a Brick, and the topics of the ones the person said "not now" to. */
+export interface AppsForBrick {
+    apps: OfferableApp[];
+    declined: string[];
+}
+
 export function isAppTool(name: string): boolean {
     return name === OFFER_APP_TOOL;
 }
@@ -36,7 +42,7 @@ export function appToolDefinitions(): ToolDefinition[] {
                     'Offer to connect one of the person\'s Apps, on a small card under your answer. Use it in two cases. (1) They ask for something that needs an App they have not connected ' +
                     '("what\'s on my calendar tomorrow?" with no calendar connected): say in one short sentence that you can\'t see it yet and that connecting takes one sign-in, then call this with asked false. ' +
                     '(2) They ask you to connect an App by name ("connect my Notion"): say in one short sentence that it takes one sign-in on the App\'s own page, then call this with asked true. ' +
-                    'The App must be one of the Apps listed in your "Apps" note: use its key exactly. Never offer an App that is not listed, never offer one you may already use, and at most one in a reply. ' +
+                    'The App must be one of the Apps listed in your "Apps" note: use its key exactly. Never offer an App that is not listed, never offer one you may already use, and at most one in a reply. Offer it straight away, in the same reply: do not first try another way round or ask whether they would like it. ' +
                     'Never mention the card in your words, the card says it. If they said no to an App before, do not offer it again on your own, and help another way; if they later ask for it by name, offer it with asked true.',
                 parameters: {
                     type: 'object',
@@ -80,6 +86,13 @@ export function appsNote(apps: OfferableApp[] | null, declinedTopics: string[]):
         ...lines,
         'Call them Apps, never tools or connectors.',
     ].join('\n');
+}
+
+/** The Apps a Brick may offer now: not the ones it already has, and not the ones they said "not now" to. */
+export function offerableApps(apps: OfferableApp[] | null, declinedTopics: string[]): OfferableApp[] {
+    if (!apps) return [];
+    const declined = new Set(declinedTopics.map(topicWords));
+    return apps.filter((app) => !app.usable && !declined.has(topicWords(topicOf(app.key))));
 }
 
 /** The topic Orbit keeps "Not now" under for one App; Orbit lower-cases it and drops anything but letters and digits. */

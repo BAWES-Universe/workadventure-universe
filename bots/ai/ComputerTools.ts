@@ -61,7 +61,7 @@ export function computerToolDefinitions(): { type: 'function'; function: { name:
 /** What a Brick with a computer is told with its instructions: the order of choosing, and what it never does. */
 export function computerToolsNote(): string {
     return [
-        'Your computer: you have your own computer. Choose in this order: answer yourself, then an app you have, and only then the computer (use_computer), for a job nothing else can do.',
+        'Your computer: you have your own computer (use_computer). Choose in this order: answer yourself, then an App you have, then the computer. Use it without hesitation for any job an App or your own knowledge cannot do, such as a page that needs a real browser, files, or code.',
         'It does one writing job at a time: a second job waits its turn, and you say so in one line. Never say how much of their month is left, and never name a price, a size or a machine.',
         'Paying and sending the person\'s own details are theirs: you stop and ask them, you never do them alone.',
         computerControlNote(),
