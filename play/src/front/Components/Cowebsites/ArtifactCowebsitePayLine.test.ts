@@ -408,27 +408,38 @@ describe("the line under a paying page in the artifact window (the approved mock
         view.$destroy();
     });
 
-    it("says the version whose page has loaded, and none while another version's page is still on its way in (CodeRabbit, 26 Nov)", async () => {
-        api.payOnArtifact.mockReturnValue(new Promise<never>(() => {}));
+    it("says the version of the page that asked: its own while another version comes in, and the new one's before its pictures have loaded (CodeRabbit, 26 Nov)", async () => {
+        const nothingBought = { status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 };
+        const fourth = () => {
+            const four = opened(false, "link");
+            api.fetchArtifact.mockResolvedValue({
+                ...four,
+                version: { ...four.version, number: 4, url: "https://files.test/4" },
+            });
+        };
         vi.spyOn(window, "open").mockReturnValue(null);
-        const { say, view } = await mount();
-        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
-        expect(api.payOnArtifact.mock.calls[0][2]).toMatchObject({ start: true, shownVersion: 3 });
-        view.$destroy();
-
-        // Another version is asked for: the window has it, but its page has not loaded in the frame yet
-        const next = await mount();
-        const four = opened(false, "link");
-        api.fetchArtifact.mockResolvedValue({
-            ...four,
-            version: { ...four.version, number: 4, url: "https://files.test/4" },
-        });
-        next.cowebsite.version.set(4);
+        api.payOnArtifact.mockResolvedValueOnce(nothingBought).mockReturnValue(new Promise<never>(() => {}));
+        // Version 3's page speaks when it loads (it asks whether this visitor already bought)
+        const first = await mount();
+        await first.say({ universe: "use-app", app: "examplepay", request: "r0", session: "s1", restore: true });
+        // Version 4 is asked for and comes on show in the window, while version 3's page is still in the frame: a tap there says 3
+        fourth();
+        first.cowebsite.version.set(4);
         await settle();
         api.payOnArtifact.mockClear();
+        await first.say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        expect(api.payOnArtifact.mock.calls[0][2]).toMatchObject({ start: true, shownVersion: 3 });
+        first.view.$destroy();
+
+        // Version 4's own page speaks first before the frame's load event (its pictures still coming): it says 4
+        api.fetchArtifact.mockReset();
+        api.payOnArtifact.mockReset().mockReturnValue(new Promise<never>(() => {}));
+        const next = await mount();
+        fourth();
+        next.cowebsite.version.set(4);
+        await settle();
         await next.say({ universe: "use-app", app: "examplepay", request: "r2", session: "s2" });
-        expect(api.payOnArtifact.mock.calls[0][2]).toMatchObject({ start: true });
-        expect(api.payOnArtifact.mock.calls[0][2]).not.toHaveProperty("shownVersion");
+        expect(api.payOnArtifact.mock.calls[0][2]).toMatchObject({ start: true, shownVersion: 4 });
         next.view.$destroy();
     });
 

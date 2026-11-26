@@ -308,6 +308,41 @@ describe("a page that takes payments, in the game's window", () => {
         payments.destroy();
     });
 
+    it("asks for the version of the opening the asking page first spoke in, not the one on show now", async () => {
+        let onShow = 1;
+        const at = vi.fn((opening: number) => (opening === 1 ? 3 : 4));
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 })
+            .mockReturnValue(new Promise<never>(() => {}));
+        const payments = pagePayments({
+            artifactId: "a1",
+            chat: () => undefined,
+            frame: () => frameWindow,
+            loaded: () => true,
+            opening: () => onShow,
+            pay: pay as never,
+            storage: memoryStorage(),
+            randomId: counting(),
+            shownVersion: at,
+        });
+        // The page speaks in opening 1 (its restore on load); another version comes on show; the same page taps
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "r0",
+            session: "s1",
+            restore: true,
+        });
+        await flush();
+        onShow = 2;
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await flush();
+        expect(at).toHaveBeenLastCalledWith(1);
+        expect(pay.mock.calls[1][2]).toMatchObject({ start: true, shownVersion: 3 });
+        payments.destroy();
+    });
+
     it("sends the version on screen at the tap with the start, and nothing when it is not a real version", async () => {
         let onScreen: number | undefined = 3;
         const pay = vi.fn().mockReturnValue(new Promise<never>(() => {}));

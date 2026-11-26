@@ -160,8 +160,12 @@ export interface PagePaymentsOptions {
     storage?: Pick<Storage, "getItem" | "setItem"> | null;
     /** Random plain characters of a length (for wishes and recovery codes). */
     randomId?: (length: number) => string;
-    /** The version of the page on show, taken at the tap: Orbit never charges terms set on a newer version than the one on screen. */
-    shownVersion?: () => number | undefined;
+    /**
+     * The version of the page that asked, taken at the tap: Orbit never charges terms set on a newer version than the one on screen. Given
+     * the opening that page belongs to (the one on show when its document first spoke), so a page still showing while another version
+     * comes in says its own version, and a page that has just come in says its own before its pictures have finished loading.
+     */
+    shownVersion?: (opening: number) => number | undefined;
 }
 
 export interface PagePayments {
@@ -328,6 +332,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     // The session each request came with (the id its document gave itself when its scripts started), and the session of the document that spoke
     // last: a result is told only while the document that asked is still the one that spoke last (no other document has spoken since)
     const sessions = new Map<string, string>();
+    // The opening on show when each document first spoke: the page a document belongs to, whatever has been opened since
+    const sessionOpenings = new Map<string, number>();
     let speaker = "";
     const SESSIONS_MAX = 32;
     const remember = (request: string, session: string) => {
@@ -576,8 +582,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         const asker = sessions.get(request);
         activeSession = asker;
         target = { intentId, request, from, session: asker };
-        // The version on screen at the tap: every try of this start says the same one
-        const version = options.shownVersion?.();
+        // The version of the page that asked, at the tap: every try of this start says the same one
+        const version = options.shownVersion?.((asker !== undefined ? sessionOpenings.get(asker) : undefined) ?? from);
         const shownVersion =
             typeof version === "number" && Number.isSafeInteger(version) && version > 0 ? version : undefined;
         // Opened now, in the same moment as the page's tap, so a blocked pop-up is the only thing left that can go wrong
@@ -817,6 +823,11 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         const session = data.session;
         const askedBefore = activeSession;
         speaker = session;
+        if (!sessionOpenings.has(session)) {
+            sessionOpenings.set(session, opening());
+            if (sessionOpenings.size > SESSIONS_MAX)
+                sessionOpenings.delete(sessionOpenings.keys().next().value as string);
+        }
         if (busy) {
             // The same tap heard twice, in the same opening, is the same request. Anything else while a payment is on its way (or its start
             // is still waiting for an answer, however long it takes) is told so under its own id, and the one on its way keeps its own:

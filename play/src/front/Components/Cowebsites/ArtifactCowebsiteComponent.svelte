@@ -144,15 +144,14 @@
     // Whether the page in the frame on show has loaded: a frame has a window before its page is there, and a payment result
     // sent in that time reaches nobody. Cleared each time the frame is drawn again (a new element, or another address).
     let frameLoaded = false;
-    // The version whose page has loaded in the frame: what the page asking for a checkout shows. Set only when that page has
-    // loaded, so a tap on the page that was there before another version's page comes in never says the newer version.
-    let frameVersion: number | undefined;
+    // The version each opening put on show: a page that asks for a checkout says the version of the opening it belongs to (the one on
+    // show when it first spoke), so a page still showing while another version comes in never says the newer one
+    const openingVersions = new Map<number, number>();
     let frameDrawn: { element: HTMLIFrameElement | null | undefined; url: string | null | undefined } | undefined;
     function watchFrame(element: HTMLIFrameElement | null | undefined, url: string | null | undefined) {
         if (frameDrawn && frameDrawn.element === element && frameDrawn.url === url) return;
         frameDrawn = { element, url };
         frameLoaded = false;
-        frameVersion = undefined;
     }
     $: watchFrame(frameElement, opened?.version.url);
     const payments = pagePayments({
@@ -168,9 +167,9 @@
         // a Public one only once something is published, and not when that version is gone
         pageUrl: () =>
             openScope === "link" || (openScope === "public" && published && !publishedGone) ? link : undefined,
-        // The version on screen, once its page has loaded: Orbit never charges terms set on a newer one on it, and makes no new
-        // order for a page that does not say which version it shows
-        shownVersion: () => (frameLoaded ? frameVersion : undefined),
+        // The version of the page that asked: Orbit never charges terms set on a newer one on it, and makes no new order for a
+        // page that does not say which version it shows
+        shownVersion: (at) => openingVersions.get(at),
     });
     const payLine = payments.line;
     // The line under the page: what it says and what can be pressed (the approved mock M1)
@@ -326,6 +325,8 @@
             // This opening brings its own address and timer (watchAddress below): nothing was dropped that needs setting up again
             renewalDropped = false;
             opening++;
+            openingVersions.set(opening, answer.version.number);
+            if (openingVersions.size > 16) openingVersions.delete(openingVersions.keys().next().value as number);
             text = undefined;
             textFailed = false;
             summaryStore.set({
@@ -517,8 +518,6 @@
     function onFrameLoad() {
         // From an address that has stopped it shows nothing: it is not a page that can hear anything
         frameLoaded = !addressStopped();
-        // The page that loaded is the one at the address on show now (a new address clears this first, in watchFrame)
-        frameVersion = frameLoaded && frameDrawn?.url === opened?.version.url ? opened?.version.number : undefined;
         if (frameLoaded) payments.frameReady();
         redrawIfStopped();
     }
