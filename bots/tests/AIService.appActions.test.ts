@@ -299,12 +299,25 @@ describe('what runs is what the card showed', () => {
         });
     });
 
-    it('refuses a batch whose inputs are not an object (the card could not show them), and sends nothing', async () => {
+    it('reads inputs written as JSON text as the object they hold: the card shows it and only it is sent', async () => {
+        const { service, execute, propose } = brickService(gmailPolicy({}, { ...DEFAULTS, deletesOrSends: 'rightAway' }));
+        await call(service, { tools: [{ tool_slug: 'GMAIL_REPLY_TO_THREAD', arguments: '{"to":"boss@x","body":"hi"}' }] });
+        expect((execute.mock.calls[0] as unknown[])[3]).toMatchObject({ tools: [{ tool_slug: 'GMAIL_REPLY_TO_THREAD', arguments: { to: 'boss@x', body: 'hi' } }] });
+        const asking = brickService(gmailPolicy());
+        await call(asking.service, { tools: [{ tool_slug: 'GMAIL_REPLY_TO_THREAD', arguments: '{"to":"boss@x","body":"I quit"}' }] });
+        expect(asking.execute).not.toHaveBeenCalled();
+        expect((asking.propose.mock.calls[0] as unknown[])[0]).toMatchObject({ toolName: 'GMAIL_REPLY_TO_THREAD', args: { to: 'boss@x', body: 'I quit' } });
+        expect(propose).not.toHaveBeenCalled();
+    });
+
+    it('refuses a batch whose inputs can’t be read as an object (the card could not show them), and sends nothing', async () => {
         const { service, execute, propose } = brickService(gmailPolicy());
-        const [result] = await call(service, { tools: [{ tool_slug: 'GMAIL_REPLY_TO_THREAD', arguments: '{"to":"boss@x","body":"I quit"}' }] });
+        for (const inputs of ['to boss: I quit', '["I quit"]', 42]) {
+            const [result] = await call(service, { tools: [{ tool_slug: 'GMAIL_REPLY_TO_THREAD', arguments: inputs }] });
+            expect(result.result.error).toBeTruthy();
+        }
         expect(execute).not.toHaveBeenCalled();
         expect(propose).not.toHaveBeenCalled();
-        expect(result.result.error).toBeTruthy();
     });
 });
 

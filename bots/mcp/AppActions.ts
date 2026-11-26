@@ -115,8 +115,8 @@ export function batchParts(args: unknown): BatchPart[] | null {
     const calls = batchCalls(args);
     if (!calls) return null;
     const list = (args as { tools: Record<string, unknown>[] }).tools;
-    // Inputs the card could not show are never sent: an action's `arguments` are an object or nothing
-    if (list.some((item) => item.arguments !== undefined && item.arguments !== null && (typeof item.arguments !== 'object' || Array.isArray(item.arguments)))) return null;
+    // Inputs written as JSON text are read as the object they hold: that object is what a card shows and what is sent (batchOf).
+    // Inputs that can't be read as one make it no batch call at all (batchCalls)
     return calls.map((call, index) => ({ ...call, index, raw: list[index] }));
 }
 
