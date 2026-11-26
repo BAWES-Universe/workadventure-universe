@@ -29,7 +29,7 @@ import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDe
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, type JudgedPart } from '../mcp/ToolGate';
 import type { ToolHeading } from '../mcp/ToolCatalog';
-import { APP_BATCH_TOOL, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
+import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
 import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
@@ -314,11 +314,6 @@ const appsOf = (entry: ToolServerEntry): ToolServerEntry[] => [entry, ...(entry.
  */
 type AppPart = JudgedPart & { entry: ToolServerEntry; whole?: true };
 
-/** The person's own copy of an App this action is named after, when Universe's ready-made copy was left out for it (own Apps first). */
-const ownCopyOf = (slug: string, apps: readonly string[] | undefined): string | undefined => apps?.find((app) => actionName(slug, app) !== actionName(slug));
-
-/** The line for an action of an App the person has their own copy of: it is never sent through another App's link. */
-const ownCopyLine = (title: string, app: string) => `${title} wasn't done here: use your owner's own ${app} App for it.`;
 
 export class AIService {
     private adminApiService: AdminApiService;

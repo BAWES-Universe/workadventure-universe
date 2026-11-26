@@ -1148,7 +1148,11 @@ export class MCPConnector {
             const at = taken ? found.tools.findIndex((one) => one.function.name === name) : -1;
             if (at >= 0) found.tools.splice(at, 1);
             found.tools.push(tool);
-            found.toolServerMap.set(name, entry);
+            if (taken) {
+                // The ready-made Apps it takes the name from are kept beside it, as for an own App's tool, so their own actions still go through them
+                const { otherApps: before = [], ...previous } = taken;
+                found.toolServerMap.set(name, { ...entry, otherApps: [previous, ...before] });
+            } else found.toolServerMap.set(name, entry);
         }
         return found;
     }

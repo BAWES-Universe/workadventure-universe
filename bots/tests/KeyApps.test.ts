@@ -108,6 +108,23 @@ describe('discovering a Brick’s tools', () => {
         expect(found.toolServerMap.get('example_lookuppayment')?.keyApp).toBeUndefined();
         expect(found.toolServerMap.get('example_makepaymentlink')?.keyApp).toBeDefined();
     });
+
+    it('takes a name from a ready-made App, and keeps that App beside it so its own actions still go through it (own Apps first)', async () => {
+        const readyTool = { type: 'function', function: { name: 'example_lookuppayment', description: 'From the ready-made App', parameters: { type: 'object', properties: {} } } };
+        const calendar = { serverId: 'cal-1', serverUrl: 'https://link.test', authType: 'none' as const, serverName: 'Google Calendar', readyMade: true };
+        const gmail = { serverId: 'gmail-1', serverUrl: 'https://link.test', authType: 'none' as const, serverName: 'Gmail', readyMade: true, otherApps: [calendar] };
+        const found = await (MCPConnector as unknown as { withKeyApps: (keyApps: Promise<ReturnType<typeof parseKeyApps>>, found: unknown) => Promise<{ tools: Array<{ function: { name: string; description: string } }>; toolServerMap: Map<string, { serverId: string; keyApp?: unknown; otherApps?: Array<{ serverId: string; otherApps?: unknown }> }> }> }).withKeyApps(Promise.resolve(parseKeyApps({ apps: [APP] })), {
+            tools: [readyTool],
+            toolServerMap: new Map([['example_lookuppayment', gmail]]),
+        });
+        // The name is there once, now the key App's; both ready-made Apps are kept beside it, each once
+        expect(found.tools.filter((tool) => tool.function.name === 'example_lookuppayment')).toHaveLength(1);
+        expect(found.tools.find((tool) => tool.function.name === 'example_lookuppayment')?.function.description).not.toBe('From the ready-made App');
+        const entry = found.toolServerMap.get('example_lookuppayment');
+        expect(entry?.keyApp).toBeDefined();
+        expect(entry?.otherApps?.map((app) => app.serverId)).toEqual(['gmail-1', 'cal-1']);
+        expect(entry?.otherApps?.[0].otherApps).toBeUndefined();
+    });
 });
 
 describe('a call', () => {

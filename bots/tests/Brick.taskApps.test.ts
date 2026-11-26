@@ -502,4 +502,25 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(await session.call(BATCH, actions('SLACK_SEND_MESSAGE'))).toContain("isn't clear which of your Apps");
         expect(call).toHaveBeenCalledTimes(1);
     });
+
+    it("never sends an action of an App the person has their own copy of through another App's link, even with one App left (own Apps first)", async () => {
+        // Universe's ready-made Exa was left out because the owner has their own Exa: its search is refused here, and Gmail's own actions still run
+        const { apps, call } = withGate({ ...gmail, ownCopyApps: ['Exa'] });
+        const session = (await apps.open(run()))!;
+        const line = await session.call(BATCH, actions('EXA_SEARCH'));
+        expect(line).toContain("use your owner's own Exa App");
+        expect(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS', 'EXA_SEARCH'))).toContain("use your owner's own Exa App");
+        expect(call).not.toHaveBeenCalled();
+        await session.call(BATCH, actions('GMAIL_FETCH_EMAILS'));
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'g1' });
+    });
+
+    it('still sends an action a remaining App lists, though a left-out App shares the start of its name', async () => {
+        const { apps, call } = withGate({ ...gmail, otherApps: [calendar], ownCopyApps: ['Google'] });
+        const session = (await apps.open(run()))!;
+        await session.call(BATCH, actions('GOOGLECALENDAR_FIND_EVENT'));
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
+    });
 });

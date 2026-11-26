@@ -14,7 +14,7 @@
  * Pure of the AI and of the chat: the tools, the gate, the cards and the call are somebody else's (injected).
  */
 import { createHash } from 'crypto';
-import { SCRUBBED_LOOKUPS, batchOf, batchParts, isBatchTool, isOffRow, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
+import { SCRUBBED_LOOKUPS, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
@@ -207,12 +207,21 @@ export class TaskApps {
         const parts = batchParts(args);
         if (!parts) return { app: first, args };
         const apps = [first, ...(first.otherApps ?? [])];
-        if (apps.length === 1) return { app: first, args: batchOf(args, parts) };
+        // An App left out for the person's own copy (own Apps first) is checked even with one App left: its action never goes through another
+        const leftOut = first.ownCopyApps?.length ? first.ownCopyApps : undefined;
+        if (apps.length === 1 && !leftOut) return { app: first, args: batchOf(args, parts) };
         const appPolicy = this.deps.gate.appPolicy?.bind(this.deps.gate);
         const policies = appPolicy ? await Promise.all(apps.map((app) => appPolicy(run.brickId, app.serverId))) : apps.map(() => null);
         const owners = new Map<string, ToolServerEntry>();
         for (const part of parts) {
             const owner = ownerOfAction(part.slug, apps, policies);
+            // An action of the left-out App that no remaining App lists or is named by: the step uses the person's own copy instead
+            const ownCopy = owner === 'none' ? ownCopyOf(part.slug, leftOut) : undefined;
+            if (ownCopy) return { line: ownCopyLine(actionName(part.slug, ownCopy), ownCopy) };
+            if (apps.length === 1) {
+                owners.set(first.serverId, first);
+                continue;
+            }
             // With the owner's own server first under this name, an action no ready-made App lists or is named by goes to that server
             const app = owner === 'none' ? (first.readyMade ? undefined : first) : owner === 'unclear' ? undefined : owner;
             if (!app) return { line: whichAppLine(actionName(part.slug)) };
