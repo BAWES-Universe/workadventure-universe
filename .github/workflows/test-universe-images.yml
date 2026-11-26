@@ -86,17 +86,33 @@ jobs:
           if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.docker_tag }}" ]; then
             echo "tag=${{ github.event.inputs.docker_tag }}" >> $GITHUB_OUTPUT
           elif [ "${{ github.event_name }}" == "workflow_run" ]; then
-            # Use the branch name from the triggering workflow (universe branch)
+            # Test the image built from the exact commit that triggered this run. The build workflow
+            # tags every image <branch>-<7 character sha> (docker/metadata-action: type=sha,
+            # prefix={{branch}}-), and that tag is never moved. The bare branch tag moves with the next
+            # push, so a late run could test a different release than the one it is gating.
             BRANCH_NAME="${{ github.event.workflow_run.head_branch }}"
             if [ -z "$BRANCH_NAME" ]; then
               # Fallback to 'universe' if branch name not available
               BRANCH_NAME="universe"
             fi
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
             # Same sanitising as docker/metadata-action's branch tag: feature/x is tagged feature-x.
-            echo "tag=${BRANCH_NAME//\//-}" >> $GITHUB_OUTPUT
+            echo "tag=${BRANCH_NAME//\//-}-${HEAD_SHA:0:7}" >> $GITHUB_OUTPUT
           else
             echo "tag=latest" >> $GITHUB_OUTPUT
           fi
+
+      - name: Determine image owner
+        id: image-owner
+        run: |
+          # Docker image names must be lowercase, but github.repository_owner keeps the case of the
+          # organisation (BAWES-Universe). The build workflow's docker/metadata-action lowercases it
+          # when it pushes, so this job has to lowercase it too or `docker compose up` fails with
+          # "repository name must be lowercase" before any image is pulled.
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "owner=${OWNER}" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
 
       - name: Login to GHCR
         uses: docker/login-action@v4
@@ -123,9 +139,10 @@ jobs:
           sed -i "s/LIVEKIT_API_SECRET=/LIVEKIT_API_SECRET=12345678901234567890123456789012/g" .env
           sed -i "s/MAX_PER_GROUP=4/MAX_PER_GROUP=100/g" .env
           echo "WOKA_SPEED=3" >> .env
-          echo "GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}" >> .env
+          echo "GITHUB_REPOSITORY_OWNER=${IMAGE_OWNER}" >> .env
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
+          IMAGE_OWNER: ${{ steps.image-owner.outputs.owner }}
         working-directory: contrib/docker
 
       - name: Start WorkAdventure with Universe images
@@ -133,7 +150,7 @@ jobs:
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml up -d
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_OWNER: ${{ steps.image-owner.outputs.owner }}
         working-directory: contrib/docker
 
       - name: Wait for services to be ready
@@ -163,7 +180,7 @@ jobs:
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml logs
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_OWNER: ${{ steps.image-owner.outputs.owner }}
         working-directory: contrib/docker
 
       - name: Display containers state on failure
@@ -172,16 +189,17 @@ jobs:
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml ps
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_OWNER: ${{ steps.image-owner.outputs.owner }}
         working-directory: contrib/docker
 
       - name: Side-load docker compose logs in playwright report
         if: failure()
         run: |
+          mkdir -p ../../tests/playwright-report
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml logs > ../../tests/playwright-report/docker-compose.log
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_OWNER: ${{ steps.image-owner.outputs.owner }}
         working-directory: contrib/docker
 
       - name: Upload Playwright report
