@@ -8,6 +8,7 @@
  *
  * Plain functions with no state, so each rule is tested on its own (see PersonalInfoRules.test.ts).
  */
+import { createHash } from 'node:crypto';
 
 const APOS = `['’]`;
 // A period ends a sentence unless it ends a title or an initial: "I love Dr. Pepper", "I like J. K. Rowling" are one sentence each; "Plan B. I hate tea" is two
@@ -260,10 +261,10 @@ export const DISLIKE_LABEL = 'dislike_';
 export function dislikeLabel(thing: string): string {
     const normal = thing.trim().toLowerCase();
     const slug = normal.replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 30);
-    // "C++" and "C#" are both "c" in words: the whole value, hashed, keeps them apart. Same value in other capitals is the same dislike.
-    let hash = 0x811c9dc5;
-    for (const unit of normal) for (let index = 0; index < unit.length; index++) hash = Math.imul(hash ^ unit.charCodeAt(index), 0x01000193) >>> 0;
-    return `${DISLIKE_LABEL}${slug || 'thing'}_${hash.toString(36)}`;
+    // "C++" and "C#" are both "c" in words: a SHA-256 of the whole value keeps them apart, and no two different values are found with the
+    // same one. Same value in other capitals is the same dislike.
+    const hash = createHash('sha256').update(normal).digest('hex').slice(0, 32);
+    return `${DISLIKE_LABEL}${slug || 'thing'}_${hash}`;
 }
 
 /** A like kept as "pizza (favorite food)" is "pizza" when it is set against what they do not like. */

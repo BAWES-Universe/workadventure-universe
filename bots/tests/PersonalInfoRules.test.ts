@@ -291,6 +291,8 @@ describe('what the bot keeps from a chat', () => {
     it('keeps "C++" and "C#" as two dislikes, each forgotten alone', () => {
         expect(dislikeLabel('C++')).not.toBe(dislikeLabel('C#'));
         expect(dislikeLabel('Coffee')).toBe(dislikeLabel('coffee'));
+        // Two values that share their words and had the same 32-bit hash (CodeRabbit) are told apart
+        expect(dislikeLabel('boring repetitive scientific convention vvqirdvops')).not.toBe(dislikeLabel('boring repetitive scientific convention npslcsvnnq'));
         const memory = learnFrom('I hate C++', 'I hate C#');
         const stored = memory.getMemory(BOT, PERSON)!;
         expect([...stored.personalInfo.facts.values()].sort()).toEqual(['C#', 'C++']);
