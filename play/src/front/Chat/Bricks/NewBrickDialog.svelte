@@ -8,7 +8,7 @@
     import { botWokaCatalogStore, ensureBotWokaCatalog } from "../../external-modules/bots/stores/BotWokaCatalogStore";
     import { warningMessageStore } from "../../Stores/ErrorStore";
     import TelemetryCard from "../../external-modules/bots/components/page/TelemetryCard.svelte";
-    import { BRICK_LOOKS, brickPictureUrl, isBrickLook, type BrickLook } from "./Brick";
+    import { BRICK_LOOKS, brickPictureUrl, isBrickLook, wokasToWear, type BrickLook } from "./Brick";
     import { openBrickChat } from "./BrickChat";
     import { wokaTextureUrl } from "./BrickLookPicture";
     import BrickPicture from "./BrickPicture.svelte";
@@ -41,7 +41,7 @@
     let nameIsOurs = true;
 
     $: create = $LL.mapEditor.edit.bots.page.create;
-    $: wokas = ($botWokaCatalogStore?.woka?.collections ?? []).flatMap((collection) => collection.textures);
+    $: wokas = wokasToWear($botWokaCatalogStore);
     $: ready = name.trim().length > 0 && !busy;
 
     function suggestedName(ofLook: string): string {
