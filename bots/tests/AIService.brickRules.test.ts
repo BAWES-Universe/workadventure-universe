@@ -106,7 +106,7 @@ function buildMocks(isGuest: boolean) {
 }
 
 /** The system prompt and the follow-up rules of one direct-message reply. `brick` is how the bot server was told what this bot is. */
-async function replyOf(options: { policy?: any; brick?: boolean; guest?: boolean; homeRoomUrl?: string; people?: string[] | null; tool?: boolean }) {
+async function replyOf(options: { policy?: any; notesOff?: boolean; brick?: boolean; guest?: boolean; homeRoomUrl?: string; people?: string[] | null; tool?: boolean }) {
     const { AIService } = await import("../ai/AIService");
     mockGenerateStream.mockClear();
     const mocks = buildMocks(options.guest === true);
@@ -115,13 +115,19 @@ async function replyOf(options: { policy?: any; brick?: boolean; guest?: boolean
     const service = new AIService(mocks.conversationMemory, mocks.adminApiService, "http://admin.local", mocks.mapDataService);
     if (options.brick) service.noteBrick("bot-1", { isDefault: false, ownerId: "owner-id" }, "Brick");
     if (options.policy) {
-        // The owner's Gmail is on this Brick as a ready-made App, with the policy Orbit would answer for it
+        // The owner's Gmail is on this Brick as a ready-made App, with the policy Orbit would answer for it. Their own tool server "Notes" is on it too
+        const notes = { botId: "bot-1", serverId: "n1", serverUrl: "https://notes.example", authType: "none", serverName: "Notes", fingerprint: "fp-n" };
+        const notesRow = { name: "NOTES_SEARCH", title: "Search notes", heading: "looksUp", fingerprint: "fp-n", suggestedHeading: "looksUp", confirmed: true, setting: null };
+        const notesPolicy = { serverId: "n1", kind: "tools", state: "confirmed", policyRevision: 1, settings: { looksUp: options.notesOff ? "off" : "rightAway", makesNew: "off", changesThings: "off", deletesOrSends: "off" }, tools: new Map([["NOTES_SEARCH", notesRow]]) };
         const entry = { botId: "bot-1", serverId: "g1", serverUrl: "https://link.example", authType: "none", serverName: "Gmail", connectionId: "c1", readyMade: true, orbitUrl: "https://orbit.example", fingerprint: "fp" };
         (MCPConnector.discoverToolsWithMapping as any).mockResolvedValueOnce({
-            tools: [{ type: "function", function: { name: "COMPOSIO_SEARCH_TOOLS", description: "search", parameters: { type: "object", properties: {} } } }],
-            toolServerMap: new Map([["COMPOSIO_SEARCH_TOOLS", entry]]),
+            tools: [
+                { type: "function", function: { name: "COMPOSIO_SEARCH_TOOLS", description: "search", parameters: { type: "object", properties: {} } } },
+                { type: "function", function: { name: "NOTES_SEARCH", description: "search notes", parameters: { type: "object", properties: {} } } },
+            ],
+            toolServerMap: new Map<string, any>([["COMPOSIO_SEARCH_TOOLS", entry], ["NOTES_SEARCH", notes]]),
         });
-        service["toolGate"] = new ToolGate({ read: async () => options.policy } as never, { check: vi.fn(async () => ({ kind: "allowed", allowed: true })) } as never, { canManageBotTools: async () => false });
+        service["toolGate"] = new ToolGate({ read: async (_bot: string, serverId: string) => (serverId === "n1" ? notesPolicy : options.policy) } as never, { check: vi.fn(async () => ({ kind: "allowed", allowed: true })) } as never, { canManageBotTools: async () => false });
     }
     for await (const _chunk of service.generateBotResponseStream(
         "bot-1", -1, "what is on my calendar", "You are Brick.", "test-provider", "matrix-dm", "", undefined, mocks.adminApiService,
@@ -165,11 +171,19 @@ describe("AIService: a person's own Brick in a direct message", () => {
         const policy = (settings: Record<string, string>) => ({ serverId: "g1", kind: "appActions", state: "confirmed", policyRevision: 1, settings, tools: rows });
         const allOff = { looksUp: "off", makesNew: "off", changesThings: "off", deletesOrSends: "off" };
         const on = await replyOf({ brick: true, policy: policy({ ...allOff, looksUp: "rightAway" }) });
-        expect(on.prompt).toContain("Apps you have: Gmail.");
+        expect(on.prompt).toContain("Apps you have: Gmail, Notes.");
         const off = await replyOf({ brick: true, policy: policy(allOff) });
         expect(off.prompt).not.toContain("Apps you have: Gmail");
-        expect(off.prompt).toContain("You have no Apps connected yet.");
+        expect(off.prompt).toContain("Apps you have: Notes.");
         expect(off.prompt).toContain("Off in Gmail");
+    });
+
+    it("does not list a tool server of the owner's own that has every tool Off, because the gate refuses all of them", async () => {
+        const rows = new Map([["GMAIL_FETCH_EMAILS", { name: "GMAIL_FETCH_EMAILS", title: "Fetch emails", heading: "looksUp", fingerprint: "r1", suggestedHeading: "looksUp", confirmed: true, setting: null }]]);
+        const gmail = { serverId: "g1", kind: "appActions", state: "confirmed", policyRevision: 1, settings: { looksUp: "rightAway", makesNew: "off", changesThings: "off", deletesOrSends: "off" }, tools: rows };
+        const { prompt } = await replyOf({ brick: true, policy: gmail, notesOff: true });
+        expect(prompt).toContain("Apps you have: Gmail.");
+        expect(prompt).not.toContain("Notes");
     });
 
     it("carries on after its tools ran without stopping to ask or handing work back", async () => {

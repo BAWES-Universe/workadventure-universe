@@ -1807,7 +1807,11 @@ export class AIService {
             const allOff = brickChat ? await this.appsAllOff(botId!, toolServerMap) : new Set<string>();
             const brickAbilities = brickChat
                 ? brickAbilitiesNote({
-                      apps: [...(brickApps?.apps ?? []).filter((app) => app.usable).map((app) => app.name), ...[...toolServerMap.values()].flatMap((entry) => appsOf(entry).map((app) => app.serverName ?? ''))].filter((name) => !allOff.has(name.trim().toLowerCase())),
+                      apps: [...(brickApps?.apps ?? []).filter((app) => app.usable).map((app) => app.name), ...tools.flatMap((tool) => {
+                          // Only the Apps whose tools it is really offered: a server the gate refuses every tool of is not one it has
+                          const entry = toolServerMap.get(tool?.function?.name ?? '');
+                          return entry ? appsOf(entry).map((app) => app.serverName ?? '') : [];
+                      })].filter((name) => !allOff.has(name.trim().toLowerCase())),
                       appsKnown: !!brickApps?.apps,
                       connectable: offerableApps(brickApps?.apps ?? null, brickApps?.declined ?? []),
                       computer: computerOn,
