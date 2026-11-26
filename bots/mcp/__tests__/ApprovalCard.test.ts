@@ -294,7 +294,43 @@ describe('how a call ended', () => {
         expect(resultText('{"successful":true}')).toBe('{"successful":true}');
         expect(resultText([{ type: 'text', text: 'Created   2 events' }])).toBe('Created 2 events');
         expect(resultText([{ type: 'image' }])).toBeUndefined();
-        expect(resultText([{ type: 'text', text: 'x'.repeat(500) }])!.length).toBeLessThanOrEqual(300);
+        // The whole answer, not its first 300 characters (a mail read came back cut at the same place every time)
+        expect(resultText([{ type: 'text', text: 'word '.repeat(200) }])).toBe('word '.repeat(200).trim());
+    });
+
+    it('tells the bot a long answer whole, and says so when it has to cut', () => {
+        const messages = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, subject: `Subject ${i}`, snippet: 'hello '.repeat(40) }));
+        const json = JSON.stringify({ successful: true, data: { messages } });
+        expect(json.length).toBeGreaterThan(300);
+        // Every message is there, in order, to the last
+        const text = resultText([{ type: 'text', text: json }])!;
+        expect(text).toBe(json);
+        expect(text).toContain('Subject 29');
+        // Past the room a reply has: whole items go and the answer says it, never a silent cut
+        const huge = JSON.stringify({ messages: Array.from({ length: 100 }, (_, i) => ({ id: i, text: 'plain words here '.repeat(125) })) });
+        const fitted = resultText(huge, false, 10_000)!;
+        expect(fitted.length).toBeLessThanOrEqual(10_000);
+        expect(fitted).toMatch(/Showing \d+ of 100/);
+        expect(resultText('plain words here '.repeat(300), false, 1000)!).toMatch(/cut|characters/i);
+    });
+
+    it('takes a mail answer\'s encoded body and routing headers out before it counts the length', () => {
+        const message = {
+            id: 'm1',
+            threadId: 't1',
+            labelIds: ['INBOX'],
+            subject: 'Invoice',
+            payload: { mimeType: 'multipart/alternative', headers: [{ name: 'Received', value: 'from x' }, { name: 'Subject', value: 'Invoice' }], body: { data: 'QUJD'.repeat(2000) } },
+        };
+        const text = resultText([{ type: 'text', text: JSON.stringify({ messages: [message] }) }], true)!;
+        expect(text).toContain('Invoice');
+        expect(text).toContain('encoded content left out');
+        expect(text).not.toContain('QUJDQUJD');
+    });
+
+    it('gives the bot an answer that is data and not a content block, and nothing for a picture', () => {
+        expect(resultText({ events: [{ title: 'Standup' }] })).toBe('{"events":[{"title":"Standup"}]}');
+        expect(resultText({ type: 'image', data: 'abc' })).toBeUndefined();
     });
 });
 

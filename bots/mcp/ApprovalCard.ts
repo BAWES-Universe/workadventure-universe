@@ -9,6 +9,7 @@
  */
 import type { RememberScope, SavedAction } from './OrbitActions';
 import type { ToolHeading } from './ToolCatalog';
+import { fitAppAnswer, RUN_ANSWER_MAX } from '../server/BrickAppAnswer';
 import { batchCalls, batchExtras, describeBatch, plainLabel, plainList, plainWords, readsAsWords, withoutProvider } from './AppBatch';
 
 export const ASK_KEY = 'universe.ask';
@@ -326,13 +327,27 @@ export function looksLikeData(text: string): boolean {
     }
 }
 
-/** The first text of what a tool gave back, whatever it says, on one line (for the bot's own follow-up, where it is data and never an instruction). */
-export function resultText(result: unknown): string | undefined {
+/**
+ * What a tool gave back, as the bot is told it after the person approved the action: the whole answer, made to fit the room a chat
+ * reply has (the same limit a goal's run reads an App's answer in, game #2130), never cut at a fixed few hundred characters. A plain
+ * answer is one line; an answer that is data is read as data, so what nobody reads (an encoded body, raw HTML, a mail's routing
+ * headers when `mail`) is taken out, whole items go before half of one, and a cut always says so. It is data for the bot, never an
+ * instruction. Nothing when the tool gave back no text and no data.
+ */
+export function resultText(result: unknown, mail = false, max: number = RUN_ANSWER_MAX): string | undefined {
     const items = Array.isArray(result) ? result : [result];
+    const texts: string[] = [];
     for (const item of items) {
         const text = typeof item === 'string' ? item : isPlain(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : undefined;
-        const line = text?.replace(/\s+/g, ' ').trim();
-        if (line) return clip(line, RESULT_MAX);
+        if (!text?.trim()) continue;
+        texts.push(looksLikeData(text) ? text.trim() : text.replace(/\s+/g, ' ').trim());
+    }
+    try {
+        if (texts.length > 0) return fitAppAnswer(texts.length === 1 ? texts[0] : texts, max, mail);
+        // An answer that is data and not a list of content blocks (a block has a `type`: an image or a file is not read as words)
+        if (isPlain(result) && typeof result.type !== 'string') return fitAppAnswer(result, max, mail);
+    } catch {
+        // An answer that cannot be written as text: the bot is told nothing came back in words
     }
     return undefined;
 }

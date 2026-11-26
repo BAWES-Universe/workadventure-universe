@@ -19,6 +19,7 @@ import { ReplySteps, type StepsField } from '../ai/ToolSteps';
 import type { ReplyLimitReached } from '../ai/types';
 import type { ToolSignInCard, ToolSignInDelivery } from '../mcp/ToolSignInCard';
 import type { ParsedFile } from '../services/FileParser';
+import { cutWithNote } from './BrickAppAnswer';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
@@ -84,6 +85,8 @@ export const brickMadeText = (name: string, id?: string, made = true): string =>
 };
 export const BRICK_NOT_MADE_TEXT = "I couldn't make it just now. Ask me again in a moment.";
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
+/** How much of a line the system wrote in the person's turn (an approved action's answer) the history keeps. */
+const NOTE_HISTORY_MAX = 1500;
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
 const CONFIG_CACHE_MS = 60 * 1000;
 /** Orbit gets this long to send a bot's settings before the lookup counts as failed (the person hears "couldn't answer"). */
@@ -577,7 +580,9 @@ export class DmReplyService extends BaseBehavior {
                   personRef: person.uuid,
               })
             : null;
-        const original = noted?.line ?? text;
+        // A line the system wrote (an approved action's answer can be tens of thousands of characters) is read whole in this reply, but the history
+        // keeps only its start: it is read again in every later reply, and the bot's own answer already says what mattered
+        const original = hooks.note ? cutWithNote(noted?.line ?? text, NOTE_HISTORY_MAX) : (noted?.line ?? text);
 
         const lastMet = memory.getMemory(botId, playerId)?.relationship?.lastMet ?? 0;
         if (Date.now() - lastMet > NEW_CONVERSATION_AFTER_MS) {
