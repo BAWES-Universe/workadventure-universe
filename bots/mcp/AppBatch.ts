@@ -15,16 +15,32 @@ export interface BatchCall {
 
 const isPlain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
+/** The arguments of one tool in a batch: an object, or JSON text of one (some tool servers send it that way), or nothing at all. Anything else is not readable. */
+function innerArguments(value: unknown): Record<string, unknown> | null {
+    if (value === undefined || value === null || value === '') return {};
+    if (isPlain(value)) return value;
+    if (typeof value !== 'string') return null;
+    try {
+        const parsed: unknown = JSON.parse(value);
+        return isPlain(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
 /**
  * The tools inside a batch call's arguments, or null when these are not a batch call: `tools` must be a list of at least one
- * object, each with a `tool_slug` that has a letter in it. The tool's own `arguments` are an object, or nothing.
+ * object, each with a `tool_slug` that has a letter in it. The tool's own `arguments` are an object, JSON text of one, or nothing; any other kind makes it not a batch call.
  */
 export function batchCalls(args: unknown): BatchCall[] | null {
     if (!isPlain(args) || !Array.isArray(args.tools) || args.tools.length === 0) return null;
     const calls: BatchCall[] = [];
     for (const item of args.tools) {
         if (!isPlain(item) || typeof item.tool_slug !== 'string' || !/[A-Za-z]/.test(item.tool_slug)) return null;
-        calls.push({ slug: item.tool_slug.trim(), args: isPlain(item.arguments) ? item.arguments : {} });
+        const inner = innerArguments(item.arguments);
+        // Arguments that cannot be read are not shown as "nothing to fill in": the call is then shown as the plain tool call it is
+        if (!inner) return null;
+        calls.push({ slug: item.tool_slug.trim(), args: inner });
     }
     return calls;
 }
