@@ -354,6 +354,10 @@ const chat: DeepPartial<Translation["chat"]> = {
                 "{name} のコンピューターに入力しています。{name} がインストールしたプログラムがまだ動いていて、入力内容が見られる可能性があります。",
             notReady: "コンピューターを準備できませんでした。何も変更されていません。もう一度お試しください。",
         },
+        files: {
+            artifactsMade: "作成したアーティファクト {count}件",
+            opensArtifacts: "あなたのアーティファクトを開きます",
+        },
     },
     artifacts: {
         kindApp: "ミニアプリ",
@@ -478,12 +482,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         artifactsEmpty: "アーティファクトはまだありません",
         artifactsMore: "もっと見る",
         artifactsFailed: "アーティファクトを読み込めませんでした。",
-    },
-    brick: {
-        files: {
-            artifactsMade: "作成したアーティファクト {count}件",
-            opensArtifacts: "あなたのアーティファクトを開きます",
-        },
     },
 };
 

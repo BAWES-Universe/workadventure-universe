@@ -209,6 +209,10 @@ const chat: DeepPartial<Translation["chat"]> = {
                 "Ty pišoš na licadle {name}. Program, kótaryž jo {name} instalěrował, hyšći běžy a móžo wiźeś, což pišoš.",
             notReady: "Licadło njejo se mógło pśigótowaś. Nic njejo se změniło. Wopytaj hyšći raz.",
         },
+        files: {
+            artifactsMade: "Napórane artefakty: {count}",
+            opensArtifacts: "Wótcynijo twóje artefakty",
+        },
     },
     artifacts: {
         kindApp: "Mini-app",
@@ -335,12 +339,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         artifactsEmpty: "Hyšći žedne artefakty",
         artifactsMore: "Wěcej pokazaś",
         artifactsFailed: "Artefakty njejsu se dali lodowaś.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "Napórane artefakty: {count}",
-            opensArtifacts: "Wótcynijo twóje artefakty",
-        },
     },
 };
 

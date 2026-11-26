@@ -52,6 +52,10 @@ const chat: DeepPartial<Translation["chat"]> = {
             screenControlRunningLine: "你正在 {name} 的电脑上输入。{name} 安装的程序仍在运行，可能看到你输入的内容。",
             notReady: "无法准备好电脑。电脑上没有任何改动。请重试。",
         },
+        files: {
+            artifactsMade: "已创建 {count} 个工件",
+            opensArtifacts: "打开你的工件",
+        },
     },
     artifacts: {
         kindApp: "迷你应用",
@@ -173,12 +177,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         artifactsEmpty: "还没有工件",
         artifactsMore: "显示更多",
         artifactsFailed: "无法加载工件。",
-    },
-    brick: {
-        files: {
-            artifactsMade: "已创建 {count} 个工件",
-            opensArtifacts: "打开你的工件",
-        },
     },
 };
 
