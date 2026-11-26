@@ -119,7 +119,7 @@ import { setLocale } from "../../../../../i18n/i18n-svelte";
 import AddManagerSheet from "../AddManagerSheet.svelte";
 import AppPage from "../AppPage.svelte";
 import AppsPage from "../AppsPage.svelte";
-import { appBrickStart, requestAppBrick, takeAppBrickStart } from "../AppLink";
+import { appBrickStart, requestAppBrick, requestAppPage, takeAppBrickStart } from "../AppLink";
 import { get } from "svelte/store";
 import { forgetMyApps } from "../AppsStore";
 import GitHubWaitingSheet from "../GitHubWaitingSheet.svelte";
@@ -1006,6 +1006,32 @@ describe("the Apps pages (#2001)", () => {
             expect(byId("appBrickScreen")).not.toBeNull();
             expect(words(byId("appBrickScreen"))).toContain("Gmail for Brick");
             expect(get(appBrickStart)).toBeUndefined();
+        });
+
+        it("looks for the card's Brick in a list read after the tap, not in one read before an App was connected elsewhere", async () => {
+            game.getMyApps.mockResolvedValueOnce({ apps: [tavily({ bricks: [] })], bricks: [] });
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsPage")).not.toBeNull();
+            requestAppBrick({ botId: "b1", serverId: "s1" });
+            await settle();
+            await settle();
+            expect(game.getMyApps).toHaveBeenCalledTimes(2);
+            expect(game.getMyApp).toHaveBeenCalledWith("gmail");
+            expect(byId("appBrickScreen")).not.toBeNull();
+            expect(get(appBrickStart)).toBeUndefined();
+        });
+
+        it("reads the card's App afresh when the page already shows another App", async () => {
+            requestAppPage("tavily");
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(game.getMyApp).toHaveBeenLastCalledWith("tavily");
+            requestAppBrick({ botId: "b1", serverId: "s1" });
+            await settle();
+            await settle();
+            expect(game.getMyApp).toHaveBeenLastCalledWith("gmail");
+            expect(byId("appBrickScreen")).not.toBeNull();
         });
 
         it("leaves the Apps page open when the card's Brick does not use one of the person's own Apps", async () => {

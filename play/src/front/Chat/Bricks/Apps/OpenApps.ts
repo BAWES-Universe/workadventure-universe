@@ -3,7 +3,7 @@ import type { Readable } from "svelte/store";
 import { leaveChat } from "../../ChatBack";
 import { bricksPageOpenStore, navChat } from "../../Stores/ChatStore";
 import { appsSearchStart } from "./AppsSearch";
-import { requestAppBrick, type AppBrickTarget } from "./AppLink";
+import { requestAppBrick, takeAppBrickStart, type AppBrickTarget } from "./AppLink";
 
 /**
  * Opening the Apps page from somewhere else (game #2001): "Connect my apps" under a Brick's hello, the "Apps" link in the
@@ -29,7 +29,9 @@ export function takeAppsPageRequest(): void {
  */
 export function openAppsPage(options: { search?: string; brick?: AppBrickTarget } = {}): void {
     appsSearchStart.set(options.search?.trim() || undefined);
+    // A request without a Brick replaces one still waiting: the page opens as asked, not on an earlier card's Brick
     if (options.brick) requestAppBrick(options.brick);
+    else takeAppBrickStart();
     leaveChat();
     navChat.switchToChat();
     bricksPageOpenStore.set(true);

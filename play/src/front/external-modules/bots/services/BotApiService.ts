@@ -3153,13 +3153,16 @@ export class BotApiService {
         toolId: string,
         setting: Setting | null
     ): Promise<ServerTools> {
-        const response = await this.fetch(
-            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(
-                serverId
-            )}/tools/${encodeURIComponent(toolId)}`,
-            { method: "PATCH", body: JSON.stringify({ setting }) }
-        );
-        return readServerTools(await response.json());
+        // A deadline, so an answer that never ends cannot keep the screen's controls waiting
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(
+                `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(
+                    serverId
+                )}/tools/${encodeURIComponent(toolId)}`,
+                { method: "PATCH", body: JSON.stringify({ setting }), signal }
+            );
+            return readServerTools(await response.json());
+        });
     }
 
     /** Move one tool under another heading. It follows that heading's choice from then on. */

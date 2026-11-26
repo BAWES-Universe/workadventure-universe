@@ -323,6 +323,7 @@ describe("an Orbit that does not answer about who may use a bot", () => {
         ["giving a Brick a home", (api) => api.placeBrickHome("b1", "/@/team/universe/room", {})],
         ["reading where a Brick lives", (api) => api.getBrickHome("b1")],
         ["taking a Brick out of its room", (api) => api.takeBrickOut("b1")],
+        ["choosing an App action's own setting", (api) => api.setMcpToolSetting("b1", "s1", "a1", "off")],
     ];
 
     it.each(brickWrites)("fails %s in time when Orbit never answers", async (_name, call) => {

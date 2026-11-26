@@ -66,4 +66,11 @@ describe("opening the Apps page from a chat", () => {
         expect(get(appsPageRequest)).toBe(true);
         takeAppBrickStart();
     });
+
+    it("drops a Brick an earlier card asked for when the page is opened again without one", () => {
+        openAppsPage({ brick: { botId: "b1", serverId: "s1" } });
+        openAppsPage({ search: "calendar" });
+        expect(get(appBrickStart)).toBeUndefined();
+        expect(get(appsSearchStart)).toBe("calendar");
+    });
 });
