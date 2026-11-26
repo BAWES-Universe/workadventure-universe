@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto';
 import type { BotPlayerMemory } from './ConversationMemory';
 import { mayUse, type Heard, type MemoryView } from './Heard';
-import { DISLIKE_LABEL, tastesIn } from './PersonalInfoRules';
+import { DISLIKE_LABEL, plainThing, tastesIn } from './PersonalInfoRules';
 
 export const MEMORY_ITEM_KINDS = ['name', 'birthday', 'pref', 'fact'] as const;
 export type MemoryItemKind = (typeof MEMORY_ITEM_KINDS)[number];
@@ -167,7 +167,9 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     };
     // Short dislikes ("tea"): the person's lines that say they do not like it, found by what they say and not by the bare word
     const shortDislikes: string[] = [];
-    const takeLines = (at: number | null, phrase: string, ownName = false, dislike = false) => {
+    const shortLikes: string[] = [];
+    const takeLines = (at: number | null, phrase: string, ownName = false, taste: 'like' | 'dislike' | null = null) => {
+        const dislike = taste === 'dislike';
         if (at !== null) for (const line of history) if (line.timestamp === at && line.sender === 'person') doomedLines.add(line);
         // The lines that say it back go too, the bot's and the person's: only the last line it was said in is noted, and a thing
         // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
@@ -176,7 +178,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         else if (phrase.trim().length > 0) {
             const short = phrase.trim();
             echoes.push({ at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short, dislike ? DISLIKE_WORDS : LIKE_WORDS) });
-            if (dislike) shortDislikes.push(short.toLowerCase());
+            if (taste === 'dislike') shortDislikes.push(short.toLowerCase());
+            else if (taste === 'like') shortLikes.push(short.toLowerCase());
         }
     };
 
@@ -206,7 +209,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
             const key = `pref:${preference}`;
             const at = positive(info.drawnFrom?.[key]);
             if (!goes(memoryItemKey('pref', null, preference), at)) return true;
-            takeLines(at, preference);
+            // A favorite is kept as "pizza (favorite food)", and what is said in the chat is "pizza"
+            takeLines(at, plainThing(preference), false, 'like');
             forgetPlace(key);
             removed++;
             return false;
@@ -219,7 +223,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         if (!goes(memoryItemKey('fact', name, String(value)), at)) continue;
         // How someone feels, and what they do not like, go with every line that says it, as a like does
         const dislike = name.startsWith(DISLIKE_LABEL);
-        takeLines(at, name === 'current_state' || dislike ? String(value) : '', false, dislike);
+        takeLines(at, name === 'current_state' || dislike ? String(value) : '', false, dislike ? 'dislike' : null);
         // The bot's reply right after the line this fact came from, when it says the value back, goes with it (a general fact's
         // value is never taken out of every line, so only that one reply is looked for)
         if (name !== 'current_state' && !dislike && String(value).trim() && at !== null) {
@@ -232,14 +236,16 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         removed++;
     }
 
-    if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0 || shortDislikes.length > 0) {
+    if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0 || shortDislikes.length > 0 || shortLikes.length > 0) {
         memory.conversationHistory = history.filter((line, index) => {
             if (doomedLines.has(line)) return false;
             const text = line.message;
             if (phrases.some((phrase) => phrase.test(text))) return false;
             if (line.sender === 'person') {
-                // "I hate tea" said earlier, where only the last such line was noted
-                return !(shortDislikes.length > 0 && tastesIn(text).dislikes.some((one) => shortDislikes.includes(one.toLowerCase())));
+                // "I hate tea" / "I like tea" said earlier, where only the last such line was noted
+                if (shortDislikes.length === 0 && shortLikes.length === 0) return true;
+                const tastes = tastesIn(text);
+                return !(tastes.dislikes.some((one) => shortDislikes.includes(one.toLowerCase())) || tastes.likes.some((one) => shortLikes.includes(plainThing(one).toLowerCase())));
             }
             // The person's own name is not said back by the bot in any later line either: it is the person who forgot it
             if (echoes.some((echo) => echo.ownName && echo.words.test(text))) return false;

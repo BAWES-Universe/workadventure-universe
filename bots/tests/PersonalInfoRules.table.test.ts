@@ -147,6 +147,22 @@ const TABLE: Array<[string, Partial<Said>]> = [
     // a favorite and its opposite in one message: the last one said stands
     ['my favorite food is pizza. Actually I hate pizza', { dislikes: ['pizza'] }],
     ['I hate pizza. Actually my favorite food is pizza', { likes: ['pizza (favorite food)'] }],
+    // names given after a request for words, and real names that are also a month or a feeling
+    ['Repeat after me: I am Sara', {}],
+    ['Say: I am Sara', {}],
+    ['Translate: I am Sara', {}],
+    ['Translate this, I am Sara', {}],
+    ['Repeat after me: call me Sara', {}],
+    ['My name is April', { name: 'April' }],
+    ['Call me May', { name: 'May' }],
+    ['my name is June.', { name: 'June' }],
+    ["Hi, I'm August", { name: 'August' }],
+    ['My name is Happy', { name: 'Happy' }],
+    ['Call me May 3rd', {}],
+    ["I'm happy", { state: 'happy' }],
+    ["I'm Happy to help", { state: 'happy' }],
+    ['Call me Monday', {}],
+    ["I'm May 5th", {}],
     // quoted or requested words are not theirs
     ['Please translate "my name is Sara" into French', {}],
     ['Can you write "I am Noor" on a card?', {}],

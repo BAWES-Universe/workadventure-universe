@@ -333,4 +333,39 @@ describe('what the bot keeps from a chat', () => {
         expect(info.preferences).toEqual(['pizza (favorite food)']);
         expect([...info.facts.keys()].some((key) => key.startsWith('dislike_'))).toBe(false);
     });
+    it('forgetting a favorite takes the lines that say it plainly, long or short, said once or twice', () => {
+        for (const [thing, kind, reply] of [['pizza', 'food', 'Pizza is your favorite food, got it!'], ['tea', 'drink', 'Tea is your favorite drink!']]) {
+            const memory = new ConversationMemory();
+            const say = (text: string, at: number, sender: 'person' | 'bot' = 'person') => {
+                memory.addMessage(BOT, PERSON, text, sender, 'dm', false);
+                memory.getMemory(BOT, PERSON)!.conversationHistory.at(-1)!.timestamp = at;
+                if (sender === 'person') memory.extractPersonalInfo(BOT, PERSON, text, 'dm', at);
+            };
+            say(`my favorite ${kind} is ${thing}`, 1000);
+            say(reply, 1500, 'bot');
+            say('I walk a lot', 2000);
+            say(`again, my favorite ${kind} is ${thing}`, 3000);
+            const stored = memory.getMemory(BOT, PERSON)!;
+            const target = memoryItemsOf(stored).find((item) => item.kind === 'pref')!;
+            expect(dropItems(stored, new Set([target.id]))).toBe(1);
+            expect(stored.conversationHistory.map((line) => line.message)).toEqual(['I walk a lot']);
+        }
+    });
+
+    it('forgetting a short like said twice takes the first line too', () => {
+        const memory = new ConversationMemory();
+        const say = (text: string, at: number, sender: 'person' | 'bot' = 'person') => {
+            memory.addMessage(BOT, PERSON, text, sender, 'dm', false);
+            memory.getMemory(BOT, PERSON)!.conversationHistory.at(-1)!.timestamp = at;
+            if (sender === 'person') memory.extractPersonalInfo(BOT, PERSON, text, 'dm', at);
+        };
+        say('I like tea', 1000);
+        say('Tea, you like it!', 1500, 'bot');
+        say('I like steam rooms', 2000);
+        say('I like tea a lot', 3000);
+        const stored = memory.getMemory(BOT, PERSON)!;
+        const target = memoryItemsOf(stored).find((item) => item.value === 'tea')!;
+        expect(dropItems(stored, new Set([target.id]))).toBe(1);
+        expect(stored.conversationHistory.map((line) => line.message)).toEqual(['I like steam rooms']);
+    });
 });

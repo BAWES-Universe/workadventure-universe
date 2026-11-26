@@ -55,17 +55,23 @@ const NEGATED = new RegExp(`\\b(?:not|never|no longer|hardly|barely|rarely|dont|
 
 // ---- Name -------------------------------------------------------------------------------------------------------------
 
-/** Capitalised words that follow "I'm" or "call me" without being a name. */
+/** Capitalised words that follow "I'm" or "call me" without being a name, whichever way the person introduces themselves. */
 const NOT_A_NAME = new Set([
-    'sorry', 'fine', 'good', 'great', 'okay', 'ok', 'not', 'just', 'back', 'here', 'there', 'going', 'trying', 'looking', 'glad', 'happy',
-    'sure', 'done', 'ready', 'afraid', 'curious', 'interested', 'using', 'also', 'still', 'only', 'really', 'very', 'so', 'too', 'new', 'in',
+    'sorry', 'not', 'just', 'back', 'here', 'there', 'going', 'trying', 'looking',
+    'only', 'also', 'still', 'really', 'very', 'so', 'too', 'in',
     'on', 'at', 'from', 'with', 'a', 'an', 'the', 'your', 'my', 'now', 'today', 'tomorrow', 'later', 'again', 'maybe', 'please', 'thanks',
     'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-    'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
-    'hungry', 'sad', 'tired', 'excited', 'angry', 'frustrated', 'worried', 'scared', 'nervous', 'thirsty', 'bored', 'lonely', 'confused', 'sick', 'ill',
-    'busy', 'late', 'early', 'free', 'online', 'offline', 'stuck', 'lost', 'home', 'out', 'off', 'about', 'wondering', 'thinking', 'having', 'doing', 'being',
+    'out', 'off', 'about', 'wondering', 'thinking', 'having', 'doing', 'being', 'using',
     'google', 'gmail', 'github', 'slack', 'notion', 'calendar', 'email', 'universe', 'brick',
 ]);
+/** Words for how someone is. After a bare "I'm" they are a feeling ("I'm Happy"); after "my name is" or "call me" they are a name ("my name is Joy"). */
+const NOT_A_NAME_WHEN_BARE = new Set([
+    'fine', 'good', 'great', 'okay', 'ok', 'glad', 'happy', 'sure', 'done', 'ready', 'afraid', 'curious', 'interested', 'new',
+    'hungry', 'sad', 'tired', 'excited', 'angry', 'frustrated', 'worried', 'scared', 'nervous', 'thirsty', 'bored', 'lonely', 'confused', 'sick', 'ill',
+    'busy', 'late', 'early', 'free', 'online', 'offline', 'stuck', 'lost', 'home',
+]);
+/** Months are names too ("April", "May"), unless a day follows ("call me May 3rd", "I'm April 5"). */
+const MONTH_NAMES = new Set(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']);
 
 // What may follow a bare "I'm Sara" for it to be a name and not the start of a longer phrase ("I'm Google mail" is not a name):
 // the end, a mark, a surname, an emoji, or a plain word of chat. After "my name is" or "call me" anything may follow.
@@ -82,29 +88,28 @@ const NAME_FORMS: Array<{ form: RegExp; bare: boolean }> = [
 const QUOTED = /"[^"\n]*"|“[^”\n]*”|«[^»\n]*»|`[^`\n]*`/gu;
 const TASK_WORD = /(?<![\p{L}\p{N}])(?:translate|translation|write|rewrite|say|type|repeat|spell|pronounce|correct|fix|quote|echo|caption|label|sentence|phrase|text|example|reads?|says?|tell (?:me|him|her|them))(?![\p{L}\p{N}])/iu;
 
-/** True when this sentence asks for something to be done with words before it says "my name is ...". */
-function namedInATask(sentence: string): boolean {
-    let first = -1;
-    for (const { form } of NAME_FORMS) {
-        const at = form.exec(sentence)?.index;
-        if (at !== undefined && (first === -1 || at < first)) first = at;
-    }
-    return first > 0 && TASK_WORD.test(sentence.slice(0, first));
-}
-
 /** The person's own name, only when they say it is: "my name is Sara", "call me Sara", "I'm Sara". */
 export function nameIn(message: string): string | null {
-    const own = sentencesOf(message.replace(QUOTED, ' ')).filter((sentence) => !namedInATask(sentence.text));
-    for (const sentence of own.flatMap((one) => clausesOf(one.text + (one.question ? '?' : '')))) {
-        if (sentence.question || NEGATED.test(sentence.text)) continue;
-        for (const { form, bare } of NAME_FORMS) {
-            const match = form.exec(sentence.text);
-            if (!match?.[1]) continue;
-            const name = match[1];
-            if (NOT_A_NAME.has(name.toLowerCase())) continue;
-            const rest = sentence.text.slice((match.index ?? 0) + match[0].length);
-            if (bare && !AFTER_NAME.test(rest)) continue;
-            return name;
+    for (const sentence of sentencesOf(message.replace(QUOTED, ' '))) {
+        let cursor = 0;
+        for (const clause of clausesOf(sentence.text + (sentence.question ? '?' : ''))) {
+            // What came before this part in its sentence: "Repeat after me: I am Sara" asks for words, it does not give a name
+            const at = sentence.text.indexOf(clause.text, cursor);
+            const before = at === -1 ? '' : sentence.text.slice(0, at);
+            if (at !== -1) cursor = at + clause.text.length;
+            if (clause.question || NEGATED.test(clause.text)) continue;
+            for (const { form, bare } of NAME_FORMS) {
+                const match = form.exec(clause.text);
+                if (!match?.[1]) continue;
+                if (TASK_WORD.test(before + clause.text.slice(0, match.index))) continue;
+                const name = match[1];
+                const lower = name.toLowerCase();
+                const rest = clause.text.slice((match.index ?? 0) + match[0].length);
+                if (NOT_A_NAME.has(lower) || (bare && NOT_A_NAME_WHEN_BARE.has(lower))) continue;
+                if (MONTH_NAMES.has(lower) && /^\s*(?:the\s+)?\d/i.test(rest)) continue;
+                if (bare && !AFTER_NAME.test(rest)) continue;
+                return name;
+            }
         }
     }
     return null;
