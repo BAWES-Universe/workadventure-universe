@@ -31,19 +31,27 @@ export async function sendReportWords(
     return answer.outcome;
 }
 
-/** Reads what became of a note from Orbit, so this device shows what another did. Nothing changes when Orbit can't say. */
-export async function readReportStatus(id: string, key: string): Promise<void> {
+/** Reads what became of a note from Orbit, so this device shows what another did. Nothing changes when Orbit can't say (false). */
+export async function readReportStatus(id: string, key: string): Promise<boolean> {
     const status = await botApiService.brickReportStatus(id, key);
     if (status?.state === "taken_back") markTakenBack(id);
     else if (status?.state === "live" && status.words) markWords(id, status.words);
+    return status !== null && status !== undefined;
 }
 
 /** Notes already read in this session from the line under an answer: a line drawn again (scrolling, a new message) asks Orbit no more. */
 const readOnce = new Set<string>();
 
-/** Reads what became of a note once per session, for the line under the answer: "Taken back" on another device shows without a tap. */
+/**
+ * Reads what became of a note once per session, for the line under the answer: "Taken back" on another device shows without a tap.
+ * Held while it is being read, so lines drawn at the same moment ask once; let go when Orbit could not say, so the next line drawn asks again.
+ */
 export function readReportStatusOnce(id: string, key: string): Promise<void> {
     if (readOnce.has(id)) return Promise.resolve();
     readOnce.add(id);
-    return readReportStatus(id, key).catch(() => undefined);
+    return readReportStatus(id, key)
+        .catch(() => false)
+        .then((read) => {
+            if (!read) readOnce.delete(id);
+        });
 }

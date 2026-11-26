@@ -157,6 +157,19 @@ describe("the line under the answer and what was sent", () => {
         expect(game.status).toHaveBeenCalledTimes(1);
     });
 
+    it("asks Orbit again the next time the line is drawn when it could not answer", async () => {
+        const lost = { ...report, id: "note-lost-read" };
+        game.status.mockResolvedValueOnce(null);
+        part = new BrickReportLine({ target, props: { reports: [lost], messageAt: NOW } });
+        await settle();
+        part.$destroy();
+        game.status.mockResolvedValueOnce({ state: "taken_back", words: "" });
+        part = new BrickReportLine({ target, props: { reports: [lost], messageAt: NOW } });
+        await settle();
+        expect(game.status).toHaveBeenCalledTimes(2);
+        expect(byId("brickReportTakenBack")?.textContent).toBe("Taken back");
+    });
+
     it("asks Orbit nothing for a line older than 24 hours", async () => {
         vi.setSystemTime(NOW + TAKE_BACK_MS + 1);
         part = new BrickReportLine({ target, props: { reports: [{ ...report, id: "note-old" }], messageAt: NOW } });

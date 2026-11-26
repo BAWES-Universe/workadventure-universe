@@ -202,7 +202,9 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     const retried = !!step && (context.turn?.steps.filter((other) => other.name === step.name).length ?? 0) > 1;
     const draftWords = typeof args.words === 'string' && args.words.trim() ? args.words.trim().slice(0, WORDS_MAX) : undefined;
     const replyRef = context.turn?.replyRef ?? `reply:${randomUUID()}`;
-    const ref = createHash('sha256').update([replyRef, context.botId, kind, area, operation, failure].join('|')).digest('hex');
+    // Every App is "app" to Orbit, so which App it was (its connection, or its tool for one with none) keeps two Apps' notes apart
+    const which = operation === 'app' ? (step?.appConnectionId ?? step?.name ?? '') : '';
+    const ref = createHash('sha256').update([replyRef, context.botId, kind, area, operation, failure, which].join('|')).digest('hex');
 
     const report: BrickReportSend = {
         botId: context.botId,

@@ -154,6 +154,28 @@ describe('The send_to_universe_team tool', () => {
         expect(failureOf('Error: boom')).toBe('failed');
     });
 
+    it('two Apps that failed the same way in one reply are two notes, and the same App again is one', async () => {
+        const turn = newReportTurn('$event-1');
+        const other = '6e2d3c4b-2222-4333-8444-a55566667777';
+        const sources = {
+            apps: new Map([
+                ['Blue_Plover_binder_open', { connectionId: CONNECTION }],
+                ['Red_Kite_sheet_read', { connectionId: other }],
+            ]),
+            offered: new Set(['Blue_Plover_binder_open', 'Red_Kite_sheet_read']),
+        };
+        noteWhatRan(turn, [{ name: 'Blue_Plover_binder_open', result: { success: false, error: 'Something broke' } }], sources);
+        noteWhatRan(turn, [{ name: 'Red_Kite_sheet_read', result: { success: false, error: 'Something broke' } }], sources);
+        const ctx = context({ turn });
+        ctx.admin.sendBrickReport.mockResolvedValueOnce(kept({ id: 'note-a' })).mockResolvedValueOnce(kept({ id: 'note-b' }));
+        await runReportTool({ ...args, area: 'apps', step: 'Blue_Plover_binder_open' }, ctx);
+        expect(await runReportTool({ ...args, area: 'apps', step: 'Red_Kite_sheet_read' }, ctx)).toMatchObject({ sent: true, title: expect.any(String) });
+        expect(sentOf(ctx, 1).ref).not.toBe(sentOf(ctx, 0).ref);
+        expect(sentOf(ctx, 1)).toMatchObject({ operation: 'app', appConnectionId: other });
+        expect(await runReportTool({ ...args, area: 'apps', step: 'Blue_Plover_binder_open' }, ctx)).toMatchObject({ note: expect.stringContaining('Already sent') });
+        expect(ctx.admin.sendBrickReport).toHaveBeenCalledTimes(2);
+    });
+
     it('a problem with no step named is about the last step that failed, not a later one that only came back empty', async () => {
         const turn = newReportTurn('$event-1');
         const sources = { apps: new Map(), offered: new Set(['read_page', 'list_files']) };
