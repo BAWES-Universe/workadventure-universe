@@ -353,6 +353,15 @@ describe('research Apps on by default: what the Brick knows about them', () => {
         expect(instantToolsNote(listing({ tools: [], research: { state: 'used_up', renewsAt: null } }))).toMatch(/Their credit for it is used up\./);
     });
 
+    it('a research standing that comes with other (non-research) Apps keeps both the Instant Apps rules and the standing line', () => {
+        const mixed = listing({ tools: [{ ...TOOL, name: 'instant_app_gmail_send', app: 'gmail', kind: undefined }], research: { state: 'not_given', renewsAt: null } });
+        const note = instantToolsNote(mixed);
+        expect(note).toMatch(/^Instant Apps: you can run Instant Apps for your owner/);
+        expect(note).toMatch(/searching the web on Universe's account is not available to your owner right now\. It is not available to them this month\./);
+        expect(note).toMatch(/their own free account of a search App on \[Apps\]\(#apps\) has no Universe limit/);
+        expect(note).not.toMatch(/search right away/);
+    });
+
     it('a run refused because no credit was given is not "used up": no card, and more credit is never offered', async () => {
         const words = 'Research on Universe’s account isn’t available right now. Your own free account on Apps has no Universe limit.';
         const instantRun = vi.fn().mockResolvedValue({ status: 'refused', reason: 'credit_not_given', message: words, stop: false, renewsAt: undefined, canAskForMore: undefined } satisfies InstantRunAnswer);

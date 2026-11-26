@@ -127,11 +127,12 @@ export function researchStandingNote(research: NonNullable<InstantListing['resea
  * owner's own free account of it has no Universe limit. Never a price, an amount or how much credit is left.
  */
 export function instantToolsNote(listing: InstantListing | null = null): string {
+    // Orbit sends a research standing with no tools today; if other Apps ever come with it, the Brick still gets both notes
     if (listing?.research && listing.tools.length === 0) return researchStandingNote(listing.research);
     return [
         'Instant Apps: you can run Instant Apps for your owner with the tools whose names start with instant_app_. Call them Instant Apps or Apps, never tools or connectors.',
         "Each run is paid from your owner's Instant Apps credit. Use one when it does what was asked better than answering yourself or reading a page could; never in a loop, never twice with the same words, never to try it out.",
-        ...researchNote(listing),
+        ...(listing?.research ? [researchStandingNote(listing.research)] : researchNote(listing)),
         'Never say a price, an amount, or how much credit is left: their Usage page shows it ([Usage](#usage) opens it when they ask). Never say who runs an App for Universe.',
         'When a run did not work or was refused, say it in one plain sentence in their language, in the words you were given, and carry on another way if you can.',
         'When their credit does not cover it, a card asks them how to carry on: say in one short line that you need their pick and stop, and do not list the choices in words. More credit is never the answer to something that is not available right now.',
