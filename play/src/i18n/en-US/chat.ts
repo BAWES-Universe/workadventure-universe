@@ -1885,9 +1885,10 @@ const chat: BaseTranslation = {
                 },
                 hints: {
                     makesNew: "Makes something new that only you see, like a draft",
-                    changesThings: "Edits or files things that are already there, like labels or a draft",
+                    changesThings: "Makes or edits things others can see, like an issue or labels",
                     deletesOrSends: "Deletes things, sends email or messages, or spends money",
                 },
+                nothingHere: "Nothing in {app:string} goes here.",
                 tapOne: "Tap one to set it on its own.",
                 sameAsHeading: "Same as heading ({choice:string})",
                 ownChoice: "Set just for this one",

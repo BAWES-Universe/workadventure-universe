@@ -6,6 +6,7 @@
     import type { BotData } from "../types";
     import { botToolsStore, chooseSetting, confirmAllTools, loadServerTools } from "../stores/BotToolsStore";
     import {
+        HEADINGS,
         SETTINGS,
         briefNames,
         headingOf,
@@ -50,7 +51,8 @@
     // What the banner is about: every tool of an old server, else the ones still waiting. With only one, it is named.
     $: checking = unchecked ? tools : tools.filter((tool) => tool.state !== "confirmed");
     $: onlyTool = checking.length === 1 ? toolLabel(checking[0]) : undefined;
-    $: headings = usedHeadings(tools);
+    // An App shows all four headings, so a person sees where nothing goes; a bot's own server shows only the ones in use
+    $: headings = app ? appHeadings(tools) : usedHeadings(tools);
     $: app = appMode && data?.kind === "appActions";
     // From Apps, the server buttons wait for the list: they never flash up over a ready-made App's actions
     $: showEditor = !appMode || loadFailed || (data !== undefined && data.kind !== "appActions");
@@ -111,6 +113,9 @@
         return app && heading !== "looksUp" && heading !== "unsorted"
             ? words.hints[heading]()
             : text.headings[heading].hint();
+    }
+    function appHeadings(all: readonly ServerTool[]): Array<Heading | "unsorted"> {
+        return toolsUnder(all, "unsorted").length > 0 ? [...HEADINGS, "unsorted"] : [...HEADINGS];
     }
     function effectOf(setting: Setting): string {
         return app ? words.effects[setting]() : text.effects[setting]();
@@ -237,38 +242,46 @@
                 <section class="ts-card" data-testid="bot-tools-heading-{heading}">
                     <b class="ts-title">{headingTitle(heading)}</b>
                     <span class="ts-hint">{hintOf(heading)}</span>
-                    {#if heading !== "unsorted"}
-                        <PageSegment
-                            label={headingTitle(heading)}
-                            value={data.settings[heading]}
-                            options={SETTINGS.map((setting) => ({
-                                value: setting,
-                                label: choiceLabel(setting),
-                                testId: `bot-tools-choice-${heading}-${setting}`,
-                            }))}
-                            onPick={(value) => choose(heading, value)}
-                        />
-                        <span class="ts-effect">{effectOf(data.settings[heading])}</span>
+                    {#if app && under.length === 0}
+                        <!-- An App heading with nothing in it: no choice, no arrow -->
+                        <span class="ts-none" data-testid="bot-tools-empty-{heading}"
+                            >{words.nothingHere({ app: serverName })}</span
+                        >
+                    {:else}
+                        {#if heading !== "unsorted"}
+                            <PageSegment
+                                label={headingTitle(heading)}
+                                value={data.settings[heading]}
+                                options={SETTINGS.map((setting) => ({
+                                    value: setting,
+                                    label: choiceLabel(setting),
+                                    testId: `bot-tools-choice-${heading}-${setting}`,
+                                }))}
+                                onPick={(value) => choose(heading, value)}
+                            />
+                            <span class="ts-effect">{effectOf(data.settings[heading])}</span>
+                        {/if}
+                        <button
+                            type="button"
+                            class="ts-row"
+                            data-testid="bot-tools-open-{heading}"
+                            on:click={() => onOpenHeading(heading)}
+                        >
+                            <span class="ts-rowtx">
+                                <span class="ts-count"
+                                    >{countOf(under.length)}{#if checking > 0}<span class="ts-warn">
+                                            {text.toCheck({ count: checking })}</span
+                                        >{/if}</span
+                                >
+                                <span class="ts-namesrow"
+                                    ><span class="ts-names" class:whole={app}>{namesOf(under).names}</span
+                                    >{#if namesOf(under).more}<span class="ts-more">{namesOf(under).more}</span
+                                        >{/if}</span
+                                >
+                            </span>
+                            <span class="ts-chev"><IconChevronDown font-size="18" /></span>
+                        </button>
                     {/if}
-                    <button
-                        type="button"
-                        class="ts-row"
-                        data-testid="bot-tools-open-{heading}"
-                        on:click={() => onOpenHeading(heading)}
-                    >
-                        <span class="ts-rowtx">
-                            <span class="ts-count"
-                                >{countOf(under.length)}{#if checking > 0}<span class="ts-warn">
-                                        {text.toCheck({ count: checking })}</span
-                                    >{/if}</span
-                            >
-                            <span class="ts-namesrow"
-                                ><span class="ts-names" class:whole={app}>{namesOf(under).names}</span
-                                >{#if namesOf(under).more}<span class="ts-more">{namesOf(under).more}</span>{/if}</span
-                            >
-                        </span>
-                        <span class="ts-chev"><IconChevronDown font-size="18" /></span>
-                    </button>
                 </section>
             {/each}
         {/if}
@@ -364,6 +377,12 @@
         font-size: 12.5px;
         line-height: 1.35;
         color: rgba(244, 242, 250, 0.64);
+    }
+    .ts-none {
+        padding: 2px 0 12px;
+        font-size: 13px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.72);
     }
     .ts-effect {
         padding: 0 6px;
