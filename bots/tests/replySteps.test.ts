@@ -136,13 +136,12 @@ describe("a reply's room for tool results", () => {
         expect(chat.steps[1]!.results[0]!.content).toBe('b'.repeat(800));
         expect(chat.size()).toBeGreaterThan(1000);
         expect(run.steps[1]!.results[0]!.content).toContain('Only the first');
-        expect(run.size()).toBeLessThanOrEqual(1000 + 200);
-        // Cut to what is left, no more: the kept steps and the newest one, note counted, fit the room but for the note
-        const note = `\n[Only the first 1,000 of 1,000 characters fit in this reply's room for tool results ("Room for tool results in one reply").]`.length;
-        expect(run.size()).toBeLessThanOrEqual(1000 + note);
+        // The note a cut adds is counted too: the kept steps and the newest one, notes and all, are within the room
+        expect(run.size()).toBeLessThanOrEqual(1000);
+        expect(run.steps[1]!.results[0]!.content.length).toBeGreaterThan(100);
     });
 
-    it('for a run, leaves a step that fits beside the kept ones as it is, and gives only the note when what the model said fills the room', () => {
+    it('for a run, leaves a step that fits beside the kept ones as it is', () => {
         const room = new StepRoom(1000, true);
         room.add(step(1, 'a'.repeat(200)));
         room.add(step(2, 'b'.repeat(200)));

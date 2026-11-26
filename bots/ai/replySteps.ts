@@ -242,7 +242,8 @@ export class StepRoom {
         }
         const left = this.total ? this.room - this.size() : this.room;
         if (sizeOf(step) > left) this.setAsideArguments(step);
-        if (sizeOf(step) > left) this.fit(step, Math.max(0, left - (sizeOf(step) - resultsSizeOf(step))));
+        // The notes of the cuts are part of what is kept, so for all the steps together they are counted before the room is shared out
+        if (sizeOf(step) > left) this.fit(step, Math.max(0, left - (sizeOf(step) - resultsSizeOf(step)) - (this.total ? this.notesOf(step) : 0)));
         this.steps.push(step);
     }
 
