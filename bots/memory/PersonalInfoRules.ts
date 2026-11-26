@@ -10,7 +10,8 @@
  */
 
 const APOS = `['’]`;
-const SENTENCE_END = /(?<=[.!?\n])\s+|\n+/u;
+// A period ends a sentence unless it ends a title or an initial: "I love Dr. Pepper", "I like J. K. Rowling" are one sentence each
+const SENTENCE_END = /(?<=[.!?\n])(?<!(?:^|[^\p{L}])(?:[mM][rR]|[mM][rR][sS]|[mM][sS]|[mM][xX]|[dD][rR]|[pP][rR][oO][fF]|[sS][tT]|[jJ][rR]|[sS][rR]|[vV][sS]|[eE][tT][cC]|[iI][nN][cC]|[lL][tT][dD]|[mM][tT]|[fF][tT]|[gG][eE][nN]|[cC][oO][lL]|[cC][aA][pP][tT]|[lL][tT]|[sS][gG][tT]|[rR][eE][vV]|[hH][oO][nN]|[sS][eE][nN]|[rR][eE][pP]|[gG][oO][vV]|[fF][rR])\.)(?<!(?:^|[^\p{L}])\p{Lu}\.)\s+|\n+/u;
 
 /** A question that starts with one of these asks about the whole of it ("Do I like tea or coffee?"). */
 const ASKS = /^(?:am i|are you|are we|is|are|was|were|do|does|did|can|could|would|will|shall|should|may|might|has|have|what|who|whom|whose|why|how|when|where|which)(?![\p{L}\p{N}])/iu;
@@ -57,7 +58,7 @@ const NEGATED = new RegExp(`\\b(?:not|never|no longer|hardly|barely|rarely|dont|
 
 /** Capitalised words that follow "I'm" or "call me" without being a name, whichever way the person introduces themselves. */
 const NOT_A_NAME = new Set([
-    'called', 'named', 'sorry', 'not', 'just', 'back', 'here', 'there', 'going', 'trying', 'looking',
+    'mr', 'mrs', 'ms', 'mx', 'dr', 'prof', 'sir', 'madam', 'miss', 'called', 'named', 'sorry', 'not', 'just', 'back', 'here', 'there', 'going', 'trying', 'looking',
     'only', 'also', 'still', 'really', 'very', 'so', 'too', 'in',
     'on', 'at', 'from', 'with', 'a', 'an', 'the', 'your', 'my', 'now', 'today', 'tomorrow', 'later', 'again', 'maybe', 'please', 'thanks',
     'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',

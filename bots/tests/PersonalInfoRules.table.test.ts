@@ -147,6 +147,15 @@ const TABLE: Array<[string, Partial<Said>]> = [
     // a favorite and its opposite in one message: the last one said stands
     ['my favorite food is pizza. Actually I hate pizza', { dislikes: ['pizza'] }],
     ['I hate pizza. Actually my favorite food is pizza', { likes: ['pizza (favorite food)'] }],
+    // a period after a title or an initial does not end the sentence
+    ['I love Dr. Pepper', { likes: ['Dr. Pepper'] }],
+    ['I like Mr. Beast videos', { likes: ['Mr. Beast videos'] }],
+    ['I like tea. I love Dr. Pepper', { likes: ['tea', 'Dr. Pepper'] }],
+    ['I love J. K. Rowling', { likes: ['J. K. Rowling'] }],
+    ["Hi, I'm Mr. Smith", {}],
+    ['My name is Dr. Smith', {}],
+    ['I like tea. I hate coffee.', { likes: ['tea'], dislikes: ['coffee'] }],
+    ['I hate Mrs. Brown. I love tea', { likes: ['tea'], dislikes: ['Mrs. Brown'] }],
     // capitals and shouting
     ['I HATE coffee', { dislikes: ['coffee'] }],
     ['I LOVE tea', { likes: ['tea'] }],
