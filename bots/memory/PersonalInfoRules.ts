@@ -224,7 +224,9 @@ function thingOf(rest: string): string | null {
         .split(/\s*(?:[;:()]|,\s*(?:not|thanks|thank you|thx|please|pls|lol|haha|honestly|though|ok|okay|really|btw)\b|\s[-–—]\s|\b(?:but|because|since|so|though|although|except|unless|when|whenever|if|which|that|and then)\b)/iu)[0]
         .replace(/\s+(?:too|a lot|a bit|very much|so much|as well|also|though|however|anymore|now|again|right now|lol|lmao|haha|btw|please|pls|thanks|thank you|honestly|tbh)$/iu, '')
         .trim()
-        .replace(/[\s,.!?…"'`“”]+$/u, '');
+        .replace(/[\s,.!?…"'`“”‘’]+$/u, '')
+        // A thing said in quotes ("Breaking Bad") is the thing, without its quote marks
+        .replace(/^[\s"'`“”‘’]+/u, '');
     if (!phrase || phrase.length > MAX_PHRASE_CHARS || phrase.split(/\s+/u).length > MAX_PHRASE_WORDS) return null;
     if ((NOT_A_THING.test(phrase) && !isATitle(phrase)) || ABOUT_THE_BOT.test(phrase) || CONTACT.test(phrase)) return null;
     // A word or two with a letter in it
@@ -324,7 +326,7 @@ export function tastesIn(message: string): Tastes {
 // ---- How they feel ----------------------------------------------------------------------------------------------------
 
 const STATES = 'hungry|sad|happy|tired|excited|angry|frustrated|worried|scared|nervous|thirsty|bored|lonely|confused|sick|ill|fine|okay|ok';
-const STATE = new RegExp(`\\bi(?:${APOS}m| am| feel)\\s+(${STATES})\\b(?!\\s+(?:of|with|about)\\b)`, 'iu');
+const STATE = new RegExp(`\\bi(?:${APOS}?m| am| feel)\\s+(${STATES})\\b(?!\\s+(?:of|with|about)\\b)`, 'iu');
 
 /** How the person says they feel now ("I'm tired"), and not what they say they do not ("I'm not tired", "am I tired?"). */
 export function stateIn(message: string): string | null {
