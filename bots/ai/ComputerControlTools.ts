@@ -21,7 +21,7 @@ import { v5 as uuidv5 } from 'uuid';
 import type { ComputerControlAnswer, ComputerControlAsk, ComputerControlJob, ComputerControlView, AdminApiService } from '../server/AdminApiService';
 import type { ConfirmationQueue } from './ComputerTools';
 import { CONTROL_REFUSALS, CONTROL_WORDS, lineOf, othersOf, quotedTitles, whichDated } from './ComputerControlWords';
-import { endedJobWords, type EndedJobNow } from './ComputerJobsNow';
+import { endedJobWords, endedNotLive, type ComputerJobsNow } from './ComputerJobsNow';
 
 export const COMPUTER_JOBS_TOOL = 'computer_jobs';
 export const PAUSE_JOB_TOOL = 'pause_computer_job';
@@ -393,10 +393,10 @@ export interface ComputerControlContext {
      */
     inbound?: { eventId: string };
     /**
-     * The jobs of this person on this Brick that ended lately, newest first, read fresh from Orbit (the Brick chat audit, 26 Nov): `computer_jobs` lists them beside the live ones, so a job that
-     * finished is never read as "no job". Null when Orbit could not say; without it the list is only the live jobs, as before.
+     * The jobs of this person on this Brick, live and ended lately (newest first), read fresh from Orbit as one snapshot (the Brick chat audit, 26 Nov): `computer_jobs` lists the ended ones beside
+     * the live ones, so a job that finished is never read as "no job". Null when Orbit could not say; without it the list is only the live jobs, as before.
      */
-    endedLately?: () => Promise<EndedJobNow[] | null>;
+    endedLately?: () => Promise<ComputerJobsNow | null>;
 }
 
 /** The name the ids of controls are made under: a fixed name of our own, so the same message and control always make the same id, here and after a restart. */
@@ -987,7 +987,9 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
 /** "How is it going?": the jobs as Orbit has them, in words for the model (no fixed line: it changes nothing), and the steps a named job took so far when Orbit keeps them. */
 async function seeJobs(words: string, args: Record<string, unknown>, context: ComputerControlContext, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>, shown?: ControlState['shown']): Promise<Record<string, unknown>> {
     // The jobs that ended lately are listed too: a job that ran and finished is not "no job" (the Brick chat audit, 26 Nov). Never in the way of the live list
-    const ended = context.endedLately ? await context.endedLately().catch(() => null) : null;
+    // Read apart from `jobs`: a job that ended in between is kept out of the ended list, so no job is told as both going and ended (CodeRabbit on 4ad0f165)
+    const snapshot = context.endedLately ? await context.endedLately().catch(() => null) : null;
+    const ended = snapshot ? endedNotLive(snapshot, jobs) : null;
     const now = Date.now();
     const endedLately = ended?.length ? ended.map((job) => endedJobWords(job, now)) : null;
     const result: Record<string, unknown> = {

@@ -15,7 +15,7 @@ import { AdminApiService, controlAnswerOf, type ComputerControlAsk } from '../se
 import { AIService } from '../ai/AIService';
 import { COMPUTER_JOBS_TOOL, newControlState, runComputerControlTool } from '../ai/ComputerControlTools';
 import { ConfirmationQueue } from '../ai/ComputerTools';
-import { JOBS_NOW_RULES, NO_COMPUTER_NOTE, agoWords, computerJobsNote, computerJobsNowOf, endedJobWords, type ComputerJobsNow, type EndedJobNow } from '../ai/ComputerJobsNow';
+import { JOBS_NOW_RULES, NO_COMPUTER_NOTE, agoWords, computerJobsNote, computerJobsNowOf, endedJobWords, endedNotLive, type ComputerJobsNow, type EndedJobNow, type LiveJobNow } from '../ai/ComputerJobsNow';
 
 const BRICK = '0b7c1d2e-1111-4222-8333-944455556666';
 const request = axios.request as unknown as ReturnType<typeof vi.fn>;
@@ -76,6 +76,15 @@ describe('the note a Brick gets about its computer jobs', () => {
         expect(note).toContain("- “Price list”: waiting, not started yet: this month's computer time is used up");
         expect(note).toContain('- “Menu”: waiting for a free computer, not started yet: it starts by itself.');
         expect(note).toContain('No job ended in the last week.');
+    });
+
+    it('a job that ran part of the way and is back in line is never told as not started yet', () => {
+        const back = (queuedFor: string, startedAt: number | null, stepDone: number): LiveJobNow => ({ title: `Job ${queuedFor}`, status: 'queued', queuedFor, waitingFor: null, control: 'brick', stepDone, stepTotal: null, stepLabel: null, startedAt });
+        const note = computerJobsNote({ live: [back('turn', min(-20), 0), back('allowance', null, 2), back('pool', min(-5), 1)], ended: [] }, NOW);
+        expect(note).toContain('- “Job turn”: in line again after it ran part of the way: it carries on by itself when the job before it ends.');
+        expect(note).toContain("- “Job allowance”: waiting after it ran part of the way: this month's computer time is used up, and it carries on by itself once they get more in Usage.");
+        expect(note).toContain('- “Job pool”: waiting for a free computer after it ran part of the way: it carries on by itself.');
+        expect(note).not.toContain('not started yet');
     });
 
     it('ended jobs say how they ended, the reason of one that could not go on, and the files they left', () => {
@@ -226,13 +235,13 @@ describe('Brick reads its computer fresh with every message', () => {
 
 describe('the jobs tool lists what ended lately too', () => {
     const emptyLine = { ok: true, view: { job: null, queued: [], on: true } };
-    const run = (endedLately?: () => Promise<EndedJobNow[] | null>) => {
-        const controlComputerJobs = vi.fn(async (_bot: string, _user: string, _ask: ComputerControlAsk) => controlAnswerOf(emptyLine));
+    const run = (endedLately?: () => Promise<ComputerJobsNow | null>, line: unknown = emptyLine) => {
+        const controlComputerJobs = vi.fn(async (_bot: string, _user: string, _ask: ComputerControlAsk) => controlAnswerOf(line));
         return runComputerControlTool(COMPUTER_JOBS_TOOL, {}, { admin: { controlComputerJobs }, botId: BRICK, userId: 'uuid-alice', state: newControlState(), confirmations: new ConfirmationQueue(), inbound: { eventId: '$msg:one' }, ...(endedLately ? { endedLately } : {}) });
     };
 
     it('nothing live but a finished job: it is listed, and the Brick is told never to say there was no job', async () => {
-        const result = await run(async () => [{ ...airbnb, endedAt: Date.now() - 9 * 60_000 }]);
+        const result = await run(async () => ({ live: [], ended: [{ ...airbnb, endedAt: Date.now() - 9 * 60_000 }] }));
         expect(result.jobs).toEqual([]);
         expect(result.endedLately).toEqual(['“Airbnb Bangkok search”: finished 9 minutes ago. It left no files.']);
         expect(result.note).toContain('never say there was no job');
@@ -240,7 +249,7 @@ describe('the jobs tool lists what ended lately too', () => {
     });
 
     it('nothing live and nothing ended lately: it says so plainly', async () => {
-        const result = await run(async () => []);
+        const result = await run(async () => ({ live: [], ended: [] }));
         expect(result).not.toHaveProperty('endedLately');
         expect(result.note).toContain('no job ended lately');
     });
@@ -253,5 +262,36 @@ describe('the jobs tool lists what ended lately too', () => {
         expect(result).not.toHaveProperty('endedLately');
         // What ended is not known: it is never said that no job ran
         expect(result.note).toContain('never say that no job ran');
+    });
+
+    it('a job that ended between the live read and the ended read is told only as live, never as both', async () => {
+        // The live list still has the Airbnb search working; by the second read it had finished. An earlier run of the same title stays told as ended
+        const working = { ok: true, view: { job: { id: 'job-2', title: 'Airbnb Bangkok search', status: 'running', stepDone: 3, stepTotal: null, control: 'brick' }, queued: [], on: true } };
+        const earlier = { ...airbnb, endedAt: Date.now() - 2 * 60 * 60_000 };
+        const result = await run(async () => ({ live: [], ended: [{ ...airbnb, endedAt: Date.now() }, earlier] }), working);
+        expect((result.jobs as unknown[]).length).toBe(1);
+        expect(result.endedLately).toEqual(['“Airbnb Bangkok search”: finished 2 hours ago. It left no files.']);
+    });
+});
+
+describe('endedNotLive keeps each job in one state', () => {
+    const live = (title: string): LiveJobNow => ({ title, status: 'running', queuedFor: null, waitingFor: null, control: 'brick', stepDone: 0, stepTotal: null, stepLabel: null, startedAt: null });
+    const done = (title: string, ago: number): EndedJobNow => ({ ...airbnb, title, endedAt: min(-ago) });
+
+    it('drops only the newest ended job of a title the snapshot no longer has live', () => {
+        expect(endedNotLive({ live: [], ended: [done('A', 1), done('B', 2), done('A', 3)] }, [live('A')]).map((job) => job.endedAt)).toEqual([min(-2), min(-3)]);
+    });
+
+    it('drops nothing when the snapshot still has the job live, or a new job began in between', () => {
+        const ended = [done('A', 1), done('B', 2)];
+        expect(endedNotLive({ live: [live('A')], ended }, [live('A')])).toEqual(ended);
+        expect(endedNotLive({ live: [live('A'), live('C')], ended }, [live('A')])).toEqual(ended);
+        expect(endedNotLive({ live: [], ended }, [])).toEqual(ended);
+    });
+
+    it('matches titles however their spaces were written, and as far as the jobs line keeps them', () => {
+        expect(endedNotLive({ live: [], ended: [done('Visa form', 1)] }, [live('  Visa   form ')])).toEqual([]);
+        const long = 'x'.repeat(150);
+        expect(endedNotLive({ live: [], ended: [done(long, 1)] }, [live(long.slice(0, 120))])).toEqual([]);
     });
 });

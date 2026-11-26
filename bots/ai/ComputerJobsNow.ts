@@ -99,6 +99,28 @@ export function computerJobsNowOf(raw: unknown): ComputerJobsNow | null {
     return { live, ended };
 }
 
+/** A title as both lists can compare it: spaces folded, and only as long as the jobs line keeps it (120). */
+const sameTitle = (title: string): string => title.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+
+/**
+ * The jobs of `snapshot` that ended lately, less any that `live` (read a moment before, apart from the snapshot) still lists as working, waiting or in line: a job that ended
+ * between the two reads is told in one state only, the live one, never as both going and ended. One live title more than the snapshot has is one job that ended in between,
+ * and it is the newest ended job of that title that goes.
+ */
+export function endedNotLive(snapshot: ComputerJobsNow, live: ReadonlyArray<{ title: string }>): EndedJobNow[] {
+    const surplus = new Map<string, number>();
+    for (const job of live) surplus.set(sameTitle(job.title), (surplus.get(sameTitle(job.title)) ?? 0) + 1);
+    for (const job of snapshot.live) surplus.set(sameTitle(job.title), (surplus.get(sameTitle(job.title)) ?? 0) - 1);
+    // `ended` is newest first, so the first ones of a title are the ones that ended in between
+    return snapshot.ended.filter((job) => {
+        const key = sameTitle(job.title);
+        const left = surplus.get(key) ?? 0;
+        if (left <= 0) return true;
+        surplus.set(key, left - 1);
+        return false;
+    });
+}
+
 /** "just now", "5 minutes ago", "3 hours ago", "2 days ago". */
 export function agoWords(at: number, now: number): string {
     const minutes = Math.floor(Math.max(0, now - at) / 60_000);
@@ -125,6 +147,13 @@ const QUEUED_WORDS: Record<string, string> = {
     paused: 'paused: it carries on only when they say resume',
 };
 
+/** The same, for a job that already ran some of the way and is back in line (resumed after a pause): never "not started yet". */
+const QUEUED_AGAIN_WORDS: Record<string, string> = {
+    turn: 'in line again after it ran part of the way: it carries on by itself when the job before it ends',
+    allowance: "waiting after it ran part of the way: this month's computer time is used up, and it carries on by itself once they get more in Usage",
+    paused: QUEUED_WORDS.paused,
+};
+
 const ENDED_WORDS: Record<string, string> = {
     person: 'stopped by them',
     off: 'stopped when the computer was turned off',
@@ -138,7 +167,12 @@ const ENDED_WORDS: Record<string, string> = {
 
 function liveLine(job: LiveJobNow, now: number): string {
     const name = quotedTitle(job.title);
-    if (job.status === 'queued') return `- ${name}: ${QUEUED_WORDS[job.queuedFor ?? ''] ?? 'waiting for a free computer, not started yet: it starts by itself'}.`;
+    if (job.status === 'queued') {
+        // A job that ran and went back in line (a pause, then resume) has started: only one that never ran is "not started yet"
+        const again = job.startedAt !== null || job.stepDone > 0;
+        const words = again ? (QUEUED_AGAIN_WORDS[job.queuedFor ?? ''] ?? 'waiting for a free computer after it ran part of the way: it carries on by itself') : (QUEUED_WORDS[job.queuedFor ?? ''] ?? 'waiting for a free computer, not started yet: it starts by itself');
+        return `- ${name}: ${words}.`;
+    }
     const since = job.startedAt !== null ? ` Started ${agoWords(job.startedAt, now)}.` : '';
     const screen = job.control === 'person' ? ' They have the screen now.' : '';
     if (job.status === 'waiting') return `- ${name}: waiting for ${WAITING_WORDS[job.waitingFor ?? ''] ?? 'them'}.${screen}${since}`;
