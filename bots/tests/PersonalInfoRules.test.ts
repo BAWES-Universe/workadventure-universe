@@ -4,6 +4,7 @@ import { birthdayDateIn, birthdayIsToday, nameIn, stateIn, tastesIn, visionNoteO
 import { memoryItemsOf } from '../memory/MemoryItems';
 import { FORGET_MEMORY_TOOL, runMemoryTool } from '../ai/MemoryTools';
 import { vi } from 'vitest';
+import { heardInDm } from '../memory/Heard';
 
 const BOT = 'bot-1';
 const PERSON = 7;
@@ -181,19 +182,19 @@ describe('what the bot keeps from a chat', () => {
         expect(context).toContain('They like: tea');
         expect(context).not.toContain('They like: coffee');
         const items = memoryItemsOf(memory.getMemory(BOT, PERSON)!);
-        expect(items.map((item) => `${item.kind}:${item.label}:${item.value}`).sort()).toEqual(['fact:dislikes:coffee', 'pref:null:tea']);
+        expect(items.map((item) => `${item.kind}:${item.label}:${item.value}`).sort()).toEqual(['fact:dislike_coffee:coffee', 'pref:null:tea']);
     });
 
     it('moves a thing from one list to the other when they change their mind', () => {
         const memory = learnFrom('I like coffee', "I don't like coffee");
         let info = memory.getMemory(BOT, PERSON)!.personalInfo;
         expect(info.preferences).toEqual([]);
-        expect(info.facts.get('dislikes')).toBe('coffee');
+        expect(info.facts.get('dislike_coffee')).toBe('coffee');
 
         memory.extractPersonalInfo(BOT, PERSON, 'I love coffee again', 'dm');
         info = memory.getMemory(BOT, PERSON)!.personalInfo;
         expect(info.preferences).toEqual(['coffee']);
-        expect(info.facts.has('dislikes')).toBe(false);
+        expect([...info.facts.keys()].some((key) => key.startsWith('dislike_'))).toBe(false);
     });
 
     it('keeps a name only when it is theirs', () => {
@@ -206,5 +207,29 @@ describe('what the bot keeps from a chat', () => {
         const forget = vi.fn(async () => 1);
         const answer = (await runMemoryTool(FORGET_MEMORY_TOOL, { about: 'coffee' }, { memory: memory.getMemory(BOT, PERSON)!, forget })) as { forgotten: string[] };
         expect(answer.forgotten).toEqual(['They do not like coffee']);
+    });
+
+    it('keeps who heard each dislike: one said in a private talk stays out of a reply others read', () => {
+        const others = { now: [] as string[] };
+        const memory = new ConversationMemory();
+        memory.useHeard((_bot, _player, space) => (space === 'dm' ? heardInDm() : { place: 'nearby', with: [...others.now] }));
+        memory.extractPersonalInfo(BOT, PERSON, "I don't like coffee", 'dm');
+        others.now = ['uuid-sara'];
+        memory.extractPersonalInfo(BOT, PERSON, "I don't like tea", 'bubble');
+
+        const shared = memory.getConversationContext(BOT, PERSON, { present: ['uuid-sara'] });
+        expect(shared).toContain("They don't like: tea");
+        expect(shared).not.toContain('coffee');
+        expect(memory.getConversationContext(BOT, PERSON)).toContain("They don't like: coffee, tea");
+    });
+
+    it('keeps the latest ten dislikes', () => {
+        const memory = learnFrom(...Array.from({ length: 12 }, (_, index) => `I hate thing${String.fromCharCode(97 + index)}`));
+        const info = memory.getMemory(BOT, PERSON)!.personalInfo;
+        const kept = [...info.facts.values()];
+        expect(kept).toHaveLength(10);
+        expect(kept).not.toContain('thinga');
+        expect(kept).toContain('thingl');
+        expect(Object.keys(info.drawnFrom ?? {}).filter((key) => key.startsWith('fact:dislike_'))).toHaveLength(10);
     });
 });

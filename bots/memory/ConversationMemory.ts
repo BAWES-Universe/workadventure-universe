@@ -9,7 +9,7 @@
  */
 
 import { withoutFileNotes } from '../services/ChatFiles';
-import { birthdayDateIn, birthdayIsToday, nameIn, stateIn, tastesIn, visionNoteOf } from './PersonalInfoRules';
+import { birthdayDateIn, birthdayIsToday, DISLIKE_LABEL, dislikeLabel, nameIn, stateIn, tastesIn, visionNoteOf } from './PersonalInfoRules';
 
 /** How many things they do not like are kept. */
 const MAX_DISLIKES = 10;
@@ -584,17 +584,23 @@ export class ConversationMemory {
         }
     }
 
-    /** What they do not like, kept as one fact ("dislikes") of the things in the order they said them; the latest few. */
+    /** What they do not like: one fact for each thing, so each keeps where it was said (and who may hear it) and can be forgotten alone. The latest few are kept. */
     private addDislike(info: PersonalInfo, dislike: string, heard: Heard | undefined, at: number): void {
-        const kept = (info.facts.get('dislikes') ?? '').split('; ').filter(Boolean);
-        if (kept.some((one) => one.toLowerCase() === dislike.toLowerCase())) {
-            this.stampInfo(info, 'fact:dislikes', heard, false, at);
-            return;
+        const label = dislikeLabel(dislike);
+        const known = info.facts.get(label)?.toLowerCase() === dislike.toLowerCase();
+        this.stampInfo(info, `fact:${label}`, heard, !known, at);
+        if (!known) {
+            // Re-set so it counts as the latest
+            info.facts.delete(label);
+            info.facts.set(label, dislike);
+            info.lastInfoUpdate = Date.now();
         }
-        const next = [...kept, dislike].slice(-MAX_DISLIKES).join('; ');
-        this.stampInfo(info, 'fact:dislikes', heard, true, at);
-        info.facts.set('dislikes', next);
-        info.lastInfoUpdate = Date.now();
+        const labels = [...info.facts.keys()].filter((key) => key.startsWith(DISLIKE_LABEL));
+        for (const oldest of labels.slice(0, Math.max(0, labels.length - MAX_DISLIKES))) {
+            info.facts.delete(oldest);
+            if (info.heard) delete info.heard[`fact:${oldest}`];
+            if (info.drawnFrom) delete info.drawnFrom[`fact:${oldest}`];
+        }
     }
 
     /** They now say they do not like it: it is no longer something they like. */
@@ -611,15 +617,11 @@ export class ConversationMemory {
 
     /** They now say they like it: it is no longer something they do not like. */
     private dropDislike(info: PersonalInfo, thing: string): void {
-        const kept = (info.facts.get('dislikes') ?? '').split('; ').filter(Boolean);
-        const rest = kept.filter((one) => one.toLowerCase() !== thing.toLowerCase());
-        if (rest.length === kept.length) return;
-        if (rest.length > 0) info.facts.set('dislikes', rest.join('; '));
-        else {
-            info.facts.delete('dislikes');
-            if (info.heard) delete info.heard['fact:dislikes'];
-            if (info.drawnFrom) delete info.drawnFrom['fact:dislikes'];
-        }
+        const label = dislikeLabel(thing);
+        if (info.facts.get(label)?.toLowerCase() !== thing.toLowerCase()) return;
+        info.facts.delete(label);
+        if (info.heard) delete info.heard[`fact:${label}`];
+        if (info.drawnFrom) delete info.drawnFrom[`fact:${label}`];
         info.lastInfoUpdate = Date.now();
     }
 
@@ -1120,9 +1122,9 @@ export class ConversationMemory {
             personalDetails.push(`They like: ${personalInfo.preferences.join(', ')}`);
         }
 
-        const dislikes = personalInfo.facts.get('dislikes');
-        if (dislikes) {
-            personalDetails.push(`They don't like: ${dislikes.split('; ').join(', ')}`);
+        const dislikes = [...personalInfo.facts.entries()].filter(([key]) => key.startsWith(DISLIKE_LABEL)).map(([, value]) => value);
+        if (dislikes.length > 0) {
+            personalDetails.push(`They don't like: ${dislikes.join(', ')}`);
         }
 
         // Natural facts recall (especially current state)
@@ -1134,7 +1136,7 @@ export class ConversationMemory {
         // Add other notable facts naturally
         const otherFacts: string[] = [];
         for (const [key, value] of personalInfo.facts.entries()) {
-            if (key !== 'current_state' && key !== 'dislikes' && !key.endsWith('_mentioned_at') && !key.startsWith('birthday_')) {
+            if (key !== 'current_state' && !key.startsWith(DISLIKE_LABEL) && !key.endsWith('_mentioned_at') && !key.startsWith('birthday_')) {
                 otherFacts.push(`${key}: ${value}`);
             }
         }

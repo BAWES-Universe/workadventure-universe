@@ -71,6 +71,17 @@ const TABLE: Array<[string, Partial<Said>]> = [
     ['my email is sara@example.com and I like tea', { likes: ['tea'] }],
     ['I like sara@example.com', {}],
     ['I love 555-123-4567', {}],
+    // doubts are not tastes
+    ["I don't think I like jazz", {}],
+    ["I'm not sure I like sushi", {}],
+    ['I wonder if I like jazz', {}],
+    ['maybe I love it', {}],
+    ["I doubt I'll ever like olives", {}],
+    ['I guess I like jazz', {}],
+    ['maybe I like jazz', {}],
+    ["I'm not sure I don't like jazz", {}],
+    ["I don't know if I like jazz", {}],
+    ['I think I like jazz', { likes: ['jazz'] }],
     // filler and reactions
     ['I love it!!', {}],
     ['I like that', {}],

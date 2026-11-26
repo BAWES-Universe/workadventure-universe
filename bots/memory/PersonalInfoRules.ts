@@ -122,6 +122,16 @@ function sayingsOf(sentence: { text: string; question: boolean }): Array<{ text:
         .map((text) => ({ text, question: sentence.question }));
 }
 
+/** Words before "I like ..." that make it a doubt or a question and not something they say: "I don't think I like jazz", "I'm not sure I like it", "if I like it". */
+const HEDGE = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:not|never|doubt|wonder|wondering|unsure|if|whether|maybe|perhaps|might|guess|suppose|dunno|idk)(?![\\p{L}\\p{N}])|n${APOS}t(?![\\p{L}\\p{N}])`, 'iu');
+
+/** What a dislike is called among what the bot remembers: one thing each, so each keeps where it was said and can be forgotten alone. */
+export const DISLIKE_LABEL = 'dislike_';
+export function dislikeLabel(thing: string): string {
+    const slug = thing.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+    return `${DISLIKE_LABEL}${slug || 'thing'}`;
+}
+
 export interface Tastes {
     likes: string[];
     dislikes: string[];
@@ -142,7 +152,7 @@ export function tastesIn(message: string): Tastes {
         const text = sentence.text;
         const negative = NEG_LIKE.exec(text) ?? CANT_STAND.exec(text);
         if (negative) {
-            push(dislikes, thingOf(negative[negative.length - 1]));
+            if (!HEDGE.test(text.slice(0, negative.index))) push(dislikes, thingOf(negative[negative.length - 1]));
             continue;
         }
         const favourite = FAVORITE.exec(text);
@@ -155,6 +165,8 @@ export function tastesIn(message: string): Tastes {
         }
         const positive = LIKE.exec(text);
         if (positive) {
+            // "I don't think I like jazz", "not sure I like it": a doubt, not a taste
+            if (HEDGE.test(text.slice(0, positive.index))) continue;
             const verb = positive[2].toLowerCase();
             // "I never really like" etc. were taken above; a leftover "not" before the verb is not a like
             if (NEGATED.test(positive[1] ?? '')) continue;
