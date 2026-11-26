@@ -5626,7 +5626,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const parts = batchParts(args);
         // An action of an App the person has their own copy of is never sent through another ready-made App's link (own Apps first): it is
         // refused with a line that sends the Brick to their own copy, and the rest of the batch is judged as usual
-        const ownCopy = parts?.filter((part) => ownCopyOf(part.slug, first.ownCopyApps)) ?? [];
+        // Only an action no remaining App says is its own, by its list or by its name: "Google" left out never takes Google Calendar's actions
+        const named = parts && first.ownCopyApps?.length ? parts.filter((part) => ownCopyOf(part.slug, first.ownCopyApps)) : [];
+        const remaining = named.length > 0 ? await Promise.all(apps.map((app) => this.toolGate.appPolicy(botId, app.serverId))) : [];
+        const ownCopy = named.filter(
+            (part) =>
+                !remaining.some((policy) => [...(policy?.tools.values() ?? [])].some((tool) => slugKey(tool.name) === slugKey(part.slug))) &&
+                !apps.some((app) => !!app.serverName && actionName(part.slug, app.serverName) !== actionName(part.slug))
+        );
         if (parts && ownCopy.length > 0) {
             const refusedParts: AppPart[] = ownCopy.map((part) => {
                 const app = ownCopyOf(part.slug, first.ownCopyApps)!;

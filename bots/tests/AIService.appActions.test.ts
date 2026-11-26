@@ -402,6 +402,17 @@ describe("an action of an App the person has their own copy of (own Apps first)"
         expect(result.result.error).toContain("use your owner's own Exa App");
     });
 
+    it("never takes a remaining App's own action, by its list or by its name, even when the left-out App's name starts it", async () => {
+        // "Google" was left out for the person's own copy; "Google Calendar" is still on. A Google Calendar action is never taken for Google's
+        const { service, execute, propose } = brickService(gmailPolicy());
+        const servers = new Map<string, ToolServerEntry>([...SERVERS].map(([name, entry]) => [name, { ...entry, serverName: 'Google Calendar', ownCopyApps: ['Google'] }]));
+        const [result] = await callWith(service, servers, batchArgs('GMAIL_FETCH_EMAILS', 'GOOGLE_CALENDAR_DELETE_EVENT', 'GOOGLE_SEARCH'));
+        // Listed in the remaining App: runs. Named after it: judged by it (asks first). Only Google's own is refused
+        expect(sentSlugs(execute)).toEqual([['GMAIL_FETCH_EMAILS']]);
+        expect(propose).toHaveBeenCalledWith(expect.objectContaining({ toolName: 'GOOGLE_CALENDAR_DELETE_EVENT' }));
+        expect(result.result.notDone).toEqual(["Search wasn't done here: use your owner's own Google App for it."]);
+    });
+
     it('changes nothing when no App was left out', async () => {
         const { service, execute } = brickService(gmailPolicy());
         await call(service, batchArgs('GMAIL_FETCH_EMAILS', 'GMAIL_LIST_LABELS'));
