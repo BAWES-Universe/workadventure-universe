@@ -29,21 +29,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "当前所在",
         inThisRoom: "你就在这个房间",
     },
-    details: {
-        artifacts: "工件",
-        artifactsOpen: "查看全部 {count} 个工件",
-        artifactsBotHint: "让 {name} 为你制作页面、迷你应用、文档或绘图，之后随时可以在这里找到。",
-        allYourArtifacts: "你的所有工件",
-        artifactsEmpty: "还没有工件",
-        artifactsMore: "显示更多",
-        artifactsFailed: "无法加载工件。",
-    },
-    brick: {
-        files: {
-            artifactsMade: "已创建 {count} 个工件",
-            opensArtifacts: "打开你的工件",
-        },
-    },
     artifacts: {
         kindApp: "迷你应用",
         kindPage: "页面",
@@ -141,6 +126,35 @@ const chat: DeepPartial<Translation["chat"]> = {
         payClose: "关闭",
         payContinue: "继续前往 {app}",
         payContinueDefault: "继续前往付款页面",
+        openPublic: "公开",
+        openPublicHelp: "拥有链接的任何人只能看到你发布的内容",
+        notPublished: "尚未发布",
+        publishHelp: "大家看到的是你发布的版本。之后的更改会保持私密，直到你再次发布。",
+        publishVersion: "发布版本 {version}",
+        publishedStatus: "已发布 · 版本 {version} · {time}",
+        unpublishedChanges: "版本 {version} 尚未发布",
+        linkFollows: "链接始终显示你的最新版本。",
+        publishBar: "已发布：版本 {version}。版本 {latest} 尚未发布。",
+        publish: "发布",
+        publishing: "正在发布…",
+        publishFailed: "无法发布，请重试。",
+        publicUnavailable: "公开版本不可用",
+        publicUnavailableHelp: "在你发布版本之前，大家会看到“不可用”。",
+    },
+    details: {
+        artifacts: "工件",
+        artifactsOpen: "查看全部 {count} 个工件",
+        artifactsBotHint: "让 {name} 为你制作页面、迷你应用、文档或绘图，之后随时可以在这里找到。",
+        allYourArtifacts: "你的所有工件",
+        artifactsEmpty: "还没有工件",
+        artifactsMore: "显示更多",
+        artifactsFailed: "无法加载工件。",
+    },
+    brick: {
+        files: {
+            artifactsMade: "已创建 {count} 个工件",
+            opensArtifacts: "打开你的工件",
+        },
     },
 };
 

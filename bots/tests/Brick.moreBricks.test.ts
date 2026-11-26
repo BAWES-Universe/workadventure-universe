@@ -17,6 +17,7 @@ vi.mock('@sentry/node', () => ({ captureException: vi.fn() }));
 vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } }));
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
+import { BrickLimitReached } from '../ai/BrickLimit';
 import { AdminApiService } from '../server/AdminApiService';
 import { BotAPI } from '../server/BotAPI';
 import { BotRegistry } from '../server/BotRegistry';
@@ -80,6 +81,15 @@ describe('What the bot server asks Orbit about Bricks', () => {
         await expect(service.makeBrickFor(BRICK, 'uuid-bob', { name: 'Mine' })).rejects.toBeTruthy();
         request.mockResolvedValueOnce({ status: 201, data: { made: true } });
         await expect(service.makeBrickFor(BRICK, 'uuid-alice', { name: 'Mine' })).rejects.toThrow();
+    });
+
+    it('throws Orbit\'s kind line when the person has made too many new Bricks this hour, so a Brick can say it as it is', async () => {
+        const line = "You've made a lot of Bricks this hour. Try again at 3:40 PM.";
+        request.mockRejectedValueOnce({ isAxiosError: true, response: { status: 429, data: { error: line, code: 'new_bricks_limit', retryAt: '2026-11-21T12:40:00.000Z' } } });
+        await expect(service.makeBrickFor(BRICK, 'uuid-alice', { name: 'Mine' })).rejects.toMatchObject({ name: 'BrickLimitReached', line, retryAt: '2026-11-21T12:40:00.000Z' });
+        // Any other 429, or one that says no line, is an ordinary failure
+        request.mockRejectedValueOnce({ isAxiosError: true, response: { status: 429, data: { error: 'slow down' } } });
+        await expect(service.makeBrickFor(BRICK, 'uuid-alice', { name: 'Mine' })).rejects.not.toBeInstanceOf(BrickLimitReached);
     });
 
     it('reads how often a job has to come back and what was already suggested', async () => {
@@ -146,6 +156,16 @@ describe('The two Brick tools', () => {
         expect(make).toContain('right now');
         expect(make).toContain('Do not ask them to confirm');
         expect(make).toContain('"Bot" and "Brick" mean the same');
+    });
+
+    it('tell the model to say the kind line, with its time as written, and not to try again, when too many Bricks were made this hour', async () => {
+        const line = "You've made a lot of Bricks this hour. Try again at 3:40 PM.";
+        admin.makeBrickFor.mockRejectedValue(new BrickLimitReached(line));
+        const notes: BrickNote[] = [];
+        const result = await runBrickTool(MAKE_BRICK_TOOL, ASK, context(notes));
+        expect(result.error).toContain(line);
+        expect(result.error).toContain('Do not try again');
+        expect(notes).toEqual([]);
     });
 
     it('make the Brick for the person, and leave a note for the game with its name, line and look', async () => {
@@ -507,6 +527,16 @@ describe('A reply that made a Brick, or suggests one', () => {
         admin.makeBrickFor.mockRejectedValue(new Error('down'));
         const reply = await service.reply(BRICK, person, 'Make Recipe Brick', [], { roomId: ROOM, makeOffered: offered });
         expect(reply).toMatchObject({ text: BRICK_NOT_MADE_TEXT });
+        expect(reply).not.toHaveProperty('bricks');
+        expect(admin.answerBrickOffer).not.toHaveBeenCalled();
+    });
+
+    it('says the kind line, with the time they can make another, when "Make it" is over the hour\'s limit, and claims no Brick', async () => {
+        const line = "You've made a lot of Bricks this hour. Try again at 3:40 PM.";
+        const { service, admin } = makeReplies(brickConfig);
+        admin.makeBrickFor.mockRejectedValue(new BrickLimitReached(line));
+        const reply = await service.reply(BRICK, person, 'Make Recipe Brick', [], { roomId: ROOM, makeOffered: offered });
+        expect(reply).toMatchObject({ text: line });
         expect(reply).not.toHaveProperty('bricks');
         expect(admin.answerBrickOffer).not.toHaveBeenCalled();
     });

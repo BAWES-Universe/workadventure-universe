@@ -182,21 +182,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Něnto w",
         inThisRoom: "Sy w toś tej rumnosći",
     },
-    details: {
-        artifacts: "Artefakty",
-        artifactsOpen: "Wšykne {count} artefaktow pokazaś",
-        artifactsBotHint: "Póžedaj sebje wót {name} bok, mini-app, dokument abo kreslenje a namakaj to how kuždy cas.",
-        allYourArtifacts: "Wšykne twóje artefakty",
-        artifactsEmpty: "Hyšći žedne artefakty",
-        artifactsMore: "Wěcej pokazaś",
-        artifactsFailed: "Artefakty njejsu se dali lodowaś.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "Napórane artefakty: {count}",
-            opensArtifacts: "Wótcynijo twóje artefakty",
-        },
-    },
     artifacts: {
         kindApp: "Mini-app",
         kindPage: "Bok",
@@ -299,6 +284,35 @@ const chat: DeepPartial<Translation["chat"]> = {
         payClose: "Zacyniś",
         payContinue: "Dalej k {app}",
         payContinueDefault: "Dalej k płaśeńskemu bokoju",
+        openPublic: "Zjawny",
+        openPublicHelp: "Kuždy z wótkazom wiźi jano to, což wózjawijoš",
+        notPublished: "Hyšći njewózjawjony",
+        publishHelp: "Luźe wiźe wersiju, kótaruž wózjawijoš. Změny pó tom wóstanu priwatne, až wózjawijoš znowa.",
+        publishVersion: "Wersiju {version} wózjawiś",
+        publishedStatus: "Wózjawjony · Wersija {version} · {time}",
+        unpublishedChanges: "Wersija {version} hyšći njejo wózjawjona",
+        linkFollows: "Wótkaz pokazujo pśecej twoju nejnowšu wersiju.",
+        publishBar: "Wózjawjone: wersija {version}. Wersija {latest} hyšći njejo wózjawjona.",
+        publish: "Wózjawiś",
+        publishing: "Wózjawjujo se…",
+        publishFailed: "Wózjawjenje njejo se raźiło. Wopytaj hyšći raz.",
+        publicUnavailable: "Zjawna wersija njestoj k dispoziciji",
+        publicUnavailableHelp: "Luźe wiźe „Njestoj k dispoziciji“, až wózjawijoš wersiju.",
+    },
+    details: {
+        artifacts: "Artefakty",
+        artifactsOpen: "Wšykne {count} artefaktow pokazaś",
+        artifactsBotHint: "Póžedaj sebje wót {name} bok, mini-app, dokument abo kreslenje a namakaj to how kuždy cas.",
+        allYourArtifacts: "Wšykne twóje artefakty",
+        artifactsEmpty: "Hyšći žedne artefakty",
+        artifactsMore: "Wěcej pokazaś",
+        artifactsFailed: "Artefakty njejsu se dali lodowaś.",
+    },
+    brick: {
+        files: {
+            artifactsMade: "Napórane artefakty: {count}",
+            opensArtifacts: "Wótcynijo twóje artefakty",
+        },
     },
 };
 

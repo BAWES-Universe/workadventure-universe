@@ -29,22 +29,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Ara a",
         inThisRoom: "Ets en aquesta sala",
     },
-    details: {
-        artifacts: "Artefactes",
-        artifactsOpen: "Veure els {count} artefactes",
-        artifactsBotHint:
-            "Demana a {name} una pàgina, una mini app, un document o un dibuix i trobaràs el resultat aquí en qualsevol moment.",
-        allYourArtifacts: "Tots els teus artefactes",
-        artifactsEmpty: "Encara no hi ha cap artefacte",
-        artifactsMore: "Mostra'n més",
-        artifactsFailed: "No s'han pogut carregar els artefactes.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "{count} {{artefacte creat|artefactes creats}}",
-            opensArtifacts: "Obre Els teus artefactes",
-        },
-    },
     artifacts: {
         kindApp: "Mini app",
         kindPage: "Pàgina",
@@ -146,6 +130,37 @@ const chat: DeepPartial<Translation["chat"]> = {
         payClose: "Tanca",
         payContinue: "Continua cap a {app}",
         payContinueDefault: "Continua cap a la pàgina de pagament",
+        openPublic: "Públic",
+        openPublicHelp: "Qualsevol persona amb l'enllaç només veu el que publiques",
+        notPublished: "Encara no publicat",
+        publishHelp:
+            "La gent veu la versió que publiques. Els canvis posteriors es mantenen privats fins que tornis a publicar.",
+        publishVersion: "Publica la versió {version}",
+        publishedStatus: "Publicat · Versió {version} · {time}",
+        unpublishedChanges: "La versió {version} encara no està publicada",
+        linkFollows: "L'enllaç sempre mostra la teva última versió.",
+        publishBar: "Publicat: versió {version}. La versió {latest} encara no està publicada.",
+        publish: "Publica",
+        publishing: "S'està publicant…",
+        publishFailed: "No s'ha pogut publicar. Torna-ho a provar.",
+        publicUnavailable: "Versió pública no disponible",
+        publicUnavailableHelp: "La gent veu «No disponible» fins que publiquis una versió.",
+    },
+    details: {
+        artifacts: "Artefactes",
+        artifactsOpen: "Veure els {count} artefactes",
+        artifactsBotHint:
+            "Demana a {name} una pàgina, una mini app, un document o un dibuix i trobaràs el resultat aquí en qualsevol moment.",
+        allYourArtifacts: "Tots els teus artefactes",
+        artifactsEmpty: "Encara no hi ha cap artefacte",
+        artifactsMore: "Mostra'n més",
+        artifactsFailed: "No s'han pogut carregar els artefactes.",
+    },
+    brick: {
+        files: {
+            artifactsMade: "{count} {{artefacte creat|artefactes creats}}",
+            opensArtifacts: "Obre Els teus artefactes",
+        },
     },
 };
 

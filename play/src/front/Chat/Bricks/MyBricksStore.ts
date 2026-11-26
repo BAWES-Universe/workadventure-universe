@@ -15,6 +15,7 @@ import {
     type DeletedBrickCard,
 } from "./Brick";
 import { brickPicture } from "./BrickLookPicture";
+import { newBricksLimitOf } from "./NewBrick";
 import { parseUsedTemplate, type UsedTemplate } from "./Templates/Template";
 
 export { brickPicture };
@@ -209,19 +210,37 @@ export async function changeMyBrick(brickId: string, change: BrickChange): Promi
 
 /**
  * Makes another Brick (#1996): New Brick on the Bricks page. It is in the list, and so in Chats, as soon as Orbit made
- * it. Undefined when Orbit refused or could not be reached: nothing was made.
+ * it. Undefined when Orbit refused or could not be reached: nothing was made. With a `requestKey`, a tap tried again after a
+ * dropped connection gives back the first Brick and not a second one. When they have made too many new Bricks this hour,
+ * `onLimit` hears when they can make another (Orbit's `retryAt`, undefined when it did not say) and nothing was made.
  */
-export async function makeMyBrick(name: string, look: string): Promise<BrickCard | undefined> {
+export async function makeMyBrick(
+    name: string,
+    look: string,
+    options: { requestKey?: string; onLimit?: (retryAt: string | undefined) => void } = {}
+): Promise<BrickCard | undefined> {
     const asked = generation;
     try {
         const made = parseBrickCard(
-            ((await botApiService.makeMyBrick({ name, characterTextureId: look })) as { brick?: unknown })?.brick
+            (
+                (await botApiService.makeMyBrick({
+                    name,
+                    characterTextureId: look,
+                    ...(options.requestKey ? { requestKey: options.requestKey } : {}),
+                })) as { brick?: unknown }
+            )?.brick
         );
         if (!made || asked !== generation) return undefined;
         changed();
         bricks.update((list) => [...(list ?? []).filter((brick) => brick.id !== made.id), made]);
         return made;
     } catch (error) {
+        const limit = newBricksLimitOf(error);
+        if (limit) {
+            // The answer of an account the person has since left is not theirs to be told about (same check as the success path)
+            if (asked === generation) options.onLimit?.(limit.retryAt);
+            return undefined;
+        }
         console.warn("Could not make a Brick", error);
         return undefined;
     }

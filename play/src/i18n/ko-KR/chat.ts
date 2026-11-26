@@ -506,21 +506,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "지금 있는 곳",
         inThisRoom: "이 방에 있어요",
     },
-    details: {
-        artifacts: "아티팩트",
-        artifactsOpen: "아티팩트 {count}개 모두 보기",
-        artifactsBotHint: "{name}에게 페이지, 미니 앱, 문서, 그림을 요청하면 언제든 여기에서 찾을 수 있습니다.",
-        allYourArtifacts: "내 모든 아티팩트",
-        artifactsEmpty: "아직 아티팩트가 없습니다",
-        artifactsMore: "더 보기",
-        artifactsFailed: "아티팩트를 불러오지 못했습니다.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "만든 아티팩트 {count}개",
-            opensArtifacts: "내 아티팩트를 엽니다",
-        },
-    },
     artifacts: {
         kindApp: "미니 앱",
         kindPage: "페이지",
@@ -621,6 +606,35 @@ const chat: DeepPartial<Translation["chat"]> = {
         payClose: "닫기",
         payContinue: "{app}(으)로 계속",
         payContinueDefault: "결제 페이지로 계속",
+        openPublic: "공개",
+        openPublicHelp: "링크가 있는 사람은 게시한 내용만 볼 수 있습니다",
+        notPublished: "아직 게시되지 않음",
+        publishHelp: "사람들은 게시한 버전을 봅니다. 그 이후의 변경 사항은 다시 게시할 때까지 비공개로 유지됩니다.",
+        publishVersion: "버전 {version} 게시",
+        publishedStatus: "게시됨 · 버전 {version} · {time}",
+        unpublishedChanges: "버전 {version}은(는) 아직 게시되지 않았습니다",
+        linkFollows: "링크에는 항상 최신 버전이 표시됩니다.",
+        publishBar: "게시됨: 버전 {version}. 버전 {latest}은(는) 아직 게시되지 않았습니다.",
+        publish: "게시",
+        publishing: "게시 중…",
+        publishFailed: "게시하지 못했습니다. 다시 시도하세요.",
+        publicUnavailable: "공개 버전을 사용할 수 없음",
+        publicUnavailableHelp: '버전을 게시하기 전까지 사람들에게는 "사용할 수 없음"이 표시됩니다.',
+    },
+    details: {
+        artifacts: "아티팩트",
+        artifactsOpen: "아티팩트 {count}개 모두 보기",
+        artifactsBotHint: "{name}에게 페이지, 미니 앱, 문서, 그림을 요청하면 언제든 여기에서 찾을 수 있습니다.",
+        allYourArtifacts: "내 모든 아티팩트",
+        artifactsEmpty: "아직 아티팩트가 없습니다",
+        artifactsMore: "더 보기",
+        artifactsFailed: "아티팩트를 불러오지 못했습니다.",
+    },
+    brick: {
+        files: {
+            artifactsMade: "만든 아티팩트 {count}개",
+            opensArtifacts: "내 아티팩트를 엽니다",
+        },
     },
 };
 

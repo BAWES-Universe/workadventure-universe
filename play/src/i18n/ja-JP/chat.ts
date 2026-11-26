@@ -327,21 +327,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "今いる場所",
         inThisRoom: "このルームにいます",
     },
-    details: {
-        artifacts: "アーティファクト",
-        artifactsOpen: "{count}件のアーティファクトをすべて見る",
-        artifactsBotHint: "{name}にページ、ミニアプリ、ドキュメント、絵をお願いすると、いつでもここで見つけられます。",
-        allYourArtifacts: "すべてのアーティファクト",
-        artifactsEmpty: "アーティファクトはまだありません",
-        artifactsMore: "もっと見る",
-        artifactsFailed: "アーティファクトを読み込めませんでした。",
-    },
-    brick: {
-        files: {
-            artifactsMade: "作成したアーティファクト {count}件",
-            opensArtifacts: "あなたのアーティファクトを開きます",
-        },
-    },
     artifacts: {
         kindApp: "ミニアプリ",
         kindPage: "ページ",
@@ -442,6 +427,35 @@ const chat: DeepPartial<Translation["chat"]> = {
         payClose: "閉じる",
         payContinue: "{app}に進む",
         payContinueDefault: "支払いページに進む",
+        openPublic: "公開",
+        openPublicHelp: "リンクを知っている人には、公開した内容だけが表示されます",
+        notPublished: "まだ公開されていません",
+        publishHelp: "公開したバージョンが相手に表示されます。その後の変更は、もう一度公開するまで非公開のままです。",
+        publishVersion: "バージョン {version} を公開",
+        publishedStatus: "公開済み · バージョン {version} · {time}",
+        unpublishedChanges: "バージョン {version} はまだ公開されていません",
+        linkFollows: "リンクには常に最新バージョンが表示されます。",
+        publishBar: "公開済み: バージョン {version}。バージョン {latest} はまだ公開されていません。",
+        publish: "公開",
+        publishing: "公開中…",
+        publishFailed: "公開できませんでした。もう一度お試しください。",
+        publicUnavailable: "公開バージョンを利用できません",
+        publicUnavailableHelp: "バージョンを公開するまで、相手には「利用できません」と表示されます。",
+    },
+    details: {
+        artifacts: "アーティファクト",
+        artifactsOpen: "{count}件のアーティファクトをすべて見る",
+        artifactsBotHint: "{name}にページ、ミニアプリ、ドキュメント、絵をお願いすると、いつでもここで見つけられます。",
+        allYourArtifacts: "すべてのアーティファクト",
+        artifactsEmpty: "アーティファクトはまだありません",
+        artifactsMore: "もっと見る",
+        artifactsFailed: "アーティファクトを読み込めませんでした。",
+    },
+    brick: {
+        files: {
+            artifactsMade: "作成したアーティファクト {count}件",
+            opensArtifacts: "あなたのアーティファクトを開きます",
+        },
     },
 };
 

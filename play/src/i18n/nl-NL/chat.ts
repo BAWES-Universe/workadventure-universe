@@ -270,22 +270,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Nu in",
         inThisRoom: "Je bent in deze ruimte",
     },
-    details: {
-        artifacts: "Artefacten",
-        artifactsOpen: "Bekijk alle {count} artefacten",
-        artifactsBotHint:
-            "Vraag {name} om een pagina, een mini-app, een document of een tekening en vind het hier altijd terug.",
-        allYourArtifacts: "Al je artefacten",
-        artifactsEmpty: "Nog geen artefacten",
-        artifactsMore: "Meer tonen",
-        artifactsFailed: "De artefacten konden niet worden geladen.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "{count} {{artefact|artefacten}} gemaakt",
-            opensArtifacts: "Opent Jouw artefacten",
-        },
-    },
     artifacts: {
         kindApp: "Mini-app",
         kindPage: "Pagina",
@@ -388,6 +372,37 @@ const chat: DeepPartial<Translation["chat"]> = {
         payClose: "Sluiten",
         payContinue: "Verder naar {app}",
         payContinueDefault: "Verder naar de betaalpagina",
+        openPublic: "Openbaar",
+        openPublicHelp: "Iedereen met de link ziet alleen wat je publiceert",
+        notPublished: "Nog niet gepubliceerd",
+        publishHelp:
+            "Mensen zien de versie die je publiceert. Wijzigingen daarna blijven privé tot je opnieuw publiceert.",
+        publishVersion: "Versie {version} publiceren",
+        publishedStatus: "Gepubliceerd · Versie {version} · {time}",
+        unpublishedChanges: "Versie {version} is nog niet gepubliceerd",
+        linkFollows: "De link toont altijd je nieuwste versie.",
+        publishBar: "Gepubliceerd: versie {version}. Versie {latest} is nog niet gepubliceerd.",
+        publish: "Publiceren",
+        publishing: "Publiceren…",
+        publishFailed: "Publiceren is niet gelukt. Probeer het opnieuw.",
+        publicUnavailable: "Openbare versie niet beschikbaar",
+        publicUnavailableHelp: 'Mensen zien "Niet beschikbaar" tot je een versie publiceert.',
+    },
+    details: {
+        artifacts: "Artefacten",
+        artifactsOpen: "Bekijk alle {count} artefacten",
+        artifactsBotHint:
+            "Vraag {name} om een pagina, een mini-app, een document of een tekening en vind het hier altijd terug.",
+        allYourArtifacts: "Al je artefacten",
+        artifactsEmpty: "Nog geen artefacten",
+        artifactsMore: "Meer tonen",
+        artifactsFailed: "De artefacten konden niet worden geladen.",
+    },
+    brick: {
+        files: {
+            artifactsMade: "{count} {{artefact|artefacten}} gemaakt",
+            opensArtifacts: "Opent Jouw artefacten",
+        },
     },
 };
 

@@ -22,6 +22,7 @@ import type { ParsedFile } from '../services/FileParser';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
+import { BrickLimitReached } from '../ai/BrickLimit';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
 import { withJobLines } from '../ai/JobStatusLine';
 import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
@@ -522,6 +523,8 @@ export class DmReplyService extends BaseBehavior {
                 // Remembered in plain words: the link is for the game, not something to repeat later
                 return { text: brickMadeText(brick.name, brick.id, made), media: [], keep: keepAs(brickMadeText(brick.name, undefined, made)), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
             } catch (error) {
+                // Over "New Bricks per hour": the same kind line Orbit gave, with the time they can make another
+                if (error instanceof BrickLimitReached) return { text: error.line, media: [], keep: keepAs(error.line) };
                 console.warn(`[DmReplyService] Bot ${botId} could not make the Brick it suggested:`, error instanceof Error ? error.message : error);
                 return { text: BRICK_NOT_MADE_TEXT, media: [], keep: keepAs(BRICK_NOT_MADE_TEXT) };
             }

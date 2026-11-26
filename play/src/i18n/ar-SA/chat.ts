@@ -629,21 +629,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         peopleOnline: "{count} شخصًا متصلًا في هذا العالم",
         unreadChats: "رسائل غير مقروءة",
     },
-    details: {
-        artifacts: "الأعمال",
-        artifactsOpen: "عرض كل الأعمال ({count})",
-        artifactsBotHint: "اطلب من {name} صفحة أو تطبيقًا مصغّرًا أو مستندًا أو رسمًا، وستجده هنا في أي وقت.",
-        allYourArtifacts: "كل أعمالك",
-        artifactsEmpty: "لا توجد أعمال بعد",
-        artifactsMore: "عرض المزيد",
-        artifactsFailed: "تعذّر تحميل الأعمال.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "الأعمال التي أنشأها: {count}",
-            opensArtifacts: "يفتح أعمالك",
-        },
-    },
     artifacts: {
         kindApp: "تطبيق مصغّر",
         kindPage: "صفحة",
@@ -743,6 +728,35 @@ const chat: DeepPartial<Translation["chat"]> = {
         payClose: "إغلاق",
         payContinue: "المتابعة إلى {app}",
         payContinueDefault: "المتابعة إلى صفحة الدفع",
+        openPublic: "عام",
+        openPublicHelp: "كل من لديه الرابط يرى فقط ما تنشره",
+        notPublished: "لم يُنشر بعد",
+        publishHelp: "يرى الناس النسخة التي تنشرها. تبقى التغييرات بعد ذلك خاصة حتى تنشر مرة أخرى.",
+        publishVersion: "نشر النسخة {version}",
+        publishedStatus: "تم النشر · النسخة {version} · {time}",
+        unpublishedChanges: "النسخة {version} لم تُنشر بعد",
+        linkFollows: "يعرض الرابط دائمًا أحدث نسخة لديك.",
+        publishBar: "تم النشر: النسخة {version}. النسخة {latest} لم تُنشر بعد.",
+        publish: "نشر",
+        publishing: "جارٍ النشر…",
+        publishFailed: "تعذّر النشر. حاول مرة أخرى.",
+        publicUnavailable: "النسخة العامة غير متاحة",
+        publicUnavailableHelp: 'يرى الناس "غير متاح" إلى أن تنشر نسخة.',
+    },
+    details: {
+        artifacts: "الأعمال",
+        artifactsOpen: "عرض كل الأعمال ({count})",
+        artifactsBotHint: "اطلب من {name} صفحة أو تطبيقًا مصغّرًا أو مستندًا أو رسمًا، وستجده هنا في أي وقت.",
+        allYourArtifacts: "كل أعمالك",
+        artifactsEmpty: "لا توجد أعمال بعد",
+        artifactsMore: "عرض المزيد",
+        artifactsFailed: "تعذّر تحميل الأعمال.",
+    },
+    brick: {
+        files: {
+            artifactsMade: "الأعمال التي أنشأها: {count}",
+            opensArtifacts: "يفتح أعمالك",
+        },
     },
 };
 

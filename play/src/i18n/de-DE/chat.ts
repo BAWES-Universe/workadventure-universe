@@ -250,22 +250,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Gerade in",
         inThisRoom: "Sie sind in diesem Raum",
     },
-    details: {
-        artifacts: "Artefakte",
-        artifactsOpen: "Alle {count} Artefakte ansehen",
-        artifactsBotHint:
-            "Bitte {name} um eine Seite, eine Mini-App, ein Dokument oder eine Zeichnung und finde es jederzeit hier.",
-        allYourArtifacts: "Alle deine Artefakte",
-        artifactsEmpty: "Noch keine Artefakte",
-        artifactsMore: "Mehr anzeigen",
-        artifactsFailed: "Die Artefakte konnten nicht geladen werden.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "{count} {{Artefakt|Artefakte}} erstellt",
-            opensArtifacts: "Öffnet Deine Artefakte",
-        },
-    },
     artifacts: {
         kindApp: "Mini-App",
         kindPage: "Seite",
@@ -369,6 +353,37 @@ const chat: DeepPartial<Translation["chat"]> = {
         payClose: "Schließen",
         payContinue: "Weiter zu {app}",
         payContinueDefault: "Weiter zur Zahlungsseite",
+        openPublic: "Öffentlich",
+        openPublicHelp: "Alle mit dem Link sehen nur, was du veröffentlichst",
+        notPublished: "Noch nicht veröffentlicht",
+        publishHelp:
+            "Die Leute sehen die Version, die du veröffentlichst. Änderungen danach bleiben privat, bis du erneut veröffentlichst.",
+        publishVersion: "Version {version} veröffentlichen",
+        publishedStatus: "Veröffentlicht · Version {version} · {time}",
+        unpublishedChanges: "Version {version} ist noch nicht veröffentlicht",
+        linkFollows: "Der Link zeigt immer deine neueste Version.",
+        publishBar: "Veröffentlicht: Version {version}. Version {latest} ist noch nicht veröffentlicht.",
+        publish: "Veröffentlichen",
+        publishing: "Wird veröffentlicht…",
+        publishFailed: "Veröffentlichen fehlgeschlagen. Versuche es erneut.",
+        publicUnavailable: "Öffentliche Version nicht verfügbar",
+        publicUnavailableHelp: "Die Leute sehen „Nicht verfügbar“, bis du eine Version veröffentlichst.",
+    },
+    details: {
+        artifacts: "Artefakte",
+        artifactsOpen: "Alle {count} Artefakte ansehen",
+        artifactsBotHint:
+            "Bitte {name} um eine Seite, eine Mini-App, ein Dokument oder eine Zeichnung und finde es jederzeit hier.",
+        allYourArtifacts: "Alle deine Artefakte",
+        artifactsEmpty: "Noch keine Artefakte",
+        artifactsMore: "Mehr anzeigen",
+        artifactsFailed: "Die Artefakte konnten nicht geladen werden.",
+    },
+    brick: {
+        files: {
+            artifactsMade: "{count} {{Artefakt|Artefakte}} erstellt",
+            opensArtifacts: "Öffnet Deine Artefakte",
+        },
     },
 };
 

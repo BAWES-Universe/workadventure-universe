@@ -346,22 +346,6 @@ const chat: DeepPartial<Translation["chat"]> = {
         nowIn: "Ora in",
         inThisRoom: "Sei in questa stanza",
     },
-    details: {
-        artifacts: "Artefatti",
-        artifactsOpen: "Vedi tutti i {count} artefatti",
-        artifactsBotHint:
-            "Chiedi a {name} una pagina, una mini app, un documento o un disegno e ritrovalo qui in qualsiasi momento.",
-        allYourArtifacts: "Tutti i tuoi artefatti",
-        artifactsEmpty: "Ancora nessun artefatto",
-        artifactsMore: "Mostra altro",
-        artifactsFailed: "Impossibile caricare gli artefatti.",
-    },
-    brick: {
-        files: {
-            artifactsMade: "{count} {{artefatto creato|artefatti creati}}",
-            opensArtifacts: "Apre I tuoi artefatti",
-        },
-    },
     artifacts: {
         kindApp: "Mini app",
         kindPage: "Pagina",
@@ -463,6 +447,37 @@ const chat: DeepPartial<Translation["chat"]> = {
         payClose: "Chiudi",
         payContinue: "Continua su {app}",
         payContinueDefault: "Continua alla pagina di pagamento",
+        openPublic: "Pubblico",
+        openPublicHelp: "Chiunque abbia il link vede solo ciò che pubblichi",
+        notPublished: "Non ancora pubblicato",
+        publishHelp:
+            "Le persone vedono la versione che pubblichi. Le modifiche successive restano private finché non pubblichi di nuovo.",
+        publishVersion: "Pubblica la versione {version}",
+        publishedStatus: "Pubblicato · Versione {version} · {time}",
+        unpublishedChanges: "La versione {version} non è ancora pubblicata",
+        linkFollows: "Il link mostra sempre la tua ultima versione.",
+        publishBar: "Pubblicato: versione {version}. La versione {latest} non è ancora pubblicata.",
+        publish: "Pubblica",
+        publishing: "Pubblicazione…",
+        publishFailed: "Impossibile pubblicare. Riprova.",
+        publicUnavailable: "Versione pubblica non disponibile",
+        publicUnavailableHelp: "Le persone vedono «Non disponibile» finché non pubblichi una versione.",
+    },
+    details: {
+        artifacts: "Artefatti",
+        artifactsOpen: "Vedi tutti i {count} artefatti",
+        artifactsBotHint:
+            "Chiedi a {name} una pagina, una mini app, un documento o un disegno e ritrovalo qui in qualsiasi momento.",
+        allYourArtifacts: "Tutti i tuoi artefatti",
+        artifactsEmpty: "Ancora nessun artefatto",
+        artifactsMore: "Mostra altro",
+        artifactsFailed: "Impossibile caricare gli artefatti.",
+    },
+    brick: {
+        files: {
+            artifactsMade: "{count} {{artefatto creato|artefatti creati}}",
+            opensArtifacts: "Apre I tuoi artefatti",
+        },
     },
 };
 
