@@ -93,6 +93,8 @@ export interface ReportStep {
     operation: string;
     /** For an App: the connection it ran on, so Orbit can name the catalog App it came from. */
     appConnectionId?: string;
+    /** For an App's batch whose parts ran on more than one App: those Apps' connections, only to keep two such notes apart (never sent). */
+    apps?: string;
     failure: ReportFailure | null;
 }
 
@@ -152,14 +154,16 @@ export function failureOf(result: unknown): ReportFailure | null {
 /** Keeps what one round's tools were and how they ended (never what they gave back), for notes later in this reply. */
 export function noteWhatRan(
     turn: ReportTurn,
-    results: Array<{ name: string; result: unknown; ranOn?: string | null }>,
+    results: Array<{ name: string; result: unknown; ranOn?: string | null | string[] }>,
     sources: StepSources
 ): void {
     for (const { name, result, ranOn } of results) {
         if (!name || isReportTool(name)) continue;
         const listed = sources.apps.get(name);
-        // The App that ran the call when the bot server knows it (several Apps can share a tool name; null: more than one ran a part), else the one listed
-        const app = listed && ranOn !== undefined ? { connectionId: ranOn ?? undefined } : listed;
+        // The App that ran the call when the bot server knows it (several Apps can share a tool name; a list: parts ran on more than one, so
+        // none is named), else the one listed
+        const several = Array.isArray(ranOn) ? ranOn : undefined;
+        const app = listed && ranOn !== undefined ? { connectionId: typeof ranOn === 'string' ? ranOn : undefined } : listed;
         let operation: string;
         let appConnectionId: string | undefined;
         // An Instant App is an App too: its tool name carries its maker's name and an id, never a note's words
@@ -170,7 +174,8 @@ export function noteWhatRan(
         } else if (sources.offered.has(name) && OWN_TOOL.test(name)) operation = name;
         // A tool the reply was not offered (a name the model made up) is not a step a note can be about
         else continue;
-        turn.steps.push({ name, operation, ...(appConnectionId ? { appConnectionId } : {}), failure: failureOf(result) });
+        const apps = operation === 'app' && several ? several.join(',') : undefined;
+        turn.steps.push({ name, operation, ...(appConnectionId ? { appConnectionId } : {}), ...(apps ? { apps } : {}), failure: failureOf(result) });
     }
 }
 
@@ -225,8 +230,9 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     const retried = !!step && steps.slice(0, steps.indexOf(step)).some((other) => other.name === step.name && other.failure !== null);
     const draftWords = typeof args.words === 'string' && args.words.trim() ? args.words.trim().slice(0, WORDS_MAX) : undefined;
     const replyRef = context.turn?.replyRef ?? `reply:${randomUUID()}`;
-    // Every App is "app" to Orbit, so which App it was (its connection, or its tool for one with none) keeps two Apps' notes apart
-    const which = operation === 'app' ? (step?.appConnectionId ?? step?.name ?? '') : '';
+    // Every App is "app" to Orbit, so which App it was (its connection; the Apps a batch's parts ran on; its tool for one with none) keeps
+    // two Apps' notes apart
+    const which = operation === 'app' ? (step?.appConnectionId ?? (step?.apps ? `apps:${step.apps}` : undefined) ?? step?.name ?? '') : '';
     const ref = createHash('sha256').update([replyRef, context.botId, kind, area, operation, failure, which].join('|')).digest('hex');
 
     const report: BrickReportSend = {

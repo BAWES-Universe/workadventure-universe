@@ -5092,7 +5092,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         let othersRecorded: () => void = () => undefined;
         const othersRan = new Promise<void>((resolve) => (othersRecorded = resolve));
         // Which App ran each call (its connection), by call: the note names that App, not the first one listed under the tool's name
-        const ranOn = new Map<string, string | null>();
+        const ranOn = new Map<string, string | null | string[]>();
 
         // Execute all tool calls in parallel for better performance
         const toolPromises = validToolCalls.map(async (toolCall) => {
@@ -5548,9 +5548,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 if (split.kind === 'parts') {
-                                    // The Apps that ran a part: one, or none named when parts ran on more than one
+                                    // The Apps that ran a part: one, or all of them when parts ran on more than one (a note names none of them then,
+                                    // but two such batches on different Apps stay two notes)
                                     const ran = new Set(split.parts.filter((part) => part.decision.kind !== 'refuse').map((part) => part.entry.connectionId ?? null));
-                                    ranOn.set(toolCall.id, ran.size === 1 ? [...ran][0] : null);
+                                    ranOn.set(toolCall.id, ran.size === 1 ? [...ran][0] : ran.size === 0 ? null : [...ran].map((id) => id ?? '').sort());
                                     result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
                                     break;
                                 }

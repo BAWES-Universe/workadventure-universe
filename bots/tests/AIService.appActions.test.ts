@@ -9,6 +9,7 @@ import { MCPConnector, type ToolServerEntry } from '../mcp/MCPConnector';
 import { ToolGate } from '../mcp/ToolGate';
 import type { PolicyTool, ServerPolicy, ToolSetting } from '../mcp/ToolPolicy';
 import type { ToolHeading } from '../mcp/ToolCatalog';
+import { newReportTurn } from '../ai/ReportTools';
 
 vi.mock('../client/BotClient', () => ({ BotClient: vi.fn() }));
 
@@ -405,6 +406,21 @@ describe('a Brick with several ready-made Apps', () => {
         expect(sentTo()).toEqual(expect.arrayContaining([['g1', ['GMAIL_FETCH_EMAILS']], ['cal1', ['GOOGLECALENDAR_FIND_EVENT']], ['cal1', ['GOOGLECALENDAR_DELETE_EVENT']]]));
         expect(sentTo()).toHaveLength(3);
         expect(result.result.summary).toContain('Done now: Fetch emails, Find event, Delete event.');
+    });
+
+    it('a batch whose parts ran on two Apps is recorded for a note with both Apps, naming neither (CodeRabbit)', async () => {
+        const { service, servers } = twoApps(gmailPolicy(), calendarPolicy());
+        const turn = newReportTurn('$event-1');
+        const sources = { apps: new Map([[BATCH, { connectionId: 'c1' }]]), offered: new Set([BATCH]) };
+        const ask = (args: unknown) =>
+            service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify(args) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7,
+                undefined, undefined, false, undefined, undefined, undefined, false, false, false, undefined, 'dm', undefined, turn, sources);
+        await ask(batchArgs('GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_FIND_EVENT'));
+        await ask(batchArgs('GMAIL_FETCH_EMAILS'));
+        expect(turn.steps.map((step) => ({ apps: step.apps, connection: step.appConnectionId }))).toEqual([
+            { apps: 'c1,c2', connection: undefined },
+            { apps: undefined, connection: undefined },
+        ]);
     });
 
     it('never lets another App’s looser choice run an action that is Off in its own App', async () => {

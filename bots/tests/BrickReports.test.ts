@@ -159,6 +159,27 @@ describe('The send_to_universe_team tool', () => {
         expect(turn.steps.map((step) => step.appConnectionId)).toEqual([other, undefined, CONNECTION]);
     });
 
+    it('two batches whose parts ran on different Apps are two notes; the same Apps again is one (CodeRabbit)', async () => {
+        const other = '6e2d3c4b-2222-4333-8444-a55566667777';
+        const third = '7f3e4d5c-3333-4444-8555-b66677778888';
+        const turn = newReportTurn('$event-1');
+        const sources = { apps: new Map([['COMPOSIO_MULTI_EXECUTE_TOOL', { connectionId: CONNECTION }]]), offered: new Set(['COMPOSIO_MULTI_EXECUTE_TOOL']) };
+        const failed = { success: false, error: 'Something broke' };
+        noteWhatRan(turn, [{ name: 'COMPOSIO_MULTI_EXECUTE_TOOL', result: failed, ranOn: [CONNECTION, other] }], sources);
+        const ctx = context({ turn });
+        ctx.admin.sendBrickReport.mockResolvedValueOnce(kept({ id: 'note-a' })).mockResolvedValueOnce(kept({ id: 'note-b' }));
+        await runReportTool({ ...args, area: 'apps', step: 'COMPOSIO_MULTI_EXECUTE_TOOL' }, ctx);
+        // Neither App is named: parts ran on both
+        expect(sentOf(ctx, 0)).toMatchObject({ operation: 'app' });
+        expect(sentOf(ctx, 0).appConnectionId).toBeUndefined();
+        noteWhatRan(turn, [{ name: 'COMPOSIO_MULTI_EXECUTE_TOOL', result: failed, ranOn: [CONNECTION, third] }], sources);
+        expect(await runReportTool({ ...args, area: 'apps', step: 'COMPOSIO_MULTI_EXECUTE_TOOL' }, ctx)).toMatchObject({ sent: true });
+        expect(sentOf(ctx, 1).ref).not.toBe(sentOf(ctx, 0).ref);
+        noteWhatRan(turn, [{ name: 'COMPOSIO_MULTI_EXECUTE_TOOL', result: failed, ranOn: [CONNECTION, other] }], sources);
+        expect(await runReportTool({ ...args, area: 'apps', step: 'COMPOSIO_MULTI_EXECUTE_TOOL' }, ctx)).toMatchObject({ note: expect.stringContaining('Already sent') });
+        expect(ctx.admin.sendBrickReport).toHaveBeenCalledTimes(2);
+    });
+
     it('a note that did not go is never sent again in the same reply, and counts toward the reply\'s notes', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const lost = context();
