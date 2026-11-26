@@ -1,6 +1,13 @@
 <script lang="ts">
     import { onDestroy } from "svelte";
-    import { endedAsk, closesSoon, type BotAsk, type BotAskDecision, type BotAskTap } from "../../Bots/BotAsk";
+    import {
+        endedAsk,
+        closesSoon,
+        looksLikeData,
+        type BotAsk,
+        type BotAskDecision,
+        type BotAskTap,
+    } from "../../Bots/BotAsk";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
     import {
         IconAlertTriangle,
@@ -159,7 +166,7 @@
                         {#if shown.actsAs && shown.everyTime}
                             ·
                         {/if}
-                        {#if shown.everyTime}{$LL.chat.botAsk.asksEveryTime({ name: botName })}{/if}
+                        {#if shown.everyTime}{$LL.chat.botAsk.asksEveryTime()}{/if}
                     </span>
                 {/if}
             </div>
@@ -346,7 +353,7 @@
                         {$LL.chat.botAsk.openApp({ app })}
                     </a>
                 {/if}
-            {:else if answer?.result}
+            {:else if answer?.result && !looksLikeData(answer.result)}
                 <span class="ask-result" dir="auto">{answer.result}</span>
             {/if}
         {:else if answer?.typed}

@@ -64,6 +64,14 @@ describe('ToolSteps', () => {
         expect(describeStep({ id: 'a', name: 'doc_lookup' }).kind).toBe('search');
         expect(describeStep({ id: 'a', name: 'fetch_page' }, 'Open a page').kind).toBe('read');
         expect(describeStep({ id: 'a', name: 'generate_music' }).kind).toBe('write');
+        // Listing and getting are reading (game #2131: "Fetch emails and list labels" is not a write)
+        expect(describeStep({ id: 'a', name: 'GMAIL_LIST_LABELS' }).kind).toBe('read');
+        expect(describeStep({ id: 'a', name: 'get_weather' }).kind).toBe('read');
+        // The first verb decides: a list being made is a write, and a provider whose name starts with "get" is not a reader
+        expect(describeStep({ id: 'a', name: 'GMAIL_CREATE_LIST' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'add_to_list' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'GETRESPONSE_CREATE_CONTACT' }).kind).toBe('write');
+        expect(describeStep({ id: 'a', name: 'GETRESPONSE_LIST_CONTACTS' }, undefined, 'GetResponse').kind).toBe('read');
         expect(describeStep({ id: 'a', name: 'webSearch' }).kind).toBe('search');
         // Whole words only: these merely contain "read" or "load"
         expect(describeStep({ id: 'a', name: 'upload_file' }).kind).toBe('write');
@@ -309,5 +317,70 @@ describe('waiting, times and what a step did (#2061)', () => {
         steps.start([describeStep({ id: 'a', name: 'update_draft' })], 0);
         steps.finish([{ ...resultOf('a', { ok: true }), shows: [{ label: 'To', text: 'a@b.co' }] }], 500);
         expect(steps.field().steps[0].shows).toEqual([{ label: 'To', text: 'a@b.co' }]);
+    });
+});
+
+describe('a batch call by what its tools do (game #2131)', () => {
+    const fetch = { tool_slug: 'GMAIL_FETCH_EMAILS', arguments: { query: 'is:unread', label_ids: ['INBOX'] } };
+    const labels = { tool_slug: 'GMAIL_LIST_LABELS', arguments: {} };
+    const call = (tools: unknown[], extra: Record<string, unknown> = {}) => ({ id: 'c1', name: 'COMPOSIO_MULTI_EXECUTE_TOOL', arguments: JSON.stringify({ tools, ...extra }) });
+
+    it('says the same action once, with how many times', () => {
+        expect(describeStep(call([fetch, fetch]), undefined, 'Gmail').done).toBe('Used Fetch emails 2 times');
+        expect(describeStep(call([fetch, labels, fetch]), undefined, 'Gmail').done).toBe('Used Fetch emails and 2 more');
+        expect(describeStep(call([labels, fetch]), undefined, 'Gmail').done).toBe('Used List labels and fetch emails');
+    });
+
+    it('tells a write from a read by its action, not by the App name or a list noun', () => {
+        const make = { tool_slug: 'GETRESPONSE_CREATE_LIST', arguments: {} };
+        expect(describeStep(call([make]), undefined, 'GetResponse').kind).toBe('write');
+        expect(describeStep(call([labels, make]), undefined, 'GetResponse').kind).toBe('write');
+        expect(describeStep(call([labels]), undefined, 'Gmail').kind).toBe('read');
+    });
+
+    it('names the step by its action, in the same words as the card', () => {
+        const one = describeStep(call([fetch]), 'Multi Execute Composio Tools', 'Gmail');
+        expect(one).toMatchObject({ doing: 'Using Fetch emails', done: 'Used Fetch emails', kind: 'read' });
+        expect(describeStep(call([fetch, labels]), 'Multi Execute Composio Tools', 'Gmail').done).toBe('Used Fetch emails and list labels');
+        expect(describeStep(call([fetch, labels, labels]), undefined, 'Gmail').done).toBe('Used Fetch emails and 2 more');
+    });
+
+    it('is a write when any of its tools writes, a search when any searches, else a read', () => {
+        expect(describeStep(call([fetch, { tool_slug: 'GMAIL_SEND_EMAIL', arguments: {} }]), undefined, 'Gmail').kind).toBe('write');
+        expect(describeStep(call([{ tool_slug: 'GMAIL_SEARCH_PEOPLE', arguments: {} }, fetch]), undefined, 'Gmail').kind).toBe('search');
+    });
+
+    it('never shows the provider in a tool title', () => {
+        expect(describeStep({ id: 'x', name: 'COMPOSIO_SEARCH_TOOLS', arguments: '{}' }, 'Search Composio Tools').doing).toBe('Using Search Tools');
+        expect(describeStep({ id: 'x', name: 'COMPOSIO_SEARCH_TOOLS', arguments: '{}' }).doing).toBe('Using Search tools');
+        expect(describeStep({ id: 'x', name: 'x', arguments: '{}' }, 'Composio').doing).toBe('Using a tool');
+    });
+
+    it('renames a call announced before its tools were known once they are', () => {
+        const steps = new ReplySteps(0);
+        steps.start([describeStep({ id: 'c1', name: 'COMPOSIO_MULTI_EXECUTE_TOOL', arguments: '{"tools":[{"tool_s' }, 'Multi Execute Composio Tools', 'Gmail')]);
+        expect(steps.field().steps[0].doing).toBe('Using Multi Execute Tools');
+        steps.start([describeStep(call([fetch]), 'Multi Execute Composio Tools', 'Gmail')]);
+        expect(steps.field().steps).toHaveLength(1);
+        expect(steps.field().steps[0]).toMatchObject({ doing: 'Using Fetch emails', done: 'Used Fetch emails', kind: 'read' });
+        steps.finish([resultOf('c1', { successful: true })], 1000);
+        steps.end(2000);
+        expect(steps.field().line).toBe('Used Fetch emails');
+    });
+
+    it('shows what each tool was asked in plain lines, and never the model\'s own notes', () => {
+        const lines = stepDetails(call([fetch, labels], { thought: 'Look at the inbox', current_step: 'FETCHING_EMAILS', session_id: 's', sync_response_to_workbench: true }).arguments, undefined, false, 'Gmail');
+        expect(lines).toEqual([
+            { label: 'Fetch emails', text: 'Query is:unread · Labels Inbox' },
+            { label: 'List labels', text: 'Nothing to fill in' },
+        ]);
+    });
+
+    it('reads labels and capital words plainly in what a step sent', () => {
+        expect(stepDetails({ currency: 'USD', status: 'OPEN' })).toEqual([{ label: 'Currency', text: 'USD' }, { label: 'Status', text: 'Open' }]);
+        expect(stepDetails({ label_ids: ['INBOX', 'CATEGORY_UPDATES'], user_id: 'me' })).toEqual([
+            { label: 'Labels', text: 'Inbox, Category updates' },
+            { label: 'User', text: 'me' },
+        ]);
     });
 });

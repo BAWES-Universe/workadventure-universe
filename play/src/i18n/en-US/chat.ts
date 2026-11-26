@@ -963,7 +963,7 @@ const chat: BaseTranslation = {
     botAsk: {
         needsAnswer: "{name} needs your answer",
         usesAccount: "Uses {account} account",
-        asksEveryTime: "{name} asks every time for this",
+        asksEveryTime: "Asks every time",
         showAllDetails: "Show all {count} details",
         showLess: "Show less",
         previousCard: "Previous card",

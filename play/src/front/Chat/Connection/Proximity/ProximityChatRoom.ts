@@ -53,7 +53,7 @@ import {
     type BotVoiceDraft,
     type SpokenLine,
 } from "../../Bots/BotVoiceDraft";
-import { parseBotSteps, workKindOf, type BotSteps } from "../../Bots/BotSteps";
+import { msUntilStale, parseBotSteps, stoppedIfStale, workKindOf, type BotSteps } from "../../Bots/BotSteps";
 import { forgetBotFeelings, setBotMood, setBotWork, WAVE_MOOD } from "../../Bots/BotMood";
 import { isVoiceBotUser, voiceBotCount } from "../../Bots/TwoVoiceBots";
 import { gameManager } from "../../../Phaser/Game/GameManager";
@@ -349,6 +349,10 @@ export class ProximityChatRoom implements ChatRoom {
     private spaceStreamMessageSubscription: Subscription | undefined;
     // Active stream messages by responseId — updated incrementally as tokens arrive
     private streamMessages: Map<string, ProximityChatMessage> = new Map();
+    /** Per reply: the timer that stops a bot's work emoji if its steps line is left working for over an hour. */
+    private staleWorkTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+    /** Per bot: the reply its work emoji follows now, so an old reply's timer never clears a newer one's emoji. */
+    private workReplyOf: Map<string, string> = new Map();
     // The last replies of bots, by responseId and the bot that wrote them, kept after they finish so a voice bot can mark one
     private botReplies: Map<string, { message: ProximityChatMessage; sender: string }> = new Map();
     private observeUserJoinedSubscription: Subscription | undefined;
@@ -1057,7 +1061,23 @@ export class ProximityChatRoom implements ChatRoom {
         const steps = parseBotSteps(field);
         if (!steps) return;
         // The emoji beside the bot's Woka while it works (#1667): only this nearby chat's steps line drives it
-        setBotWork(senderId, workKindOf(steps));
+        // A line left "working" for over an hour is stopped (it is drawn so), so the emoji ends with it
+        const checked = stoppedIfStale(steps, Date.now());
+        setBotWork(senderId, workKindOf(checked.steps));
+        this.workReplyOf.set(senderId, responseId);
+        const earlier = this.staleWorkTimers.get(responseId);
+        if (earlier) clearTimeout(earlier);
+        this.staleWorkTimers.delete(responseId);
+        const wait = isFinal ? undefined : msUntilStale(steps, Date.now());
+        if (wait !== undefined) {
+            this.staleWorkTimers.set(
+                responseId,
+                setTimeout(() => {
+                    this.staleWorkTimers.delete(responseId);
+                    if (this.workReplyOf.get(senderId) === responseId) setBotWork(senderId, undefined);
+                }, wait)
+            );
+        }
         // The plain text, for wherever the chat names a message in words
         const body = {
             body: text ?? steps.line,
@@ -1085,6 +1105,13 @@ export class ProximityChatRoom implements ChatRoom {
             this.lastMessageTimestamp = line.date.getTime();
         }
         if (isFinal) this.streamMessages.delete(responseId);
+    }
+
+    /** Ends the timers that stop a bot's work emoji; the emoji itself is reset by whoever calls this. */
+    private clearStaleWorkTimers(): void {
+        this.staleWorkTimers.forEach((timer) => clearTimeout(timer));
+        this.staleWorkTimers.clear();
+        this.workReplyOf.clear();
     }
 
     /** How a bot feels as it says its reply (#1667), or nothing when the reply came without a mood. */
@@ -1865,6 +1892,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.botReplies.clear();
+        this.clearStaleWorkTimers();
         forgetBotFeelings();
         this.spaceMessageSubscription = this._space.observePublicEvent("spaceMessage").subscribe((event) => {
             if (isBlackListed(event.sender)) {
@@ -2204,6 +2232,7 @@ export class ProximityChatRoom implements ChatRoom {
                 this.spaceStreamMessageSubscription?.unsubscribe();
                 this.streamMessages.clear();
                 this.botReplies.clear();
+                this.clearStaleWorkTimers();
                 forgetBotFeelings();
                 this.closeScriptingAudioStreamManagers();
                 if (this._space) {
@@ -2444,6 +2473,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.botReplies.clear();
+        this.clearStaleWorkTimers();
         forgetBotFeelings();
 
         this.closeScriptingAudioStreamManagers();
@@ -2529,6 +2559,7 @@ export class ProximityChatRoom implements ChatRoom {
         this.spaceStreamMessageSubscription?.unsubscribe();
         this.streamMessages.clear();
         this.botReplies.clear();
+        this.clearStaleWorkTimers();
         forgetBotFeelings();
         this.clearTypingMembers();
 

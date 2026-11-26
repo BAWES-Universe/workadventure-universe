@@ -210,7 +210,7 @@ describe("the card a bot shows before it changes something", () => {
 
     it("says it asks every time for deletes and sends", async () => {
         await show(ask({ everyTime: true, options: [ask().options[0], ask().options[2]] }), { docked: true });
-        expect(text()).toContain("Uses Sara's Linear account · Linear SH asks every time for this");
+        expect(text()).toContain("Uses Sara's Linear account · Asks every time");
         expect(target.querySelectorAll('[data-testid="botAskOption"]')).toHaveLength(2);
     });
 
@@ -227,6 +227,30 @@ describe("the card a bot shows before it changes something", () => {
             expect(text()).toContain("You picked Create issue");
             expect(text()).toContain("Created WEB-412.");
             expect(byId("botAskOption")).toBeNull();
+        });
+
+        it("never draws an answer that looks like code, but keeps a plain-word one", async () => {
+            await show(ask({ answer: { option: "approve", result: '{"successful":true,"data":{"messages":[]}}' } }));
+            expect(text()).toContain("You picked Create issue");
+            expect(text()).not.toContain("successful");
+            expect(target.querySelector(".ask-result")).toBeNull();
+            await show(ask({ answer: { option: "approve", result: '  ["a","b"]' } }));
+            expect(target.querySelector(".ask-result")).toBeNull();
+            await show(ask({ answer: { option: "approve", result: "Created 2 events." } }));
+            expect(text()).toContain("Created 2 events.");
+        });
+
+        it("hides fenced data too, and keeps a bracketed word before plain text", async () => {
+            await show(ask({ answer: { option: "approve", result: '```json\n{"ok":true}\n```' } }));
+            expect(target.querySelector(".ask-result")).toBeNull();
+            await show(ask({ answer: { option: "approve", result: "```json\n[1]\n```" } }));
+            expect(target.querySelector(".ask-result")).toBeNull();
+            await show(ask({ answer: { option: "approve", result: "[]" } }));
+            expect(target.querySelector(".ask-result")).toBeNull();
+            await show(ask({ answer: { option: "approve", result: "[Gmail] Message sent successfully." } }));
+            expect(text()).toContain("[Gmail] Message sent successfully.");
+            await show(ask({ answer: { option: "approve", result: "[2024-05-01] Message sent" } }));
+            expect(text()).toContain("[2024-05-01] Message sent");
         });
 
         it("says how long allow more lasts and offers Ask me again", async () => {
