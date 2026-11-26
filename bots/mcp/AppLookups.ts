@@ -159,7 +159,7 @@ const SESSION_NOT_ACCEPTED = /\b(invalid|unknown|expired|unrecognized|missing)\s
  */
 const REFUSAL_WORDS = new Set([
     'tool', 'error', 'session', 'id', 'the', 'a', 'an', 'is', 'was', 'are', 'invalid', 'unknown', 'expired', 'unrecognized', 'missing', 'not', 'found',
-    'provided', 'given', 'supplied', 'sent', 'your', 'no', 'such', 'please', 'use', 'start', 'create', 'new', 'again', 'or', 'and', 'for', 'this', 'that', 'link',
+    'provided', 'given', 'supplied', 'sent', 'your',
 ]);
 
 /** What an answer that ran something looks like: results of actions, or a success, in words or in JSON. A refusal before anything ran has none of it. */
@@ -186,10 +186,13 @@ export function sessionRefused(answer: unknown, args: Record<string, unknown>): 
     if (hasResults(isObject(data) ? data : undefined) || hasResults(inner)) return false;
     if (RAN_SOMETHING.test(line)) return false;
     if (!SESSION_NOT_ACCEPTED.test(line)) return false;
-    // Only a bare refusal: its words are the refusal's own and the id that was sent, nothing that could tell of an action
-    const sent = id.toLowerCase();
-    for (const word of line.toLowerCase().match(/[a-z0-9_-]+/g) ?? []) {
-        if (word !== sent && !REFUSAL_WORDS.has(word)) return false;
+    // Only a bare refusal: its words are the refusal's own, and a session id named in it is exactly the one that was sent (compared as it is,
+    // right after the word "session" or "id"), nothing that could tell of an action or of another session
+    const words = line.match(/[A-Za-z0-9_-]+/g) ?? [];
+    for (let at = 0; at < words.length; at++) {
+        const previous = words[at - 1]?.toLowerCase();
+        if (words[at] === id && (previous === 'session' || previous === 'id')) continue;
+        if (!REFUSAL_WORDS.has(words[at].toLowerCase())) return false;
     }
     return true;
 }

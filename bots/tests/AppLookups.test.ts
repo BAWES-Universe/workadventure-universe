@@ -99,6 +99,11 @@ describe('a session the App’s link refused', () => {
         expect(sessionRefused({ error: 'Tool error: Invalid session. Action 1 completed.', outcome: 'failed' }, sent)).toBe(false);
         expect(sessionRefused({ error: 'Invalid session id sess-g1 after the event was created', outcome: 'failed' }, sent)).toBe(false);
         expect(sessionRefused({ error: 'Tool error: Invalid session id sess-g1', outcome: 'failed' }, sent)).toBe(true);
+        // A named id is exactly the one sent, even when it is also a word of a refusal, and in its own case
+        expect(sessionRefused({ error: 'Invalid session id new', outcome: 'failed' }, sent)).toBe(false);
+        expect(sessionRefused({ error: 'Invalid session id SESS-G1', outcome: 'failed' }, sent)).toBe(false);
+        expect(sessionRefused({ error: 'Invalid session id new', outcome: 'failed' }, { tools: sent.tools, session_id: 'new' })).toBe(true);
+        expect(sessionRefused({ error: 'Invalid session. It was sess-g1', outcome: 'failed' }, sent)).toBe(false);
         // Nothing was sent with a session: nothing to take away
         expect(sessionRefused({ error: 'Invalid session' }, { tools: [] })).toBe(false);
     });
