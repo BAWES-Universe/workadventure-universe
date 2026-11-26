@@ -144,6 +144,28 @@ const TABLE: Array<[string, Partial<Said>]> = [
     ['i like pizza', { likes: ['pizza'] }],
     ['I like pizza.\nI hate olives.', { likes: ['pizza'], dislikes: ['olives'] }],
     ['I hate Mondays, but I love Fridays', { likes: ['Fridays'], dislikes: ['Mondays'] }],
+    // quoted or requested words are not theirs
+    ['Please translate "my name is Sara" into French', {}],
+    ['Can you write "I am Noor" on a card?', {}],
+    ['Repeat after me: my name is Sara', {}],
+    ['The sign says "I love pizza" but I hate it', {}],
+    ['My name is Sara, and the card reads "I am Noor"', { name: 'Sara' }],
+    // the last thing said about something stands
+    ['I hate coffee. Actually I love coffee.', { likes: ['coffee'] }],
+    ['I love coffee. Actually I hate coffee.', { dislikes: ['coffee'] }],
+    ['I like Tea but I hate tea', { dislikes: ['tea'] }],
+    // whole words: a word that only starts like a remark is a thing
+    ['I like whole milk', { likes: ['whole milk'] }],
+    ['I love thatch roofs', { likes: ['thatch roofs'] }],
+    ['I like iffy movies', { likes: ['iffy movies'] }],
+    ['I love whatsapp stickers', { likes: ['whatsapp stickers'] }],
+    ['I like whatever', {}],
+    ['I like how you are', {}],
+    ['I like it when you laugh', {}],
+    ['I hate C++ and I love C#', { likes: ['C#'], dislikes: ['C++'] }],
+    ['I like notebooks', { likes: ['notebooks'] }],
+    ['I like nothing', {}],
+    ['I like oneself', { likes: ['oneself'] }],
 ];
 
 describe('ordinary sentences, one table', () => {

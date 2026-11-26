@@ -78,9 +78,24 @@ const NAME_FORMS: Array<{ form: RegExp; bare: boolean }> = [
     { form: new RegExp(`(?:^|\\b(?:[Hh]i|[Hh]ello|[Hh]ey)\\W+)[Ii](?:${APOS}m| am)\\s+(\\p{Lu}\\p{Ll}{1,19})`, 'u'), bare: true },
 ];
 
+// Text a person quotes is not theirs: "translate "my name is Sara" into French". Neither is what they ask to have written.
+const QUOTED = /"[^"\n]*"|“[^”\n]*”|«[^»\n]*»|`[^`\n]*`/gu;
+const TASK_WORD = /(?<![\p{L}\p{N}])(?:translate|translation|write|rewrite|say|type|repeat|spell|pronounce|correct|fix|quote|echo|caption|label|sentence|phrase|text|example|reads?|says?|tell (?:me|him|her|them))(?![\p{L}\p{N}])/iu;
+
+/** True when this sentence asks for something to be done with words before it says "my name is ...". */
+function namedInATask(sentence: string): boolean {
+    let first = -1;
+    for (const { form } of NAME_FORMS) {
+        const at = form.exec(sentence)?.index;
+        if (at !== undefined && (first === -1 || at < first)) first = at;
+    }
+    return first > 0 && TASK_WORD.test(sentence.slice(0, first));
+}
+
 /** The person's own name, only when they say it is: "my name is Sara", "call me Sara", "I'm Sara". */
 export function nameIn(message: string): string | null {
-    for (const sentence of clausesOf(message)) {
+    const own = sentencesOf(message.replace(QUOTED, ' ')).filter((sentence) => !namedInATask(sentence.text));
+    for (const sentence of own.flatMap((one) => clausesOf(one.text + (one.question ? '?' : '')))) {
         if (sentence.question || NEGATED.test(sentence.text)) continue;
         for (const { form, bare } of NAME_FORMS) {
             const match = form.exec(sentence.text);
@@ -104,7 +119,7 @@ const DISLIKE_VERBS = 'hate|dislike|despise|detest|loathe';
 const MAX_PHRASE_WORDS = 6;
 const MAX_PHRASE_CHARS = 60;
 /** What a phrase starts with when it is a remark about the moment, the bot, or someone else, and not a thing the person likes. */
-const NOT_A_THING = /^(?:how|that|when|the way|it when|it that|if|whether|what|who|why|being|you\b|your\b|my\b|our\b|his\b|her\b|their\b|him\b|them\b|me\b|myself\b|us\b|this\b|these\b|those\b|not\b|never\b|no\b|it\b|its\b|there\b|her\b|something\b|anything\b|everything\b|nothing\b|one\b|so\b|too\b)/iu;
+const NOT_A_THING = /^(?:how|that|when|the way|it when|it that|if|whether|what(?:ever)?|who|why|being|you|your|my|our|his|her|their|him|them|me|myself|us|this|these|those|not|never|no|it|its|there|something|anything|everything|nothing|one|so|too)(?![\p{L}\p{N}])/iu;
 /** A phrase that speaks to the bot ("to bother you") is a remark, not a taste. */
 const ABOUT_THE_BOT = /(?<![\p{L}\p{N}])(?:you|your|yours|you['’]re|you['’]ve|you['’]ll|yourself)(?![\p{L}\p{N}])/iu;
 const CONTACT = /@|https?:\/\/|www\.|\d{5,}/u;
@@ -147,8 +162,12 @@ const HEDGE = new RegExp(`(?:^|[^\\p{L}\\p{N}])(?:not|never|doubt|wonder|wonderi
 /** What a dislike is called among what the bot remembers: one thing each, so each keeps where it was said and can be forgotten alone. */
 export const DISLIKE_LABEL = 'dislike_';
 export function dislikeLabel(thing: string): string {
-    const slug = thing.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 40);
-    return `${DISLIKE_LABEL}${slug || 'thing'}`;
+    const normal = thing.trim().toLowerCase();
+    const slug = normal.replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 30);
+    // "C++" and "C#" are both "c" in words: the whole value, hashed, keeps them apart. Same value in other capitals is the same dislike.
+    let hash = 0x811c9dc5;
+    for (const unit of normal) for (let index = 0; index < unit.length; index++) hash = Math.imul(hash ^ unit.charCodeAt(index), 0x01000193) >>> 0;
+    return `${DISLIKE_LABEL}${slug || 'thing'}_${hash.toString(36)}`;
 }
 
 export interface Tastes {
@@ -163,15 +182,19 @@ export interface Tastes {
 export function tastesIn(message: string): Tastes {
     const likes: string[] = [];
     const dislikes: string[] = [];
-    const push = (list: string[], value: string | null) => {
-        if (value && !list.some((kept) => kept.toLowerCase() === value.toLowerCase())) list.push(value);
+    // The last thing said about something stands: "I hate coffee. Actually I love coffee." is a like
+    const push = (list: string[], other: string[], value: string | null) => {
+        if (!value) return;
+        const opposite = other.findIndex((kept) => kept.toLowerCase() === value.toLowerCase());
+        if (opposite !== -1) other.splice(opposite, 1);
+        if (!list.some((kept) => kept.toLowerCase() === value.toLowerCase())) list.push(value);
     };
     for (const sentence of sentencesOf(message).flatMap(sayingsOf)) {
         if (sentence.question) continue;
         const text = sentence.text;
         const negative = NEG_LIKE.exec(text) ?? CANT_STAND.exec(text);
         if (negative) {
-            if (!HEDGE.test(text.slice(0, negative.index))) push(dislikes, thingOf(negative[negative.length - 1]));
+            if (!HEDGE.test(text.slice(0, negative.index))) push(dislikes, likes, thingOf(negative[negative.length - 1]));
             continue;
         }
         const favourite = FAVORITE.exec(text);
@@ -179,7 +202,7 @@ export function tastesIn(message: string): Tastes {
             // "isn't" never reaches here: the form is "is" or "are" right after the kind of thing
             const thing = HEDGE.test(text.slice(0, favourite.index)) ? null : thingOf(favourite[2]);
             const kind = favourite[1].trim();
-            push(likes, thing && !NEGATED.test(favourite[1]) ? (kind ? `${thing} (favorite ${kind})` : `${thing} (favorite)`) : null);
+            push(likes, dislikes, thing && !NEGATED.test(favourite[1]) ? (kind ? `${thing} (favorite ${kind})` : `${thing} (favorite)`) : null);
             continue;
         }
         const positive = LIKE.exec(text);
@@ -189,7 +212,7 @@ export function tastesIn(message: string): Tastes {
             const verb = positive[2].toLowerCase();
             // "I never really like" etc. were taken above; a leftover "not" before the verb is not a like
             if (NEGATED.test(positive[1] ?? '')) continue;
-            push(DISLIKE_VERBS.split('|').includes(verb) ? dislikes : likes, thingOf(positive[3]));
+            (DISLIKE_VERBS.split('|').includes(verb) ? push(dislikes, likes, thingOf(positive[3])) : push(likes, dislikes, thingOf(positive[3])));
         }
     }
     return { likes, dislikes };

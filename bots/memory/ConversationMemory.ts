@@ -590,14 +590,13 @@ export class ConversationMemory {
     /** What they do not like: one fact for each thing, so each keeps where it was said (and who may hear it) and can be forgotten alone. The latest few are kept. */
     private addDislike(info: PersonalInfo, dislike: string, heard: Heard | undefined, at: number): void {
         const label = dislikeLabel(dislike);
-        const known = info.facts.get(label)?.toLowerCase() === dislike.toLowerCase();
+        const stored = info.facts.get(label);
+        const known = stored?.toLowerCase() === dislike.toLowerCase();
         this.stampInfo(info, `fact:${label}`, heard, !known, at);
-        if (!known) {
-            // Re-set so it counts as the latest
-            info.facts.delete(label);
-            info.facts.set(label, dislike);
-            info.lastInfoUpdate = Date.now();
-        }
+        // Said again or new, it counts as the latest, so the oldest is the one that goes. The spelling already kept stays.
+        info.facts.delete(label);
+        info.facts.set(label, known && stored ? stored : dislike);
+        if (!known) info.lastInfoUpdate = Date.now();
         const labels = [...info.facts.keys()].filter((key) => key.startsWith(DISLIKE_LABEL));
         for (const oldest of labels.slice(0, Math.max(0, labels.length - MAX_DISLIKES))) {
             info.facts.delete(oldest);

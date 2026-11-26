@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConversationMemory } from '../memory/ConversationMemory';
-import { birthdayDateIn, birthdayIsToday, nameIn, stateIn, tastesIn, visionNoteOf, withoutContactDetails } from '../memory/PersonalInfoRules';
+import { birthdayDateIn, birthdayIsToday, dislikeLabel, nameIn, stateIn, tastesIn, visionNoteOf, withoutContactDetails } from '../memory/PersonalInfoRules';
 import { dropItems, memoryItemsOf } from '../memory/MemoryItems';
 import { FORGET_MEMORY_TOOL, runMemoryTool } from '../ai/MemoryTools';
 import { vi } from 'vitest';
@@ -33,7 +33,16 @@ describe('nameIn', () => {
         expect(nameIn("I'm not Sara, I'm Noor")).toBe('Noor');
     });
 
-    it('never takes a name from a task or a verb phrase', () => {
+    it('never takes a name from words they quote or ask to have written', () => {
+        expect(nameIn('Please translate "my name is Sara" into French')).toBeNull();
+        expect(nameIn('Translate my name is Sara into French')).toBeNull();
+        expect(nameIn('Write a sentence that says I am Sara')).toBeNull();
+        expect(nameIn('Say "I\'m Sara" in Spanish')).toBeNull();
+        expect(nameIn('My name is Sara. Please translate "hello" into French')).toBe('Sara');
+        expect(nameIn('Please translate "hello" into French. My name is Sara')).toBe('Sara');
+    });
+
+    it('never takes a name from a verb phrase', () => {
         expect(nameIn('Please connect my Google mail')).toBeNull();
         expect(nameIn('can you open my Calendar and read it')).toBeNull();
         expect(nameIn("I'm Sorry about that")).toBeNull();
@@ -201,14 +210,14 @@ describe('what the bot keeps from a chat', () => {
         expect(context).toContain('They like: tea');
         expect(context).not.toContain('They like: coffee');
         const items = memoryItemsOf(memory.getMemory(BOT, PERSON)!);
-        expect(items.map((item) => `${item.kind}:${item.label}:${item.value}`).sort()).toEqual(['fact:dislike_coffee:coffee', 'pref:null:tea']);
+        expect(items.map((item) => `${item.kind}:${item.label}:${item.value}`).sort()).toEqual([`fact:${dislikeLabel('coffee')}:coffee`, 'pref:null:tea']);
     });
 
     it('moves a thing from one list to the other when they change their mind', () => {
         const memory = learnFrom('I like coffee', "I don't like coffee");
         let info = memory.getMemory(BOT, PERSON)!.personalInfo;
         expect(info.preferences).toEqual([]);
-        expect(info.facts.get('dislike_coffee')).toBe('coffee');
+        expect(info.facts.get(dislikeLabel('coffee'))).toBe('coffee');
 
         memory.extractPersonalInfo(BOT, PERSON, 'I love coffee again', 'dm');
         info = memory.getMemory(BOT, PERSON)!.personalInfo;
@@ -273,5 +282,43 @@ describe('what the bot keeps from a chat', () => {
         const info = memory.getMemory(BOT, PERSON)!.personalInfo;
         expect(info.preferences).toEqual(['Jazz']);
         expect(Object.keys(info.drawnFrom ?? {}).filter((key) => key.startsWith('pref:'))).toEqual(['pref:Jazz']);
+    });
+    it('keeps "C++" and "C#" as two dislikes, each forgotten alone', () => {
+        expect(dislikeLabel('C++')).not.toBe(dislikeLabel('C#'));
+        expect(dislikeLabel('Coffee')).toBe(dislikeLabel('coffee'));
+        const memory = learnFrom('I hate C++', 'I hate C#');
+        const stored = memory.getMemory(BOT, PERSON)!;
+        expect([...stored.personalInfo.facts.values()].sort()).toEqual(['C#', 'C++']);
+        const target = memoryItemsOf(stored).find((item) => item.value === 'C++')!;
+        expect(dropItems(stored, new Set([target.id]))).toBe(1);
+        expect([...stored.personalInfo.facts.values()]).toEqual(['C#']);
+    });
+
+    it('counts a dislike said again as the latest, so it is not the first to go past ten', () => {
+        const lines = Array.from({ length: 10 }, (_, index) => `I hate thing${String.fromCharCode(97 + index)}`);
+        const memory = learnFrom(...lines, 'I hate thinga', 'I hate thingk');
+        const kept = [...memory.getMemory(BOT, PERSON)!.personalInfo.facts.values()];
+        expect(kept).toHaveLength(10);
+        expect(kept).toContain('thinga');
+        expect(kept).not.toContain('thingb');
+        expect(kept).toContain('thingk');
+    });
+
+    it('forgetting a short dislike takes the earlier lines that said it and the reply that says it back, and nothing else', () => {
+        const memory = new ConversationMemory();
+        const say = (text: string, at: number, sender: 'person' | 'bot' = 'person') => {
+            memory.addMessage(BOT, PERSON, text, sender, 'dm', false);
+            memory.getMemory(BOT, PERSON)!.conversationHistory.at(-1)!.timestamp = at;
+            if (sender === 'person') memory.extractPersonalInfo(BOT, PERSON, text, 'dm', at);
+        };
+        say('I hate tea', 1000);
+        say('I like steam rooms', 2000);
+        say('You hate tea, noted.', 2500, 'bot');
+        say('ok, I hate tea so much', 3000);
+        say('Steam rooms are great', 3500, 'bot');
+        const stored = memory.getMemory(BOT, PERSON)!;
+        const target = memoryItemsOf(stored).find((item) => item.value === 'tea')!;
+        expect(dropItems(stored, new Set([target.id]))).toBe(1);
+        expect(stored.conversationHistory.map((line) => line.message)).toEqual(['I like steam rooms', 'Steam rooms are great']);
     });
 });

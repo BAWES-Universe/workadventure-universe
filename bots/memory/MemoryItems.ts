@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto';
 import type { BotPlayerMemory } from './ConversationMemory';
 import { mayUse, type Heard, type MemoryView } from './Heard';
-import { DISLIKE_LABEL } from './PersonalInfoRules';
+import { DISLIKE_LABEL, tastesIn } from './PersonalInfoRules';
 
 export const MEMORY_ITEM_KINDS = ['name', 'birthday', 'pref', 'fact'] as const;
 export type MemoryItemKind = (typeof MEMORY_ITEM_KINDS)[number];
@@ -129,11 +129,14 @@ function escapeRegExp(text: string): string {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** A bot line that tells the person what they like back ("You love tea", "Since you enjoy tea"), not one that only has the word. */
-function saidBackToThem(text: string): RegExp {
+const LIKE_WORDS = `likes?|loves?|loved|enjoys?|enjoyed|prefer|prefers|preferred|adores?|favou?rite|fan of|into|go-to`;
+const DISLIKE_WORDS = `hates?|hated|dislikes?|disliked|despises?|detests?|loathes?|avoid|avoids|(?:can['’]?t|cannot|can not) stand|(?:don['’]?t|do not|doesn['’]?t|does not) (?:like|enjoy|love)|not a fan of|not into|sick of|tired of`;
+
+/** A bot line that tells the person what they like (or, with the dislike words, do not like) back ("You love tea", "You hate tea"), not one that only has the word. */
+function saidBackToThem(text: string, words = LIKE_WORDS): RegExp {
     const word = `(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`;
     const person = `(?<![\\p{L}\\p{N}])(you|your|you're|you've)(?![\\p{L}\\p{N}])`;
-    const likes = `(?<![\\p{L}\\p{N}])(likes?|loves?|loved|enjoys?|enjoyed|prefer|prefers|preferred|adores?|favou?rite|fan of|into|go-to)(?![\\p{L}\\p{N}])`;
+    const likes = `(?<![\\p{L}\\p{N}])(${words})(?![\\p{L}\\p{N}])`;
     // "You love tea" and "Tea is your favorite": the person, a word for liking, and the value, in either order, in one sentence
     return new RegExp(`${person}[^.!?\\n]{0,40}?${likes}[^.!?\\n]{0,25}?${word}|${word}[^.!?\\n]{0,40}?${person}[^.!?\\n]{0,40}?${likes}`, 'iu');
 }
@@ -162,7 +165,9 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         if (info.heard) delete info.heard[key];
         if (info.drawnFrom) delete info.drawnFrom[key];
     };
-    const takeLines = (at: number | null, phrase: string, ownName = false) => {
+    // Short dislikes ("tea"): the person's lines that say they do not like it, found by what they say and not by the bare word
+    const shortDislikes: string[] = [];
+    const takeLines = (at: number | null, phrase: string, ownName = false, dislike = false) => {
         if (at !== null) for (const line of history) if (line.timestamp === at && line.sender === 'person') doomedLines.add(line);
         // The lines that say it back go too, the bot's and the person's: only the last line it was said in is noted, and a thing
         // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
@@ -170,7 +175,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         // A value too short to match everywhere ("Amy") is still said back in the reply right after the line it came from
         else if (phrase.trim().length > 0) {
             const short = phrase.trim();
-            echoes.push({ at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short) });
+            echoes.push({ at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short, dislike ? DISLIKE_WORDS : LIKE_WORDS) });
+            if (dislike) shortDislikes.push(short.toLowerCase());
         }
     };
 
@@ -213,7 +219,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         if (!goes(memoryItemKey('fact', name, String(value)), at)) continue;
         // How someone feels, and what they do not like, go with every line that says it, as a like does
         const dislike = name.startsWith(DISLIKE_LABEL);
-        takeLines(at, name === 'current_state' || dislike ? String(value) : '');
+        takeLines(at, name === 'current_state' || dislike ? String(value) : '', false, dislike);
         // The bot's reply right after the line this fact came from, when it says the value back, goes with it (a general fact's
         // value is never taken out of every line, so only that one reply is looked for)
         if (name !== 'current_state' && !dislike && String(value).trim() && at !== null) {
@@ -226,12 +232,15 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         removed++;
     }
 
-    if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0) {
+    if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0 || shortDislikes.length > 0) {
         memory.conversationHistory = history.filter((line, index) => {
             if (doomedLines.has(line)) return false;
             const text = line.message;
             if (phrases.some((phrase) => phrase.test(text))) return false;
-            if (line.sender === 'person') return true;
+            if (line.sender === 'person') {
+                // "I hate tea" said earlier, where only the last such line was noted
+                return !(shortDislikes.length > 0 && tastesIn(text).dislikes.some((one) => shortDislikes.includes(one.toLowerCase())));
+            }
             // The person's own name is not said back by the bot in any later line either: it is the person who forgot it
             if (echoes.some((echo) => echo.ownName && echo.words.test(text))) return false;
             // A later bot line that tells the person what they like back ("You love tea") goes too; one that only has the word stays
