@@ -167,6 +167,18 @@ describe('dropItems: a forgotten thing goes, with what was built from it', () =>
         expect(lines).toEqual(expect.arrayContaining(['tell me about Paris history', 'Paris has a long history']));
     });
 
+    it('finds a forgotten thing written without spaces (Chinese) inside a longer line, and one typed with a combining accent (Sentry)', () => {
+        const record = talking();
+        say(record, '我真的喜欢喝茶加糖呢', 1000);
+        say(record, 'I want cafe\u0301 au lait please', 1100);
+        say(record, 'I live in Chrome street', 1200);
+        say(record, 'I want a Chrome café', 1300);
+        const info = record.getMemory(BOT, SARA)!;
+        info.personalInfo.preferences = ['喜欢喝茶加糖', 'café au lait'];
+        expect(dropItems(info, new Set([memoryItemKey('pref', null, '喜欢喝茶加糖'), memoryItemKey('pref', null, 'café au lait')]))).toBe(2);
+        expect(info.conversationHistory.map((line) => line.message)).toEqual(['I live in Chrome street', 'I want a Chrome café']);
+    });
+
     it('finds a name written with a capital only as written, so the word it is also stays (Sentry)', () => {
         const short = talking();
         say(short, 'call me Will', 1000);

@@ -116,9 +116,33 @@ const MIN_PHRASE = 4;
 /** Matches nothing: an echo that is only looked for in the reply right after its line. */
 const NEVER = /(?!)/;
 
+/** Scripts written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Burmese) have no word edges: "喜欢茶" sits inside "我喜欢茶很多". */
+const UNSPACED = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]$/u;
+
+/**
+ * The words in the form a line is compared in (composed, so "e" + a combining accent is the same as "é"), with what must not touch
+ * them on each side so they are not a piece of a longer word. A letter, digit or combining mark at an edge must not touch another
+ * one; an edge that is a symbol, a space or a letter of a script written without spaces has nothing to touch.
+ */
+function wordEdges(text: string): { body: string; before: string; after: string; lookAhead: string } {
+    const body = escapeRegExp(text.normalize('NFC'));
+    const letters = Array.from(text.normalize('NFC'));
+    const touches = (one: string | undefined) => one !== undefined && /[\p{L}\p{N}\p{M}]/u.test(one) && !UNSPACED.test(one);
+    const before = touches(letters[0]) ? '(^|[^\\p{L}\\p{N}\\p{M}])' : '';
+    const after = touches(letters[letters.length - 1]) ? '($|[^\\p{L}\\p{N}\\p{M}])' : '';
+    const lookAhead = touches(letters[letters.length - 1]) ? '(?![\\p{L}\\p{N}\\p{M}])' : '';
+    return { body, before, after, lookAhead };
+}
+
+/** What a line is compared in: composed, like the words. */
+function composed(text: string): string {
+    return text.normalize('NFC');
+}
+
 /** These words as their own words, not a piece of a longer one. */
 function wholeWords(text: string, exactCase = false): RegExp {
-    return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`, exactCase ? 'u' : 'iu');
+    const edges = wordEdges(text);
+    return new RegExp(`${edges.before}${edges.body}${edges.after}`, exactCase ? 'u' : 'iu');
 }
 
 /** A name written with a capital ("Will", "Rose") is found only as written, so the word it is also ("will", "rose") is left alone. */
@@ -135,12 +159,13 @@ const DISLIKE_WORDS = `hates?|hated|dislikes?|disliked|despises?|detests?|loathe
 
 /** How a person gives their name, in any capitals: "my name is sara", "call me Ali", "I'm ali". Said again lower case, it is still their name. */
 function givenAs(name: string): RegExp {
-    return new RegExp(`(?:my name(?:['’]s| is)|call me|(?<![\\p{L}\\p{N}])i(?:['’]m| am)(?: called| named)?)\\s+${escapeRegExp(name)}(?![\\p{L}\\p{N}])`, 'iu');
+    return new RegExp(`(?:my name(?:['’]s| is)|call me|(?<![\\p{L}\\p{N}])i(?:['’]m| am)(?: called| named)?)\\s+${wordEdges(name).body}${wordEdges(name).lookAhead}`, 'iu');
 }
 
 /** A bot line that tells the person what they like (or, with the dislike words, do not like) back ("You love tea", "You hate tea"), not one that only has the word. */
 function saidBackToThem(text: string, words = LIKE_WORDS): RegExp {
-    const word = `(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`;
+    const edges = wordEdges(text);
+    const word = `${edges.before}${edges.body}${edges.after}`;
     const person = `(?<![\\p{L}\\p{N}])(you|your|you're|you've)(?![\\p{L}\\p{N}])`;
     const likes = `(?<![\\p{L}\\p{N}])(${words})(?![\\p{L}\\p{N}])`;
     // "You love tea" and "Tea is your favorite": the person, a word for liking, and the value, in either order, in one sentence
@@ -149,7 +174,8 @@ function saidBackToThem(text: string, words = LIKE_WORDS): RegExp {
 
 /** A line where the person puts the value first and then says it is theirs ("Tea is my favorite drink", "Tea? I hate it"), with the words of liking or not liking. */
 function saidFirstByThem(text: string, words: string): RegExp {
-    const word = `(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`;
+    const edges = wordEdges(text);
+    const word = `${edges.before}${edges.body}${edges.after}`;
     const mine = `(?<![\\p{L}\\p{N}])(i|my)(?![\\p{L}\\p{N}])`;
     const likes = `(?<![\\p{L}\\p{N}])(${words})(?![\\p{L}\\p{N}])`;
     return new RegExp(`${word}[^.!?\\n]{0,25}?${mine}[^.!?\\n]{0,25}?${likes}`, 'iu');
@@ -272,12 +298,12 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
             const owners = new Set<number>();
             if (line.sender !== 'person') return owners;
             for (const one of doomedLines.get(line) ?? []) owners.add(one);
-            for (const phrase of phrases) if (phrase.words.test(line.message)) owners.add(phrase.owner);
-            for (const name of shortNames) if (name.words.test(line.message)) owners.add(name.owner);
+            for (const phrase of phrases) if (phrase.words.test(composed(line.message))) owners.add(phrase.owner);
+            for (const name of shortNames) if (name.words.test(composed(line.message))) owners.add(name.owner);
             if (shortDislikes.length > 0 || shortLikes.length > 0) {
-                const tastes = tastesIn(line.message);
-                for (const dislike of shortDislikes) if (tastes.dislikes.some((one) => one.toLowerCase() === dislike.value) || dislike.first.test(line.message)) owners.add(dislike.owner);
-                for (const like of shortLikes) if (tastes.likes.some((one) => plainThing(one).toLowerCase() === like.value) || like.first.test(line.message)) owners.add(like.owner);
+                const tastes = tastesIn(composed(line.message));
+                for (const dislike of shortDislikes) if (tastes.dislikes.some((one) => one.toLowerCase() === dislike.value) || dislike.first.test(composed(line.message))) owners.add(dislike.owner);
+                for (const like of shortLikes) if (tastes.likes.some((one) => plainThing(one).toLowerCase() === like.value) || like.first.test(composed(line.message))) owners.add(like.owner);
             }
             return owners;
         };
@@ -288,7 +314,7 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         memory.conversationHistory = history.filter((line, index) => {
             if (ownersAt[index].size > 0) return false;
             if (line.sender === 'person') return true;
-            const text = line.message;
+            const text = composed(line.message);
             if (phrases.some((phrase) => phrase.words.test(text))) return false;
             // The person's own name is not said back by the bot in any later line either: it is the person who forgot it
             if (echoes.some((echo) => echo.ownName && echo.words.test(text))) return false;

@@ -145,10 +145,13 @@ const TASK_WORD = /(?<![\p{L}\p{N}])(?:translate|translation|write|rewrite|say|t
 /** The person's own name, only when they say it is: "my name is Sara", "call me Sara", "I'm Sara". */
 export function nameIn(message: string): string | null {
     let greetedBefore = false;
-    for (const sentence of sentencesOf(message.replace(QUOTED, ' '))) {
+    const sentences = sentencesOf(message.replace(QUOTED, ' '));
+    for (const [index, sentence] of sentences.entries()) {
         // "Hello! I'm Sara": the sentence before was only a greeting
         const greetedByLine = greetedBefore;
         greetedBefore = GREETING.test(sentence.text);
+        // "My name is Sara. Not really": the next sentence takes it back
+        if (index + 1 < sentences.length && BARE_NOT.test(sentences[index + 1].text)) continue;
         let cursor = 0;
         for (const clause of clausesOf(sentence.text + (sentence.question ? '?' : ''))) {
             // What came before this part in its sentence: "Repeat after me: I am Sara" asks for words, it does not give a name
