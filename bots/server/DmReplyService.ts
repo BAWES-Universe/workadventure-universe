@@ -448,7 +448,7 @@ export class DmReplyService extends BaseBehavior {
         try {
             // A Brick is known before it is asked about someone: the first direct message after a restart can be this line, and
             // a Brick not yet known would reach Orbit with no asker, bypassing who it is for
-            this.aiService.noteBrick?.(config.botId, config.brick);
+            this.aiService.noteBrick?.(config.botId, config.brick, config.name);
             // With the bot id, so a bot on Universe AI or on a lent key reaches its key the way its replies do
             const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500), config.botId, undefined, asker);
             return parseEmotionsFromResponse(line).cleanedResponse.trim().slice(0, 300);
@@ -478,7 +478,7 @@ export class DmReplyService extends BaseBehavior {
         // A Brick its owner deleted answers nobody while it waits for Undo (#1996)
         if (config.brick?.deleted) return null;
         // A person's own first Brick can make Bricks and suggest one (#1996)
-        this.aiService.noteBrick?.(botId, config.brick);
+        this.aiService.noteBrick?.(botId, config.brick, config.name);
         const chatInstructions = instructionsFor(config);
         const playerId = this.playerIdFor(person.matrixUserId);
         const memory = this.conversationMemory;

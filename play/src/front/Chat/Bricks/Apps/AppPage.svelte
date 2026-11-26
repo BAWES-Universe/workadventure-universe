@@ -46,6 +46,9 @@
      */
     export let appId: string;
     export let onBack: () => void;
+    /** A card's link asked for one Brick's screen on this App: it opens once the page is read (game "Ask, Do, Ignore"). */
+    export let startBrick: { botId: string; serverId: string } | undefined = undefined;
+    export let onStartBrickTaken: () => void = () => undefined;
 
     $: text = $LL.chat.brick.apps;
     let page: MyAppPage | undefined;
@@ -65,6 +68,12 @@
     let brickScreen: { botId: string; botName: string; serverId: string } | undefined;
 
     $: app = page?.app;
+    $: if (startBrick && app) {
+        const wanted = startBrick;
+        const brick = app.bricks.find((one) => one.botId === wanted.botId && one.serverId === wanted.serverId);
+        onStartBrickTaken();
+        if (brick) brickScreen = { botId: brick.botId, botName: brick.botName, serverId: brick.serverId };
+    }
     // The pictures of the person's Bricks: a Brick not in the list yet has an empty place, so nothing jumps when it comes
     $: looks = new Map(($myBricksStore ?? []).map((card) => [card.id, card.characterTextureId]));
     $: github = page?.github;

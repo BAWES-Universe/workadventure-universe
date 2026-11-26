@@ -950,6 +950,58 @@ describe('MCPConnector', () => {
             expect(result.tools.filter((tool: any) => tool.function.name === 'get_weather')).toHaveLength(1);
         });
 
+        it('keeps the same link tool of every other ready-made App on the first one, so each action goes through its own App', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            const app = (id: string, name: string) => ({ id, botId: 'bot-123', name, serverUrl: `https://${id}.link/mcp`, authType: 'none' as const, enabled: true, readyMade: true, connectionId: `conn-${id}` });
+            mockedAxios.get.mockResolvedValueOnce({ data: [app('gmail', 'Gmail'), app('calendar', 'Calendar'), { ...app('plain', 'Plain'), readyMade: false }] });
+            const batch = { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', description: 'Run actions', inputSchema: { type: 'object', properties: {} } };
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                const sent = body?.message?.method ?? body?.method;
+                const list = { jsonrpc: '2.0', id: '1', result: { tools: [batch] } };
+                if (body?.message) return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
+                return sent === 'initialize' ? MOCK_INIT_RESPONSE : { data: list };
+            });
+            const result = await MCPConnector.discoverToolsWithMapping('bot-123', 'https://admin.example.com', 'admin-token', 'bot-service-token');
+            const entry = result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL');
+            const ids = [entry?.serverId, ...(entry?.otherApps ?? []).map((other) => other.serverId)];
+            // Both ready-made Apps are kept, each once; an App that is not ready-made is never one of them
+            expect(entry?.readyMade).toBe(true);
+            expect([...ids].sort()).toEqual(['calendar', 'gmail']);
+            expect(entry?.otherApps?.every((other) => other.readyMade === true && other.orbitUrl === 'https://admin.example.com')).toBe(true);
+            expect(result.tools.filter((tool: any) => tool.function.name === 'COMPOSIO_MULTI_EXECUTE_TOOL')).toHaveLength(1);
+            vi.unstubAllEnvs();
+        });
+
+        it('keeps the ready-made Apps beside the owner’s own server when that server answered first under the same name', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            const app = (id: string, name: string) => ({ id, botId: 'bot-123', name, serverUrl: `https://${id}.link/mcp`, authType: 'none' as const, enabled: true, readyMade: true, connectionId: `conn-${id}` });
+            const own = { id: 'own', botId: 'bot-123', name: 'My tools', serverUrl: 'https://own.example/mcp', authType: 'none' as const, enabled: true };
+            mockedAxios.get.mockResolvedValueOnce({ data: [app('gmail', 'Gmail'), own, app('calendar', 'Calendar')] });
+            const batch = { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', description: 'Run actions', inputSchema: { type: 'object', properties: {} } };
+            const list = { jsonrpc: '2.0', id: '1', result: { tools: [batch] } };
+            let ownListed: () => void = () => undefined;
+            const ownDone = new Promise<void>((resolve) => {
+                ownListed = resolve;
+            });
+            mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                const sent = body?.message?.method ?? body?.method;
+                if (body?.message) {
+                    // The ready-made Apps answer only after the owner's own server has been listed
+                    await ownDone;
+                    for (let i = 0; i < 50; i++) await Promise.resolve();
+                    return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
+                }
+                if (sent !== 'initialize') queueMicrotask(ownListed);
+                return sent === 'initialize' ? MOCK_INIT_RESPONSE : { data: list };
+            });
+            const result = await MCPConnector.discoverToolsWithMapping('bot-123', 'https://admin.example.com', 'admin-token', 'bot-service-token');
+            const entry = result.toolServerMap.get('COMPOSIO_MULTI_EXECUTE_TOOL');
+            expect(entry?.serverId).toBe('own');
+            expect(entry?.readyMade).toBeUndefined();
+            expect((entry?.otherApps ?? []).map((other) => other.serverId).sort()).toEqual(['calendar', 'gmail']);
+            vi.unstubAllEnvs();
+        });
+
         it('returns both tools and tool→server map', async () => {
             mockedAxios.get.mockResolvedValueOnce({ data: MOCK_CONFIGS });
 

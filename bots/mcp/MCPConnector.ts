@@ -146,6 +146,16 @@ export interface ToolServerEntry {
     sharedJob?: { inputs: string[] };
     /** Another App's job of the same name that its owner shared, when this entry (the one the owner is offered) is not shared: it is what someone else is offered instead (#2006). */
     sharedAlt?: { tool: McpToolDefinition; entry: ToolServerEntry };
+    /**
+     * One action of a ready-made App, on a card of its own (game "Ask, Do, Ignore" for Bricks): the entry is its App's batch tool's,
+     * and it runs as a batch of one through `batchTool`.
+     */
+    appAction?: { slug: string; batchTool: string };
+    /**
+     * The same link tool on the Brick's other ready-made Apps (game "Ask, Do, Ignore" for Bricks): every App's link has the same tool
+     * names, so the model is offered the first one, and each action of a batch is sent through the App it belongs to.
+     */
+    otherApps?: ToolServerEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -991,6 +1001,11 @@ export class MCPConnector {
             // The name is taken by another App. The owner keeps the first, as always; but a job another App's owner shared under this name is kept
             // aside, so someone else asking is still offered it and does not lose it to an App that shares nothing (#2006)
             const first = toolServerMap.get(tool.function.name);
+            // Each ready-made App is kept beside the first, whichever server answered first (they answer in no fixed order): its actions
+            // still go through it
+            if (first && server.readyMade === true && server.orbitUrl && first.serverId !== server.id && !first.otherApps?.some((other) => other.serverId === server.id)) {
+                (first.otherApps ??= []).push(entryFor(tool, server, title, raw));
+            }
             const shared = server.connectionId ? entryFor(tool, server, title, raw) : undefined;
             if (first && !first.sharedJob && !first.sharedAlt && shared?.sharedJob) first.sharedAlt = { tool, entry: shared };
         }
@@ -1060,7 +1075,7 @@ export class MCPConnector {
                 }
                 void MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest, read.cut).then((outcome) => {
                     // Orbit did not get the list: forget it here too, so the next read tries to save it again (not in an hour)
-                    if (outcome.result === 'skipped' && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
+                    if (outcome.result === 'skipped' && !outcome.ownedByOrbit && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
                 });
             } else {
                 console.warn(
@@ -1155,7 +1170,7 @@ export class MCPConnector {
         cut?: ToolListCut | null
     ): Promise<SyncResult> {
         return syncCatalog({ orbit, botId, serverId: server.id, server, raw, cut, ask }).then((outcome) => {
-            if (outcome.result === 'skipped') console.warn(`[MCPConnector] Tool list of ${server.name} (${server.id}) not saved: ${outcome.reason}`);
+            if (outcome.result === 'skipped' && !outcome.ownedByOrbit) console.warn(`[MCPConnector] Tool list of ${server.name} (${server.id}) not saved: ${outcome.reason}`);
             else if (outcome.result === 'saved' && outcome.saved.changed.length > 0) {
                 console.log(`[MCPConnector] ${outcome.saved.changed.length} tool(s) of ${server.name} changed and wait to be confirmed again`);
             }
@@ -1208,7 +1223,7 @@ export class MCPConnector {
         });
         const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest, read.cut);
         // Orbit did not get it: the next read tries to save it again
-        if (saved.result === 'skipped' && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
+        if (saved.result === 'skipped' && !saved.ownedByOrbit && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
         return { read: true, tools: raw.length, saved };
     }
 

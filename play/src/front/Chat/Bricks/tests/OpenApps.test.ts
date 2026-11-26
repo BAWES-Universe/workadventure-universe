@@ -25,6 +25,7 @@ vi.mock("../../Stores/ChatStore", () => ({ bricksPageOpenStore, navChat: { switc
 
 import { appsPageRequest, openAppsPage, takeAppsPageRequest } from "../Apps/OpenApps";
 import { appsSearchStart } from "../Apps/AppsSearch";
+import { appBrickStart, takeAppBrickStart } from "../Apps/AppLink";
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -54,5 +55,22 @@ describe("opening the Apps page from a chat", () => {
         openAppsPage();
         takeAppsPageRequest();
         expect(get(appsPageRequest)).toBe(false);
+    });
+
+    it("asks for one Brick's screen of an App when a card's link opens it, and nothing else when none was asked", () => {
+        takeAppBrickStart();
+        openAppsPage();
+        expect(get(appBrickStart)).toBeUndefined();
+        openAppsPage({ brick: { botId: "b1", serverId: "s1" } });
+        expect(get(appBrickStart)).toEqual({ botId: "b1", serverId: "s1" });
+        expect(get(appsPageRequest)).toBe(true);
+        takeAppBrickStart();
+    });
+
+    it("drops a Brick an earlier card asked for when the page is opened again without one", () => {
+        openAppsPage({ brick: { botId: "b1", serverId: "s1" } });
+        openAppsPage({ search: "calendar" });
+        expect(get(appBrickStart)).toBeUndefined();
+        expect(get(appsSearchStart)).toBe("calendar");
     });
 });

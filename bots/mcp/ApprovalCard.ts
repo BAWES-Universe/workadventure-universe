@@ -9,7 +9,7 @@
  */
 import type { RememberScope, SavedAction } from './OrbitActions';
 import type { ToolHeading } from './ToolCatalog';
-import { batchExtras, describeBatch, plainLabel, plainList, plainWords, readsAsWords, withoutProvider } from './AppBatch';
+import { batchCalls, batchExtras, describeBatch, plainLabel, plainList, plainWords, readsAsWords, withoutProvider } from './AppBatch';
 
 export const ASK_KEY = 'universe.ask';
 /** The event a tap sends to the room. */
@@ -45,6 +45,12 @@ export interface AskField {
     everyTime?: boolean;
     notReviewed?: boolean;
     checkAt?: { label: string; url: string };
+    /**
+     * A ready-made App's action on the person's own Brick (game "Ask, Do, Ignore" for Bricks): the card links to what the Brick may do
+     * with that App. `botId` is the Brick, `serverId` its grant of the App, `name` the App's name. The game shows the link only on
+     * the viewer's own Brick.
+     */
+    app?: { botId: string; serverId: string; name: string };
     /** When the card closes and the time it was written, both on this server's clock: the game counts from when it got it. */
     expiresAt: number;
     now: number;
@@ -169,6 +175,8 @@ export interface RememberOffer {
  */
 export function rememberOffer(args: Record<string, unknown>, heading: ToolHeading, notReviewed: boolean): RememberOffer | null {
     if (heading === 'deletesOrSends' || notReviewed) return null;
+    // A batch of an App's actions has no fixed place to stay on: "allow more" is per action, on a card that holds one alone
+    if (batchCalls(args)) return null;
     const fixed: Record<string, unknown> = {};
     const varies: string[] = [];
     const places: string[] = [];
@@ -224,6 +232,8 @@ export interface CardFacts {
     checkAt?: { label: string; url: string };
     /** Its own button words, for the card before a bot makes more than its limit (#1662). */
     buttons?: ButtonWords;
+    /** A ready-made App's action: the card links to what the Brick may do with the App. */
+    app?: { botId: string; serverId: string; name: string };
 }
 
 /** The `universe.ask` field for an action as it stands. `answer` is set once the card has ended. */
@@ -241,6 +251,7 @@ export function buildAsk(facts: CardFacts, now: number, answer?: AskAnswer): Ask
         ...(everyTime ? { everyTime: true } : {}),
         ...(facts.notReviewed ? { notReviewed: true } : {}),
         ...(facts.checkAt ? { checkAt: facts.checkAt } : {}),
+        ...(facts.app ? { app: { botId: facts.app.botId, serverId: facts.app.serverId, name: clip(facts.app.name, 120) } } : {}),
         // A number the game can count from, whatever Orbit sent: a card without a usable end would be dropped there
         expiresAt: Number.isFinite(Date.parse(facts.action.reviewExpiresAt)) ? Date.parse(facts.action.reviewExpiresAt) : now,
         now,

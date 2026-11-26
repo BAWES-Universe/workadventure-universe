@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     saveBotToolSettings: vi.fn(),
     getAllowedMore: vi.fn(),
     endAllowedMore: vi.fn(),
+    setMcpToolSetting: vi.fn(),
 }));
 
 vi.mock("../services/BotApiService", () => ({ botApiService: mocks }));
@@ -22,7 +23,7 @@ vi.mock("../services/BotApiService", () => ({ botApiService: mocks }));
 import { loadLocale } from "../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../i18n/i18n-svelte";
 import type { BotData } from "../types";
-import { botToolsStore } from "../stores/BotToolsStore";
+import { beginBot, botToolsStore, setServers } from "../stores/BotToolsStore";
 import type { BotToolSettings, ServerTool, ServerTools } from "../toolsModel";
 import BotToolsServerScreen from "./BotToolsServerScreen.svelte";
 import BotToolsHeadingScreen from "./BotToolsHeadingScreen.svelte";
@@ -49,12 +50,14 @@ const tool = (over: Partial<ServerTool> & { id: string; name: string }): ServerT
     state: "confirmed",
     confirmedBy: "Sara",
     movedBy: null,
+    setting: null,
     ...over,
 });
 
 function answer(over: Partial<ServerTools> = {}): ServerTools {
     return {
         serverId: "s1",
+        kind: "tools",
         state: "confirmed",
         policyRevision: 4,
         settings: {
@@ -596,6 +599,191 @@ describe("the bot page's Tools screens (game #1655)", () => {
             await mountApprovals();
             expect(byTestId("bot-tools-allowed-more")).toBeNull();
             expect(picked("After at most")).toBe("8 hours");
+        });
+    });
+    describe("a ready-made App's actions on a Brick, from Apps (Ask, Do, Ignore)", () => {
+        const gmailServer = {
+            ...server,
+            name: "Gmail",
+            serverUrl: "https://orbit.example/link",
+            authType: "none" as const,
+        };
+        const action = (
+            id: string,
+            name: string,
+            title: string,
+            heading: ServerTool["heading"],
+            over: Partial<ServerTool> = {}
+        ) =>
+            tool({
+                id,
+                name,
+                title,
+                heading,
+                suggestedHeading: heading,
+                suggestionSource: "builtIn",
+                confirmedBy: null,
+                ...over,
+            });
+        function gmail(over: Partial<ServerTools> = {}): ServerTools {
+            return answer({
+                kind: "appActions",
+                settings: {
+                    looksUp: "rightAway",
+                    makesNew: "rightAway",
+                    changesThings: "asksFirst",
+                    deletesOrSends: "asksFirst",
+                },
+                tools: [
+                    action("a1", "GMAIL_FETCH_EMAILS", "Fetch emails", "looksUp"),
+                    action("a2", "GMAIL_GET_THREAD", "Read a thread", "looksUp"),
+                    action("a3", "GMAIL_LIST_LABELS", "List labels", "looksUp"),
+                    action("a4", "GMAIL_SEND_EMAIL", "Send email", "deletesOrSends", {
+                        description: "Sends an email from your address",
+                    }),
+                    action("a5", "GMAIL_REPLY_TO_THREAD", "Reply to an email", "deletesOrSends"),
+                    action("a6", "GMAIL_DELETE_MESSAGE", "Delete for good", "deletesOrSends", { setting: "off" }),
+                    // Not confirmed by a person: an App's actions never ask for a check
+                    action("a7", "GMAIL_CREATE_DRAFT", "Create a draft", "makesNew", { state: "notConfirmedYet" }),
+                ],
+                ...over,
+            });
+        }
+        const brick = { id: "b1", name: "Nudge" } as unknown as BotData;
+
+        beforeEach(() => {
+            mocks.getBotMcpServers.mockResolvedValue([gmailServer]);
+            mocks.getMcpServerTools.mockResolvedValue(gmail());
+        });
+
+        // Apps opens these screens with the Brick's servers already read (AppBrickScreen), not through the server buttons
+        function fromApps() {
+            beginBot("b1");
+            setServers("b1", [gmailServer]);
+        }
+
+        async function mountApp(appMode = true) {
+            fromApps();
+            const component = new BotToolsServerScreen({
+                target,
+                props: { bot: brick, serverId: "s1", onOpenHeading: vi.fn(), onGone: vi.fn(), appMode },
+            });
+            destroy = () => component.$destroy();
+            await settle();
+        }
+
+        async function mountAppHeading(heading: "deletesOrSends" | "looksUp" = "deletesOrSends") {
+            fromApps();
+            const gone = new BotToolsServerScreen({
+                target: document.createElement("div"),
+                props: { bot: brick, serverId: "s1", onOpenHeading: vi.fn(), onGone: vi.fn(), appMode: true },
+            });
+            await settle();
+            gone.$destroy();
+            const component = new BotToolsHeadingScreen({
+                target,
+                props: { bot: brick, serverId: "s1", heading, appMode: true },
+            });
+            destroy = () => component.$destroy();
+            await settle();
+        }
+
+        it("hides the server buttons and the check banner, and uses the App's words", async () => {
+            await mountApp();
+            expect(mocks.getMcpServerTools).toHaveBeenCalledWith("b1", "s1");
+            expect(byTestId("bot-tools-server-head")).toBeNull();
+            expect(byTestId("bot-tools-confirm")).toBeNull();
+            expect(byTestId("bot-tools-top")?.textContent).toContain(
+                "Pick what Nudge may do in Gmail. Same in chat, on maps and when brought along."
+            );
+            const sends = byTestId("bot-tools-heading-deletesOrSends")?.textContent ?? "";
+            expect(sends).toContain("3 things");
+            expect(sends).toContain("Deletes things, sends email or messages, or spends money");
+            // Two names, never cut, then +N more
+            expect(sends).toContain("Send email, Reply to an email");
+            expect(sends).toContain("+1 more");
+        });
+
+        it("says an action's own choice in search results, not its heading's", async () => {
+            await mountApp();
+            const search = byTestId("bot-tools-search") as HTMLInputElement;
+            search.value = "delete";
+            search.dispatchEvent(new Event("input"));
+            await settle();
+            const results = target.querySelector(".ts-found")?.textContent ?? "";
+            expect(results).toContain("Delete for good");
+            expect(results).not.toContain("Asks first");
+            expect(results).toContain("Off");
+        });
+
+        it("shows a bot's own server as before when it is not an App's actions", async () => {
+            mocks.getMcpServerTools.mockResolvedValue(answer());
+            await mountApp();
+            expect(byTestId("bot-tools-server-head")).not.toBeNull();
+            expect(byTestId("bot-tools-heading-looksUp")?.textContent).toContain(
+                "List issues, Get issue, List comments"
+            );
+        });
+
+        it("keeps the bot page exactly as it was for the same answer", async () => {
+            await mountApp(false);
+            expect(byTestId("bot-tools-server-head")).not.toBeNull();
+            expect(byTestId("bot-tools-confirm")).not.toBeNull();
+            expect(byTestId("bot-tools-top")?.textContent).not.toContain("Pick what");
+        });
+
+        it("says tap one, with no source line and no move buttons, and tags an action with its own choice", async () => {
+            await mountAppHeading();
+            const text = target.textContent ?? "";
+            expect(text).toContain("When Nudge does these 3 things");
+            expect(text).toContain("3 things");
+            expect(text).toContain("from Gmail");
+            expect(text).toContain("Shows you a card and waits for your OK.");
+            expect(text).toContain("Tap one to set it on its own.");
+            expect(text).not.toContain("Suggested");
+            expect(text).not.toContain("Tap a tool to move it");
+            expect(byTestId("bot-tools-own-GMAIL_DELETE_MESSAGE")?.textContent).toBe("Off");
+            expect(byTestId("bot-tools-own-GMAIL_SEND_EMAIL")).toBeNull();
+            await click(byTestId("bot-tools-tool-GMAIL_SEND_EMAIL"));
+            expect(target.querySelectorAll("[data-testid^=bot-tools-move-]")).toHaveLength(0);
+        });
+
+        it("picks nothing while an action follows its heading, and saves its own choice", async () => {
+            mocks.setMcpToolSetting.mockResolvedValue(
+                gmail({ tools: gmail().tools.map((t) => (t.id === "a4" ? { ...t, setting: "rightAway" } : t)) })
+            );
+            await mountAppHeading();
+            await click(byTestId("bot-tools-tool-GMAIL_SEND_EMAIL"));
+            const choice = byTestId("bot-tools-action-choice");
+            expect(choice?.querySelectorAll("[aria-checked=true]")).toHaveLength(0);
+            expect(choice?.textContent).toContain("Same as heading (Asks first)");
+            await click(byTestId("bot-tools-action-choice-rightAway"));
+            expect(mocks.setMcpToolSetting).toHaveBeenCalledWith("b1", "s1", "a4", "rightAway");
+            expect(byTestId("bot-tools-action-choice-rightAway")?.getAttribute("aria-checked")).toBe("true");
+            expect(byTestId("bot-tools-action-choice")?.textContent).toContain("Set just for this one");
+            expect(byTestId("bot-tools-own-GMAIL_SEND_EMAIL")?.textContent).toBe("Right away");
+        });
+
+        it("follows the heading again with Use heading again", async () => {
+            mocks.setMcpToolSetting.mockResolvedValue(
+                gmail({ tools: gmail().tools.map((t) => (t.id === "a6" ? { ...t, setting: null } : t)) })
+            );
+            await mountAppHeading();
+            await click(byTestId("bot-tools-tool-GMAIL_DELETE_MESSAGE"));
+            expect(byTestId("bot-tools-action-choice-off")?.getAttribute("aria-checked")).toBe("true");
+            await click(byTestId("bot-tools-use-heading"));
+            expect(mocks.setMcpToolSetting).toHaveBeenCalledWith("b1", "s1", "a6", null);
+            expect(byTestId("bot-tools-own-GMAIL_DELETE_MESSAGE")).toBeNull();
+            expect(byTestId("bot-tools-action-choice")?.textContent).toContain("Same as heading (Asks first)");
+        });
+
+        it("puts the action's choice back and says so when Orbit refuses it", async () => {
+            mocks.setMcpToolSetting.mockRejectedValue(new Error("Could not save"));
+            await mountAppHeading();
+            await click(byTestId("bot-tools-tool-GMAIL_SEND_EMAIL"));
+            await click(byTestId("bot-tools-action-choice-off"));
+            expect(target.querySelector("[role=alert]")?.textContent).toContain("Could not save");
+            expect(byTestId("bot-tools-own-GMAIL_SEND_EMAIL")).toBeNull();
         });
     });
 });

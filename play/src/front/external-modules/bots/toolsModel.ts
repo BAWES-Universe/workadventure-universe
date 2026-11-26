@@ -27,10 +27,20 @@ export interface ServerTool {
     /** Names only: Orbit never sends people's emails */
     confirmedBy: string | null;
     movedBy: string | null;
+    /** An App action's own choice over its heading's (Ask, Do, Ignore for Bricks); null follows the heading. Always null on a bot's own server. */
+    setting: Setting | null;
 }
+
+/**
+ * What a server's rows are. `tools`: a bot's own server, each tool confirmed and moved by people. `appActions`: a ready-made
+ * App's grant on a Brick, its rows are the App's actions as Universe sorted them: nothing to confirm, nothing to move, and each
+ * may have its own choice.
+ */
+export type ServerKind = "tools" | "appActions";
 
 export interface ServerTools {
     serverId: string;
+    kind: ServerKind;
     state: ToolsState;
     /** Goes up with every change, so Confirm all only confirms the list the person saw */
     policyRevision: number;
@@ -115,6 +125,10 @@ function readTool(raw: unknown): ServerTool | undefined {
         state: o.state === "confirmed" ? "confirmed" : "notConfirmedYet",
         confirmedBy: str(obj(o.confirmedBy).name),
         movedBy: str(obj(o.movedBy).name),
+        setting:
+            typeof o.setting === "string" && (SETTINGS as readonly string[]).includes(o.setting)
+                ? (o.setting as Setting)
+                : null,
     };
 }
 
@@ -128,6 +142,8 @@ export function readServerTools(raw: unknown): ServerTools {
     const tools = o.tools.map(readTool).filter((tool): tool is ServerTool => tool !== undefined);
     return {
         serverId: o.serverId,
+        // An older Orbit says nothing: a bot's own server, as before
+        kind: o.kind === "appActions" ? "appActions" : "tools",
         state: o.state === "notCheckedYet" || o.state === "confirmed" ? o.state : "notConfirmedYet",
         policyRevision: typeof o.policyRevision === "number" ? o.policyRevision : 0,
         settings: {

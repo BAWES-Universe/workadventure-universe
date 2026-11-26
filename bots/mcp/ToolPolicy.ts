@@ -23,10 +23,21 @@ export interface PolicyTool {
     heading: ToolHeading | null;
     suggestedHeading: ToolHeading | null;
     confirmed: boolean;
+    /** Plain words for it, when Orbit has some (an App action's "Fetch emails"). */
+    title?: string;
+    /** An App action's own choice over its heading's (game "Ask, Do, Ignore" for Bricks). Null follows the heading. */
+    setting: ToolSetting | null;
 }
+
+/**
+ * What a server's rows are. `tools`: a bot's own server, each tool confirmed and moved by people. `appActions`: a ready-made
+ * App's grant, its rows are the App's actions as Universe sorted them: nothing to confirm, and each may carry its own choice.
+ */
+export type ServerKind = 'tools' | 'appActions';
 
 export interface ServerPolicy {
     serverId: string;
+    kind: ServerKind;
     state: ServerToolsState;
     policyRevision: number;
     settings: Record<ToolHeading, ToolSetting>;
@@ -64,9 +75,12 @@ export function parseServerPolicy(serverId: string, data: unknown): ServerPolicy
             heading: isHeading(tool.heading) ? tool.heading : null,
             suggestedHeading: isHeading(tool.suggestedHeading) ? tool.suggestedHeading : null,
             confirmed: tool.state === 'confirmed',
+            ...(typeof tool.title === 'string' && tool.title.trim() ? { title: tool.title.trim() } : {}),
+            setting: isSetting(tool.setting) ? tool.setting : null,
         });
     }
-    return { serverId, state: body.state, policyRevision: body.policyRevision, settings, tools };
+    const kind: ServerKind = body.kind === 'appActions' ? 'appActions' : 'tools';
+    return { serverId, kind, state: body.state, policyRevision: body.policyRevision, settings, tools };
 }
 
 export class ToolPolicyUnavailable extends Error {
@@ -132,7 +146,8 @@ export class ToolPolicySource {
         if (!orbit) return Promise.reject(new ToolPolicyUnavailable());
 
         const question = axios
-            .get(`${orbit.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools`, {
+            // `actions=1`: a ready-made App's grant is read as the App's own actions (kind "appActions") once Orbit has the App's list
+            .get(`${orbit.adminApiUrl}/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools?actions=1`, {
                 headers: { Authorization: `Bearer ${orbit.adminApiToken}`, 'Cache-Control': 'no-store' },
                 timeout: POLICY_TIMEOUT_MS,
             })
