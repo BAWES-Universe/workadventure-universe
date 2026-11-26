@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
-import type { MatrixEvent, Room } from "matrix-js-sdk";
+import { MatrixEvent, type Room } from "matrix-js-sdk";
 
 vi.mock("../MatrixMedia", () => ({
     holdMatrixMedia: vi.fn(),
@@ -114,6 +114,7 @@ describe("MatrixChatMessage steps line", () => {
         const stale = (ts?: number) => ({
             "m.relations": {
                 "m.replace": {
+                    event_id: "$stale",
                     content: { "m.new_content": notice("working", "Make a song") },
                     ...(ts === undefined ? {} : { origin_server_ts: ts }),
                 },
@@ -138,6 +139,7 @@ describe("MatrixChatMessage steps line", () => {
                     {
                         "m.relations": {
                             "m.replace": {
+                                event_id: "$late",
                                 content: { "m.new_content": notice("done", "Make a song") },
                                 origin_server_ts: 180_000,
                             },
@@ -160,6 +162,65 @@ describe("MatrixChatMessage steps line", () => {
                 false,
                 true
             );
+            expect(get(message.steps)?.state).toBe("done");
+        });
+    });
+
+    describe("with real events from the SDK (game #2131)", () => {
+        const ROOM = "!room:matrix.test";
+        const original = (unsigned: Record<string, unknown> = {}) =>
+            new MatrixEvent({
+                type: "m.room.message",
+                event_id: "$steps",
+                sender: BOT,
+                room_id: ROOM,
+                origin_server_ts: 161_000,
+                content: notice("working", "Make a song"),
+                unsigned,
+            });
+        const edit = (newContent: Record<string, unknown> | undefined, ts: number) =>
+            new MatrixEvent({
+                type: "m.room.message",
+                event_id: "$edit",
+                sender: BOT,
+                room_id: ROOM,
+                origin_server_ts: ts,
+                content: {
+                    msgtype: "m.notice",
+                    body: "* Make a song",
+                    ...(newContent ? { "m.new_content": newContent } : {}),
+                    "m.relates_to": { rel_type: "m.replace", event_id: "$steps" },
+                },
+            });
+        const bundled = (ts: number) => ({
+            "m.relations": {
+                "m.replace": {
+                    event_id: "$stale",
+                    origin_server_ts: ts,
+                    content: { "m.new_content": notice("working", "Make a song") },
+                },
+            },
+        });
+
+        it("shows the applied edit that is newer than a bundled one the SDK also holds", () => {
+            const event = original(bundled(165_000));
+            event.makeReplaced(edit(notice("done", "Make a song"), 171_000));
+            const message = new MatrixChatMessage(event, fakeRoom(), false, true);
+            expect(get(message.steps)?.state).toBe("done");
+        });
+
+        it("keeps the readable bundled edit when a newer applied edit has nothing readable in it", () => {
+            const event = original({
+                "m.relations": {
+                    "m.replace": {
+                        event_id: "$stale",
+                        origin_server_ts: 165_000,
+                        content: { "m.new_content": notice("done", "Make a song") },
+                    },
+                },
+            });
+            event.makeReplaced(edit(undefined, 171_000));
+            const message = new MatrixChatMessage(event, fakeRoom(), false, true);
             expect(get(message.steps)?.state).toBe("done");
         });
     });
