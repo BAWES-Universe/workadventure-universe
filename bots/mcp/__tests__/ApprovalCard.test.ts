@@ -329,6 +329,15 @@ describe('card words for a batch call', () => {
     const labels = { tool_slug: 'GMAIL_LIST_LABELS', arguments: {} };
     const extra = { thought: 'Look at the inbox', current_step: 'FETCHING_EMAILS', session_id: 'abc', sync_response_to_workbench: false };
 
+    it('counts the hidden details once for one action with many inputs and extras of its own', () => {
+        const inputs = Object.fromEntries(Array.from({ length: 22 }, (_, n) => [`field_${String.fromCharCode(97 + n)}`, `v${n}`]));
+        const many = { tool_slug: 'GMAIL_SEND_EMAIL', arguments: inputs };
+        const words = cardWords('COMPOSIO_MULTI_EXECUTE_TOOL', undefined, { tools: [many], note: 'x', other: 'y' }, undefined, 'Gmail');
+        // 22 inputs + 2 extras = 24 lines: 19 shown, then "…and 5 more details" (never counted twice)
+        expect(words.lines).toHaveLength(20);
+        expect(words.lines.at(-1)).toEqual({ text: '…and 5 more details' });
+    });
+
     it('names one action by what it does and shows its inputs as lines', () => {
         const words = cardWords('COMPOSIO_MULTI_EXECUTE_TOOL', 'Multi Execute Composio Tools', { tools: [fetch], ...extra }, undefined, 'Gmail');
         expect(words.title).toBe('Fetch emails');
