@@ -144,6 +144,7 @@ import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
+import { REPORT_TOOL, type ReportTurn, type StepSources, newReportTurn, noteWhatRan, reportToolDefinition, runReportTool } from './ReportTools';
 import {
     InstantOffers,
     endInstantTask,
@@ -2324,6 +2325,9 @@ export class AIService {
                         const appStepCounts = new Map<string, number>();
                         // The Apps a review said the computer could do better for the rest: a use_computer that names one is Orbit's to weigh
                         const reviewedApps = new Set<string>();
+                        // Notes to the Universe team in this reply: the steps it ran (what they were and how they ended, never what they gave back),
+                        // and the chat's message it answers, which with what a note is about is the note's reference (sent again, the same note)
+                        const reportTurn: ReportTurn = newReportTurn(channel === 'dm' && botId && playerId !== undefined ? this.conversationMemory?.getMemory(botId, playerId)?.dmEventId : undefined);
                         // What the model said, and its reasoning, in the call that asked for this round's tools
                         let roundContent = firstCallContent || '';
                         let roundReasoning = chunk.reasoning;
@@ -2358,7 +2362,11 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel, (resolved as { vision?: ResolvedVision }).vision);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel, (resolved as { vision?: ResolvedVision }).vision, reportTurn, {
+                                // A note to the Universe team says which of these steps it is about and how it ended (recorded as the round ends)
+                                apps: toolServerMap,
+                                offered: new Set((tools as Array<{ function?: { name?: string } }>).map((tool) => tool.function?.name ?? '').filter(Boolean)),
+                            });
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) {
                                 readForTheGroup = true;
@@ -3862,6 +3870,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // Tools: lead the owner to add a key for a service, and make a page take a payment (game #2044). The same Bricks, in the same chats.
         if (channel === 'dm' && this.appToolsOn(botId, botClient, adminApiService)) tools.push(...keyToolDefinitions());
 
+        // Tool: a note to the Universe team where the Brick hit a wall (mock "Brick reports inbox"). Every Brick, on by default, in its direct
+        // messages: only there can the chat see what was sent and take it back (the map and voice come back when their bubble can carry that)
+        if (this.reportToolOn(channel, botId, adminApiService)) tools.push(reportToolDefinition());
+
         // Tools: what the bot remembers about this person, and forgetting it (game #2003). Any bot, in a direct message only.
         if (channel === 'dm' && this.memoryToolsOn(botId, botClient)) tools.push(...memoryToolDefinitions());
         // Tool: a job on the Brick's own computer (game #2000), the last way after an answer and an app. Only when it is on for its owner.
@@ -4631,6 +4643,41 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return runKeyTool(name, args, { where: side, botId: where.botId, userId: memory.userUuid, apps });
     }
 
+    /** Whether this chat offers send_to_universe_team: a Brick (never a room bot), in a direct message, with Orbit set up. */
+    private reportToolOn(channel: 'world' | 'dm', botId: string | undefined, adminApiService?: AdminApiService): boolean {
+        const admin = adminApiService ?? this.adminApiService;
+        return channel === 'dm' && !!botId && !!admin?.isConfigured?.() && (!!this.knownBricks?.has(botId) || !!this.roomBricks?.has(botId));
+    }
+
+    /**
+     * Runs send_to_universe_team (mock "Brick reports inbox") in a Brick's direct message. The note waits with the reply, so the game shows
+     * "Sent to the Universe team" under it with Take it back. The note is product-only, filled from this reply's steps; the person is passed
+     * only for Orbit's one-way count.
+     */
+    private async runReportToolCall(
+        args: Record<string, unknown>,
+        where: { adminApiService?: AdminApiService; botId?: string; playerId?: number; channel: 'world' | 'dm'; source?: string; turn?: ReportTurn }
+    ): Promise<Record<string, unknown>> {
+        const admin = where.adminApiService ?? this.adminApiService;
+        const memory = where.botId && where.playerId !== undefined ? this.conversationMemory?.getMemory(where.botId, where.playerId) : undefined;
+        // Only a Brick, in its direct messages, whatever the model asks for
+        if (!admin || !where.botId || !memory || !this.reportToolOn(where.channel, where.botId, admin)) return { error: "That can't be done in this chat right now." };
+        let personKey: string | undefined;
+        const uuid = memory.userUuid;
+        if (uuid && !uuid.startsWith('temp-')) personKey = `${memory.isGuest === false ? 'person' : 'guest'}:${uuid}`;
+        if (personKey && !/^(person|guest):[A-Za-z0-9_.:-]{1,255}$/.test(personKey)) personKey = undefined;
+        const release = process.env.RELEASE_VERSION?.trim();
+        return runReportTool(args, {
+            admin,
+            botId: where.botId,
+            ...(personKey ? { personKey } : {}),
+            ...(where.turn ? { turn: where.turn } : {}),
+            // The line under the answer, with what was sent and the key to take it back
+            notes: (memory.pendingBricks ??= []),
+            context: { ownKey: where.source === 'own-key', ...(release ? { gameVersion: release.slice(0, 40) } : {}) },
+        });
+    }
+
     /** Runs offer_app for the person in this direct message. What the game shows for it waits with the reply. */
     private async runAppToolCall(args: Record<string, unknown>, where: { adminApiService?: AdminApiService; botId?: string; playerId?: number }): Promise<Record<string, unknown>> {
         const admin = where.adminApiService ?? this.adminApiService;
@@ -5023,7 +5070,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** Where the reply is said: the memory tools (what is remembered, forgetting it) are the person's own and run only in their direct message, whatever the model asks for. */
         channel: 'world' | 'dm' = 'world',
         /** Where this bot's images go (the Vision row), when Orbit says: an image it opens is looked at the same way as one sent to it. */
-        vision?: ResolvedVision
+        vision?: ResolvedVision,
+        /** This reply's notes to the Universe team: the steps it ran so far and its reference. */
+        reportTurn?: ReportTurn,
+        /** Where this reply's tools came from (its Apps, and the tools it was offered), to record each step for a note. */
+        reportSources?: StepSources
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -5037,6 +5088,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
         }
         
+        // A note to the Universe team can be about a step of this same round: it waits until the round's other calls ended and were recorded
+        let othersRecorded: () => void = () => undefined;
+        const othersRan = new Promise<void>((resolve) => (othersRecorded = resolve));
+        // Which App ran each call (its connection), by call: the note names that App, not the first one listed under the tool's name
+        const ranOn = new Map<string, string | null | string[]>();
+
         // Execute all tool calls in parallel for better performance
         const toolPromises = validToolCalls.map(async (toolCall) => {
             // A private answer was offered no tools: whatever the model asks for anyway would show its steps, cards and files to the whole space
@@ -5402,6 +5459,14 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         );
                         break;
 
+                    case REPORT_TOOL:
+                        await othersRan;
+                        result = await this.runReportToolCall(
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { adminApiService, botId, playerId, channel, source, turn: reportTurn }
+                        );
+                        break;
+
                     case WHAT_I_REMEMBER_TOOL:
                     case FORGET_MEMORY_TOOL:
                         result = await this.runMemoryToolCall(
@@ -5472,6 +5537,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const mcpServerConfig = shareable && botId && !forOthers
                             ? await this.appForLinkTool(botId, toolCall.name, shareable, this.gatePerson(botId, playerId, botClient, spaceName), botClient, parsedArgs)
                             : shareable;
+                        if (mcpServerConfig) ranOn.set(toolCall.id, mcpServerConfig.connectionId ?? null);
                         if (mcpServerConfig) {
                             // A ready-made App's batch call: each action inside it is judged on its own (game "Ask, Do, Ignore" for Bricks). What
                             // runs right away runs now, what asks first goes on one card, what is off is never sent. Someone else keeps today's rules.
@@ -5482,7 +5548,15 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 if (split.kind === 'parts') {
-                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
+                                    // The Apps that ran a part: one, or all of them when parts ran on more than one (a note names none of them then,
+                                    // but two such batches on different Apps stay two notes). Until a call is sent, the Apps it is for (as one call
+                                    // that waits for an OK names its App); once calls are sent, only the Apps they went to, never one whose part waits
+                                    const apps = (ids: Array<string | null>) => {
+                                        const ran = new Set(ids);
+                                        ranOn.set(toolCall.id, ran.size === 1 ? [...ran][0] : ran.size === 0 ? null : [...ran].map((id) => id ?? '').sort());
+                                    };
+                                    apps(split.parts.filter((part) => part.decision.kind !== 'refuse').map((part) => part.entry.connectionId ?? null));
+                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds, sentTo: apps });
                                     break;
                                 }
                             }
@@ -5596,8 +5670,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
         });
 
+        // Each step this round ran (never a note itself), kept for a note later in this round or this reply
+        const recorded = Promise.all(toolPromises.filter((_, index) => validToolCalls[index].name !== REPORT_TOOL))
+            .then((results) => {
+                if (reportTurn && reportSources) noteWhatRan(reportTurn, results.map((ran) => (ranOn.has(ran.id) ? { ...ran, ranOn: ranOn.get(ran.id) } : ran)), reportSources);
+            })
+            .finally(othersRecorded);
+
         // Wait for all tool calls to complete in parallel
-        return Promise.all(toolPromises);
+        const results = await Promise.all(toolPromises);
+        await recorded.catch(() => undefined);
+        return results;
     }
 
     /**
@@ -5811,6 +5894,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         spaceName?: string;
         abortSignal?: AbortSignal;
         toolTimeoutSeconds?: number | null;
+        /** Told the connections of the Apps that calls were sent to, when any were (a part that waits for an OK or was held back is not among them). */
+        sentTo?: (connections: Array<string | null>) => void;
     }): Promise<unknown> {
         const { botId, args, playerId, botClient, spaceName } = input;
         const byIndex = (a: AppPart, b: AppPart) => a.index - b.index;
@@ -5914,6 +5999,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             // Each action's own result in the answer says whether it was done; a call that failed fails them all
             results.push({ group, answer, outcomes: batchOutcomes(answer, group.map((part) => part.slug), outcomeOf(answer)) });
         }
+        if (results.length > 0) input.sentTo?.(results.map(({ group }) => group[0].entry.connectionId ?? null));
         const outcomeOfPart = new Map<AppPart, PartOutcome>();
         for (const { group, outcomes } of results) group.forEach((part, at) => outcomeOfPart.set(part, outcomes[at]));
         // The things it made go back to the limit when the call that would have made them proved it made nothing
