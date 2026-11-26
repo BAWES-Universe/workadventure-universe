@@ -64,6 +64,9 @@ describe('ToolSteps', () => {
         expect(describeStep({ id: 'a', name: 'doc_lookup' }).kind).toBe('search');
         expect(describeStep({ id: 'a', name: 'fetch_page' }, 'Open a page').kind).toBe('read');
         expect(describeStep({ id: 'a', name: 'generate_music' }).kind).toBe('write');
+        // Listing and getting are reading (game #2131: "Fetch emails and list labels" is not a write)
+        expect(describeStep({ id: 'a', name: 'GMAIL_LIST_LABELS' }).kind).toBe('read');
+        expect(describeStep({ id: 'a', name: 'get_weather' }).kind).toBe('read');
         expect(describeStep({ id: 'a', name: 'webSearch' }).kind).toBe('search');
         // Whole words only: these merely contain "read" or "load"
         expect(describeStep({ id: 'a', name: 'upload_file' }).kind).toBe('write');

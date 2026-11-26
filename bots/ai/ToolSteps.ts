@@ -209,7 +209,7 @@ export function kindOf(words: string): StepKind {
         .split(/[^a-z]+/)
         .filter(Boolean);
     if (parts.some((part) => /^(search|find|lookup|query|queries)/.test(part))) return 'search';
-    if (parts.some((part) => /^(read|fetch|open|scrape|browse|load)/.test(part))) return 'read';
+    if (parts.some((part) => /^(read|fetch|open|scrape|browse|load|list|get)/.test(part))) return 'read';
     return 'write';
 }
 
