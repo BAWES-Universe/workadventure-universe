@@ -29,7 +29,7 @@ import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDe
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, type JudgedPart } from '../mcp/ToolGate';
 import type { ToolHeading } from '../mcp/ToolCatalog';
-import { APP_BATCH_TOOL, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
+import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
 import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
@@ -669,12 +669,13 @@ export class AIService {
 
     /** What the gate needs to know about one tool call or one tool in the list. */
     /**
-     * The ready-made App a link tool (search, schemas, connections) goes through when a Brick has several: each App's link has the same
-     * tools under the same names, so the first App whose heading and the person's permissions allow it is the one offered and called. With
-     * none, the first App's own refusal stands. A batch is never chosen here: its actions go to their own Apps (splitAppBatch).
+     * The App a link tool (search, schemas, connections) goes through when a Brick has several under its name: each App's link has the same
+     * tools under the same names, so the first App whose heading and the person's permissions allow it is the one offered and called. The
+     * person's own App comes first (own Apps first), and an Off there never takes the tool from the ready-made Apps beside it. With none,
+     * the first App's own refusal stands. A batch is never chosen here: its actions go to their own Apps (splitAppBatch).
      */
     private async appForLinkTool(botId: string, toolName: string, entry: ToolServerEntry, person: BotAccessPerson, botClient?: BotClient, args?: unknown): Promise<ToolServerEntry> {
-        if (!entry.readyMade || !entry.otherApps?.length || isBatchTool(toolName)) return entry;
+        if (!entry.otherApps?.length || isBatchTool(toolName)) return entry;
         for (const app of appsOf(entry)) {
             // eslint-disable-next-line no-await-in-loop
             if (await this.toolGate.offers(this.gateCallFor(botId, toolName, app, person, botClient, args))) return app;
@@ -3845,9 +3846,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                     await Promise.all(
                         mcpTools.map(async (mcpTool: any) => {
                             const found = toolServerMap.get(mcpTool.function.name);
-                            // With several ready-made Apps, a link tool is offered when any of them allows it
+                            // With several Apps under one name, a link tool is offered when any of them allows it
                             const entry = found && (await this.appForLinkTool(botId, mcpTool.function.name, found, asking, botClient));
-                            if (!entry || (await this.toolGate.offers(this.gateCallFor(botId, mcpTool.function.name, entry, asking, botClient)))) {
+                            // A batch too: its actions go to their own Apps when it is called, so an Off in one App never hides the others'
+                            const judged = entry && isBatchTool(mcpTool.function.name) && entry.otherApps?.length ? appsOf(entry) : entry ? [entry] : [];
+                            const offers = await Promise.all(judged.map((app) => this.toolGate.offers(this.gateCallFor(botId, mcpTool.function.name, app, asking, botClient))));
+                            if (!entry || offers.some(Boolean)) {
                                 offered.add(mcpTool.function.name);
                             }
                         })
@@ -5646,6 +5650,28 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const person = this.gatePerson(botId, playerId, botClient, spaceName);
         const apps = appsOf(first);
         const parts = batchParts(args);
+        // An action of an App the person has their own copy of is never sent through another ready-made App's link (own Apps first): it is
+        // refused with a line that sends the Brick to their own copy, and the rest of the batch is judged as usual
+        // Only an action no remaining App says is its own, by its list or by its name: "Google" left out never takes Google Calendar's actions
+        const named = parts && first.ownCopyApps?.length ? parts.filter((part) => ownCopyOf(part.slug, first.ownCopyApps)) : [];
+        const remaining = named.length > 0 ? await Promise.all(apps.map((app) => this.toolGate.appPolicy(botId, app.serverId))) : [];
+        const ownCopy = named.filter((part) => ownerOfAction(part.slug, apps, remaining) === 'none');
+        if (parts && ownCopy.length > 0) {
+            const refusedParts: AppPart[] = ownCopy.map((part) => {
+                const app = ownCopyOf(part.slug, first.ownCopyApps)!;
+                const title = actionName(part.slug, app);
+                return { ...part, title, heading: 'deletesOrSends', decision: { kind: 'refuse', why: 'off', line: ownCopyLine(title, app) }, entry: first };
+            });
+            const rest = parts.filter((part) => !ownCopy.includes(part));
+            if (rest.length === 0) return { kind: 'parts', parts: refusedParts };
+            const others = await this.splitAppBatch(botId, toolName, { ...first, ownCopyApps: undefined }, batchOf(args, rest), playerId, botClient, spaceName);
+            // The other actions are not judged one by one: the call is not sent at all, since part of it would go to the wrong App
+            if (others.kind === 'whole') return { kind: 'refuse', decision: refusedParts[0].decision as Extract<GateDecision, { kind: 'refuse' }> };
+            if (others.kind === 'refuse') return others;
+            // Each keeps its place in the call as the model wrote it
+            const placed = others.parts.map((part) => ({ ...part, index: rest[part.index].index, raw: rest[part.index].raw }));
+            return { kind: 'parts', parts: [...refusedParts, ...placed].sort((a, b) => a.index - b.index) };
+        }
         if (apps.length === 1 || !parts) {
             const split = await this.toolGate.split(this.gateCallFor(botId, toolName, first, person, botClient, args));
             return split.kind === 'parts' ? { kind: 'parts', parts: split.parts.map((part) => ({ ...part, entry: first })) } : split;
