@@ -29,7 +29,7 @@ import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDe
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, type JudgedPart } from '../mcp/ToolGate';
 import type { ToolHeading } from '../mcp/ToolCatalog';
-import { APP_BATCH_TOOL, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
+import { APP_BATCH_TOOL, SCRUBBED_LOOKUPS, appActionEntry, appIsAllOff, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
 import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
@@ -1803,9 +1803,11 @@ export class AIService {
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
             // What is Off in each of the owner's ready-made Apps, so the Brick says so and offers what it may do instead of asking for it
             const appsOff = forOthers || options?.onlyForThem || !botId ? '' : await this.appsOffNote(botId, toolServerMap);
+            // An App its owner turned all the way Off is not one this Brick has: it is said in the Off note, never listed as an App it can use
+            const allOff = brickChat ? await this.appsAllOff(botId!, toolServerMap) : new Set<string>();
             const brickAbilities = brickChat
                 ? brickAbilitiesNote({
-                      apps: [...(brickApps?.apps ?? []).filter((app) => app.usable).map((app) => app.name), ...[...toolServerMap.values()].flatMap((entry) => appsOf(entry).map((app) => app.serverName ?? ''))],
+                      apps: [...(brickApps?.apps ?? []).filter((app) => app.usable).map((app) => app.name), ...[...toolServerMap.values()].flatMap((entry) => appsOf(entry).map((app) => app.serverName ?? ''))].filter((name) => !allOff.has(name.trim().toLowerCase())),
                       appsKnown: !!brickApps?.apps,
                       connectable: offerableApps(brickApps?.apps ?? null, brickApps?.declined ?? []),
                       computer: computerOn,
@@ -5627,6 +5629,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         });
         // In a bubble the line everyone reads is the bot's whole reply (see the follow-up)
         return asked.kind === 'waiting' && asked.line ? { ...asked.result, [SHARED_LINE]: asked.line } : asked.result;
+    }
+
+    /**
+     * The names (lower case) of this Brick's ready-made Apps that have nothing left on: every heading Off and no action put back on. Such an
+     * App is not one the Brick "has", so it is never listed as one. An App whose actions could not be read is left out of this set.
+     */
+    private async appsAllOff(botId: string, toolServerMap: ReadonlyMap<string, ToolServerEntry>): Promise<Set<string>> {
+        const apps = new Map<string, string>();
+        for (const first of toolServerMap.values()) {
+            for (const entry of appsOf(first)) if (entry.readyMade && !apps.has(entry.serverId)) apps.set(entry.serverId, entry.serverName || '');
+        }
+        const off = new Set<string>();
+        await Promise.all([...apps].map(async ([serverId, name]) => {
+            const policy = await this.toolGate.appPolicy(botId, serverId);
+            if (name && policy && appIsAllOff(policy)) off.add(name.trim().toLowerCase());
+        }));
+        return off;
     }
 
     /**

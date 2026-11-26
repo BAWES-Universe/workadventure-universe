@@ -9,7 +9,7 @@
  */
 import { actionName, batchCalls, withoutProvider, type BatchCall } from './AppBatch';
 import type { ToolServerEntry } from './MCPConnector';
-import { stricterHeading, type ToolHeading } from './ToolCatalog';
+import { TOOL_HEADINGS, stricterHeading, type ToolHeading } from './ToolCatalog';
 import type { ServerPolicy, ToolSetting } from './ToolPolicy';
 
 /** The App link's tool that runs a batch of the App's actions: its `tools` list holds `{ tool_slug, arguments }`. Never shown to people. */
@@ -175,6 +175,16 @@ export function offNote(policy: Pick<ServerPolicy, 'tools' | 'settings'>, app: s
     const listed = names.length > 0 ? `${names.join(', ')}${more > 0 ? ` and ${more} more` : ''}` : '';
     const whole = wholeHeadings.length > 0 ? `anything else that ${wholeHeadings.map((heading) => HEADING_WORDS[heading]).join(' or ')}` : '';
     return `Off in ${app}: ${[listed, whole].filter(Boolean).join('; ')}.`;
+}
+
+/**
+ * Whether nothing at all is left on in this App for the Brick: all four headings are Off and no action of its own has been put back on.
+ * An action with no row falls under a heading too, so it is Off as well. Such an App is not one the Brick "has".
+ */
+export function appIsAllOff(policy: Pick<ServerPolicy, 'tools' | 'settings'>): boolean {
+    if (!TOOL_HEADINGS.every((heading) => policy.settings[heading] === 'off')) return false;
+    for (const tool of policy.tools.values()) if (judgeAction(policy, tool.name).setting !== 'off') return false;
+    return true;
 }
 
 /* ------------------------------ Off actions in the link's answers ------------------------------ */
