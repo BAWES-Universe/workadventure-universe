@@ -149,7 +149,7 @@ export function joinLookupAnswers(answers: ReadonlyArray<{ app: string; answer: 
 const SESSION_TOOLS: ReadonlySet<string> = new Set(['COMPOSIO_SEARCH_TOOLS', 'COMPOSIO_GET_TOOL_SCHEMAS']);
 
 /** The session id the inputs carry: `session_id`, else the `id` of `session`. */
-const sessionIdOf = (args: Record<string, unknown>): string | undefined => {
+export const sessionIdOf = (args: Record<string, unknown>): string | undefined => {
     if (typeof args?.session_id === 'string' && args.session_id !== '') return args.session_id;
     return isObject(args?.session) && typeof args.session.id === 'string' && args.session.id !== '' ? args.session.id : undefined;
 };
@@ -225,4 +225,43 @@ export function withoutSession(args: Record<string, unknown>): Record<string, un
         carried = true;
     }
     return carried ? bare : undefined;
+}
+
+/** The session id a lookup's answer hands out (`data.session.id` of the link's answer, or `session.id` / `session_id` at its root), if any. */
+export function sessionOfAnswer(answer: unknown): string | undefined {
+    if (failureOf(answer) !== undefined) return undefined;
+    const data = dataOf(answer);
+    if (!isObject(data)) return undefined;
+    for (const holder of [isObject(data.data) ? data.data : undefined, data]) {
+        if (!holder) continue;
+        if (isObject(holder.session) && typeof holder.session.id === 'string' && holder.session.id !== '') return holder.session.id;
+        if (typeof holder.session_id === 'string' && holder.session_id !== '') return holder.session_id;
+    }
+    return undefined;
+}
+
+/**
+ * Which App's link gave each session id the model may carry into a later call. A session id belongs to the link that handed it out; the
+ * joined search keeps the oldest answering App's, which is not always the first App of the Brick (one may have its lookups off or fail).
+ */
+export class SessionOwners {
+    private readonly owners = new Map<string, string>();
+
+    constructor(private readonly limit = 500) {}
+
+    /** Notes that this App's link answered with this session id. */
+    note(scope: string, answer: unknown, serverId: string): void {
+        const id = sessionOfAnswer(answer);
+        if (!id) return;
+        const key = `${scope}|${id}`;
+        this.owners.delete(key);
+        this.owners.set(key, serverId);
+        while (this.owners.size > this.limit) this.owners.delete(this.owners.keys().next().value as string);
+    }
+
+    /** The App whose link gave the session id these inputs carry, when it is known. */
+    ownerOf(scope: string, args: Record<string, unknown>): string | undefined {
+        const id = sessionIdOf(args);
+        return id ? this.owners.get(`${scope}|${id}`) : undefined;
+    }
 }

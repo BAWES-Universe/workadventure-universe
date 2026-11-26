@@ -16,7 +16,7 @@
 import { createHash } from 'crypto';
 import { SCRUBBED_LOOKUPS, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
-import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, withoutSession } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, SessionOwners, withoutSession } from '../mcp/AppLookups';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
 import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
@@ -69,6 +69,9 @@ const refused = (line: string): string => JSON.stringify({ error: `${line} This 
 const stepId = (runId: string, toolName: string, args: Record<string, unknown>): string => `${runId}:${createHash('sha256').update(JSON.stringify([toolName, args])).digest('hex').slice(0, 24)}`;
 
 export class TaskApps {
+    /** Which App's link gave each session id a lookup handed out, so a step of another App is never sent it. */
+    private readonly sessionOwners = new SessionOwners();
+
     constructor(private readonly deps: TaskAppsDeps) {}
 
     /** The Apps this run may use: every tool the gate does not refuse for the owner, and none an unreviewed App gives. Null when there are none. */
@@ -188,6 +191,7 @@ export class TaskApps {
             const asks = verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading);
             if (!asks) {
                 const answer = await this.callWithSessionFallback(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) });
+                if (entry.readyMade && isJoinedLookup(name)) this.sessionOwners.note(run.brickId, answer, entry.serverId);
                 return asText(await this.withoutOffActions(run.brickId, name, listed, answer), isMailTool(name, entry.serverName));
             }
             return await this.askFor(
@@ -248,6 +252,7 @@ export class TaskApps {
                     console.warn(`[TaskApps] A lookup of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
                     answer = { error: 'That did not work just now.' };
                 }
+                this.sessionOwners.note(run.brickId, answer, app.serverId);
                 return { app: app.serverName ?? '', answer };
             })
         );
@@ -288,8 +293,10 @@ export class TaskApps {
         if (owners.size > 1) return { line: `That asked for actions of ${[...owners.values()].map((app) => app.serverName || 'an App').join(' and ')} at once. Ask for each App's actions in a step of its own.` };
         const app = [...owners.values()][0];
         const batch = batchOf(args, parts);
-        // The session id the model carries is the one the first App's link gave: another App's link does not know it, and a write is sent once
-        return { app, args: app.readyMade && app.serverId !== first.serverId ? (withoutSession(batch) ?? batch) : batch };
+        // The session id the model carries is the one the link of the App that answered its lookup gave (the first App when that is not known):
+        // another App's link does not know it, and a write is sent once
+        const from = this.sessionOwners.ownerOf(run.brickId, args) ?? first.serverId;
+        return { app, args: app.readyMade && app.serverId !== from ? (withoutSession(batch) ?? batch) : batch };
     }
 
     /** The card for this step, in the person's own chat: it waits there, and the run only ends. */

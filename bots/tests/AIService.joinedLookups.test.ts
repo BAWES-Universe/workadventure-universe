@@ -246,6 +246,18 @@ describe('a session id that Calendar’s link does not know', () => {
         expect(execute).toHaveBeenCalledTimes(2);
     });
 
+    it('follows the App whose link really gave the session id: with the first App not answering, the first App gets none and the other keeps it', async () => {
+        const { callTool, execute } = twoApps(gmailPolicy(), calendarPolicy(), { failing: 'g1' });
+        const [searched] = await callTool(SEARCH, { queries: [{ use_case: 'events' }] });
+        // Gmail did not answer, so the one session id the model gets is Calendar's
+        expect(wrote(searched.result).data.session.id).toBe('sess-cal1');
+        execute.mockClear();
+        await callTool(BATCH, { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} }, { tool_slug: 'GOOGLECALENDAR_EVENTS_LIST', arguments: {} }], session_id: 'sess-cal1' });
+        const sent = new Map(execute.mock.calls.map((args: unknown[]) => [args[0], args[3] as Record<string, unknown>]));
+        expect('session_id' in (sent.get('g1') as object)).toBe(false);
+        expect(sent.get('cal1')?.session_id).toBe('sess-cal1');
+    });
+
     it('shows the card of a write to another App without that App’s unknown session id, so the approved batch carries none', async () => {
         const { service, execute, propose } = twoApps(gmailPolicy(), calendarPolicy());
         const servers = new Map<string, ToolServerEntry>([[BATCH, { ...GMAIL, otherApps: [CALENDAR] }]]);

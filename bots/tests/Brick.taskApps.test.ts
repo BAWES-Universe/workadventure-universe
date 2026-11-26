@@ -508,6 +508,30 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(answer).toContain('Gmail did not answer');
     });
 
+    it('follows the App whose link gave the session id: with Gmail not answering, a step of Gmail gets none and Calendar’s keeps it', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const batches: Array<{ app: string; args: Record<string, unknown> }> = [];
+        const { apps } = setUp({}, {
+            discover: async () => ({ tools: [tool(LOOKUP), tool(BATCH)], servers: new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }], [BATCH, { ...gmail, otherApps: [calendar] }]]) }),
+            gate,
+            call: async (_brick, app, name, args) => {
+                if (name === LOOKUP) {
+                    if (app.serverId === 'g1') return { error: 'down' };
+                    return [{ type: 'text', text: '{"successful":true,"data":{"results":[],"session":{"id":"sess-cal1"}}}' }];
+                }
+                batches.push({ app: app.serverId, args });
+                return [{ type: 'text', text: '{"successful":true,"data":{"ran":true}}' }];
+            },
+        });
+        const session = (await apps.open(run()))!;
+        await session.call(LOOKUP, { queries: ['events'] });
+        await session.call(BATCH, { ...actions('GMAIL_FETCH_EMAILS') as Record<string, unknown>, session_id: 'sess-cal1' });
+        await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-cal1' });
+        expect(batches.map((one) => [one.app, 'session_id' in one.args])).toEqual([['g1', false], ['cal1', true]]);
+    });
+
     it('sends a step to another App without the session id of the first App’s link, once, and never tries it again', async () => {
         const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
         const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });

@@ -1,6 +1,6 @@
 /** The link's search and schemas answers of several Apps joined into one (bots/mcp/AppLookups.ts). Pure. */
 import { describe, expect, it } from 'vitest';
-import { isJoinedLookup, joinLookupAnswers, retryWithoutSession, sessionRefused, withoutSession } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, retryWithoutSession, SessionOwners, sessionOfAnswer, sessionRefused, withoutSession } from '../mcp/AppLookups';
 
 const text = (value: unknown) => [{ type: 'text', text: JSON.stringify(value) }];
 const read = (answer: unknown) => JSON.parse(((answer as Array<{ text: string }>)[0]).text);
@@ -126,5 +126,28 @@ describe('a session the App’s link refused', () => {
         expect(withoutSession({ queries: [], session: { id: 's' } })).toEqual({ queries: [] });
         expect(withoutSession({ queries: [], session: { generate_id: true } })).toBeUndefined();
         expect(withoutSession({ tools: [] })).toBeUndefined();
+    });
+});
+
+describe('which App’s link gave a session id', () => {
+    it('reads the session id a lookup handed out, never from a failed answer', () => {
+        expect(sessionOfAnswer(text({ successful: true, data: { session: { id: 's1' } } }))).toBe('s1');
+        expect(sessionOfAnswer({ session_id: 's2' })).toBe('s2');
+        expect(sessionOfAnswer(text({ successful: false, error: 'down', data: { session: { id: 's3' } } }))).toBeUndefined();
+        expect(sessionOfAnswer('Found mail actions.')).toBeUndefined();
+        expect(sessionOfAnswer(null)).toBeUndefined();
+    });
+
+    it('remembers the App per session id and bot, and forgets the oldest past its limit', () => {
+        const owners = new SessionOwners(2);
+        owners.note('b1', { session_id: 's1' }, 'gmail');
+        owners.note('b1', { session_id: 's2' }, 'calendar');
+        expect(owners.ownerOf('b1', { session_id: 's1' })).toBe('gmail');
+        expect(owners.ownerOf('b1', { session: { id: 's2' } })).toBe('calendar');
+        expect(owners.ownerOf('b2', { session_id: 's1' })).toBeUndefined();
+        expect(owners.ownerOf('b1', { tools: [] })).toBeUndefined();
+        owners.note('b1', { session_id: 's3' }, 'gmail');
+        expect(owners.ownerOf('b1', { session_id: 's1' })).toBeUndefined();
+        expect(owners.ownerOf('b1', { session_id: 's3' })).toBe('gmail');
     });
 });

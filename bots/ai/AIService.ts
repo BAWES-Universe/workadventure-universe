@@ -31,7 +31,7 @@ import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, typ
 import type { ToolHeading } from '../mcp/ToolCatalog';
 import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
-import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, withoutSession } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, SessionOwners, withoutSession } from '../mcp/AppLookups';
 import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
@@ -729,6 +729,9 @@ export class AIService {
      * Off in any App is taken out of the joined answer. An App that asks first for lookups shows its card before anything runs, and the
      * reply ends there, as for any card. Never throws: a failed App is named in the answer, and when none answered the first failure is.
      */
+    /** Which App's link gave each session id a lookup handed out, so a batch never carries one App's session id to another App's link. */
+    private readonly sessionOwners = new SessionOwners();
+
     private async runJoinedLookup(input: {
         botId: string;
         callId: string;
@@ -788,6 +791,7 @@ export class AIService {
             }))
         );
         for (const { app, answer } of answers.map((one, at) => ({ app: usable[at].app, answer: one.answer }))) if (['failed', 'notSent'].includes(outcomeOf(answer))) releases.get(app.serverId)?.();
+        for (const [at, one] of answers.entries()) this.sessionOwners.note(botId, one.answer, usable[at].app.serverId);
         // What is Off in any App is taken out of each App's answer before they are joined, so a label put in front of one can't hide it
         const scrubbed = await Promise.all(answers.map(async (one) => ({ ...one, answer: await this.withoutOffActions(botId, toolName, entry, one.answer) })));
         return joinLookupAnswers(scrubbed);
@@ -5595,7 +5599,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 if (split.kind === 'parts') {
-                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, sessionFrom: shareable?.serverId, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
+                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, sessionFrom: this.sessionOwners.ownerOf(botId, parsedArgs) ?? shareable?.serverId, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
                                     break;
                                 }
                             }
@@ -5679,6 +5683,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
+                            if (botId && !forOthers && mcpServerConfig.readyMade && isJoinedLookup(toolCall.name)) this.sessionOwners.note(botId, result, mcpServerConfig.serverId);
                             // What a ready-made App's own lookups answer (its search, its schemas) never shows the Brick an action that is Off for it
                             // Every App under this name counts, not only the one that answered: the first entry holds them all
                             if (!forOthers && botId) result = await this.withoutOffActions(botId, toolCall.name, shareable ?? mcpServerConfig, result);
