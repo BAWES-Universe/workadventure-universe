@@ -165,8 +165,12 @@ const ABOUT_THE_BOT = /(?<![\p{L}\p{N}])(?:you|your|yours|you['’]re|you['’]v
 const CONTACT = /@|https?:\/\/|www\.|\d{5,}/u;
 
 /** The thing itself out of what follows "like": cut where another clause starts, and without the words that only add to it. */
-/** Two words or more, each with a capital ("No Doubt", "One Piece", "It Follows"): a name of something, even when it starts with a word that alone is no thing ("no", "one", "it"). */
-const ATITLE = /^\p{Lu}[\p{L}\p{N}'’-]*(?:\s+\p{Lu}[\p{L}\p{N}'’-]*)+$/u;
+/**
+ * Two words or more, each with a capital ("No Doubt", "One Piece", "It Follows", "This Is Us"): a name of something, even when it
+ * starts with a word that alone is no thing. Only for the small words that cannot be about a person or a feeling: never "My Husband John", "Her Sister Mona", "Being Alone".
+ */
+const TITLE_STARTERS = '(?:No|One|It|This|Nothing|Something)(?![\\p{L}\\p{N}])';
+const ATITLE = new RegExp(`^(?=${TITLE_STARTERS})\\p{Lu}[\\p{L}\\p{N}'’-]*(?:\\s+\\p{Lu}[\\p{L}\\p{N}'’-]*)+$`, 'u');
 
 function thingOf(rest: string): string | null {
     let phrase = rest
