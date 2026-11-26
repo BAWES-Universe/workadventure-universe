@@ -123,9 +123,21 @@ export function plainWords(value: string): string {
     return words[0].toUpperCase() + words.slice(1);
 }
 
+/**
+ * Inputs whose capital words are labels, not names or codes: a mail "Label ids" of INBOX, a "Status" of OPEN. Any other input
+ * (a currency of USD, a query of SQL) shows exactly as it will run.
+ */
+const WORD_KEY = /^(label|folder|mailbox|categor(y|ie)|status|priority|visibility|sort|order)s?(_?ids?)?(_?by)?$/;
+
+/** Whether an input's capital words read as plain words: "label_ids", "labelIds" and "Label ids" do, "currency" does not. */
+export function readsAsWords(key: string): boolean {
+    return WORD_KEY.test(key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[\s\-.]+/g, '_').toLowerCase());
+}
+
 /** A list of words, numbers or yes/no joins with ", "; anything else is not a plain list. */
-export function plainList(value: unknown): string | undefined {
+export function plainList(value: unknown, key?: string): string | undefined {
     if (!Array.isArray(value) || value.length === 0) return undefined;
     if (!value.every((item) => typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean')) return undefined;
-    return value.map((item) => (typeof item === 'string' ? plainWords(item) : String(item))).join(', ');
+    const words = key === undefined || readsAsWords(key);
+    return value.map((item) => (typeof item === 'string' ? (words ? plainWords(item) : item) : String(item))).join(', ');
 }

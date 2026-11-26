@@ -9,7 +9,7 @@
  */
 import type { RememberScope, SavedAction } from './OrbitActions';
 import type { ToolHeading } from './ToolCatalog';
-import { batchExtras, describeBatch, plainLabel, plainList, plainWords, withoutProvider } from './AppBatch';
+import { batchExtras, describeBatch, plainLabel, plainList, plainWords, readsAsWords, withoutProvider } from './AppBatch';
 
 export const ASK_KEY = 'universe.ask';
 /** The event a tap sends to the room. */
@@ -77,11 +77,11 @@ export function cardTitle(toolName: string, toolTitle?: string): string {
 
 const isPlain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
-/** A value as it will run, in plain words: a word in capitals reads as a word, a list of words joins with ", ". */
-function valueText(value: unknown): string {
-    if (typeof value === 'string') return plainWords(value);
+/** A value as it will run, in plain words: a label in capitals reads as a word ("INBOX" is "Inbox"), a list of words joins with ", ". */
+function valueText(key: string, value: unknown): string {
+    if (typeof value === 'string') return readsAsWords(key) ? plainWords(value) : value;
     if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    return plainList(value) ?? JSON.stringify(value) ?? '';
+    return plainList(value, key) ?? JSON.stringify(value) ?? '';
 }
 
 /** The arguments in the order the tool names its inputs, then any others, each as a labelled line, exactly as they will run. */
@@ -92,7 +92,7 @@ export function argumentLines(args: Record<string, unknown>, inputSchema?: unkno
     for (const key of keys) {
         const value = args[key];
         if (value === undefined || value === null) continue;
-        const text = valueText(value).trim();
+        const text = valueText(key, value).trim();
         if (!text) continue;
         lines.push({ label: clip(plainLabel(tidyName(key)), LABEL_MAX), text: clip(text, TEXT_MAX) });
     }

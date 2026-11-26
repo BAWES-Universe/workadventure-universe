@@ -6,6 +6,7 @@ import {
     readBotSteps,
     stepMore,
     stepsClock,
+    msUntilStale,
     stoppedIfStale,
     tookWords,
     type BotStep,
@@ -238,5 +239,15 @@ describe("a line that never ended (game #2131)", () => {
         const done = { ...working, state: "done" as const };
         expect(stoppedIfStale(done, 99_999_999_999).stale).toBe(false);
         expect(stoppedIfStale({ ...working, startedAt: 0 }, 99_999_999_999).stale).toBe(false);
+    });
+});
+
+describe("msUntilStale", () => {
+    const base = { state: "working" as const, line: "Reading", startedAt: 1_000_000, steps: [] };
+    it("counts down to the hour, and says nothing for a line that is not working or has no start", () => {
+        expect(msUntilStale(base, 1_000_000)).toBe(STEPS_STALE_AFTER_MS + 1);
+        expect(msUntilStale(base, 1_000_000 + STEPS_STALE_AFTER_MS + 5000)).toBe(1);
+        expect(msUntilStale({ ...base, state: "done" }, 1_000_000)).toBeUndefined();
+        expect(msUntilStale({ ...base, startedAt: 0 }, 1_000_000)).toBeUndefined();
     });
 });

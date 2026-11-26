@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { get, writable, type Readable, type Subscriber } from "svelte/store";
 import type { ChatMessage } from "../../Connection/ChatConnection";
 import type { BotSteps } from "../BotSteps";
@@ -41,6 +41,28 @@ class ArrayStore<T> extends Array<T> implements Readable<T[]> {
 }
 
 describe("workingBotIds", () => {
+    afterEach(() => vi.useRealTimers());
+
+    it("stops counting a line that was left working for over an hour, even while it is open", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-11-26T10:00:00Z"));
+        const line = stepsLine({ chatId: BOT }, { ...steps("working"), startedAt: Date.now() });
+        const working = workingBotIds(writable([line.message]));
+        const seen: boolean[] = [];
+        const stop = working.subscribe((ids) => seen.push(ids.has(BOT)));
+        expect(seen.at(-1)).toBe(true);
+        vi.advanceTimersByTime(61 * 60 * 1000);
+        expect(seen.at(-1)).toBe(false);
+        stop();
+    });
+
+    it("does not count a line that began over an hour ago when it is first read", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-11-26T10:00:00Z"));
+        const line = stepsLine({ chatId: BOT }, { ...steps("working"), startedAt: Date.now() - 2 * 60 * 60 * 1000 });
+        expect(get(workingBotIds(writable([line.message]))).has(BOT)).toBe(false);
+    });
+
     it("reads a chat's messages that are an array and a store at once", () => {
         const line = stepsLine({ chatId: BOT }, steps("working"));
         const messages = new ArrayStore<ChatMessage>();

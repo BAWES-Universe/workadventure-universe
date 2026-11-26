@@ -10,7 +10,7 @@ import { COMPUTER_TOOL } from './ComputerTools';
 import { COMPUTER_JOBS_TOOL } from './ComputerControlTools';
 import { CHANGE_TASK_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL } from './BrickTasks';
 import { instantSlugOf, isInstantTool } from './InstantTools';
-import { actionName, batchExtras, describeBatch, plainLabel, plainWords, withoutProvider } from '../mcp/AppBatch';
+import { actionName, batchExtras, describeBatch, plainLabel, plainWords, readsAsWords, withoutProvider } from '../mcp/AppBatch';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
 export type StepKind = 'read' | 'search' | 'write';
@@ -448,10 +448,10 @@ const LINES_MAX = 6;
 const LINE_TEXT_MAX = 160;
 
 /** One argument or result as a plain line: words, numbers and short lists, never a block of JSON. */
-function plainValue(value: unknown): string | undefined {
+function plainValue(value: unknown, key?: string): string | undefined {
     if (typeof value === 'number' || typeof value === 'boolean') return String(value);
     if (Array.isArray(value)) {
-        const parts = value.map((item) => (typeof item === 'string' || typeof item === 'number' ? plainValue(item) : undefined));
+        const parts = value.map((item) => (typeof item === 'string' || typeof item === 'number' ? plainValue(item, key) : undefined));
         return parts.length > 0 && parts.every((part) => part !== undefined) ? oneLine(parts.join(', '), LINE_TEXT_MAX) : undefined;
     }
     if (typeof value !== 'string') return undefined;
@@ -459,8 +459,8 @@ function plainValue(value: unknown): string | undefined {
     if (/^\s*[[{]/.test(value)) return undefined;
     const bare = bareLinks(value);
     if (TOKEN_LIKE.test(bare)) return undefined;
-    // A word in capitals reads as a word ("INBOX" is "Inbox"); anything else stays as it ran
-    return oneLine(plainWords(bare), LINE_TEXT_MAX);
+    // A label in capitals reads as a word ("INBOX" is "Inbox"); anything else ("USD", a code, an answer) stays as it ran
+    return oneLine(key !== undefined && readsAsWords(key) ? plainWords(bare) : bare, LINE_TEXT_MAX);
 }
 
 /** What a tool's answer says when it is plain text; an answer that is data (JSON) says nothing here. */
@@ -493,7 +493,7 @@ export function stepDetails(rawArgs: unknown, result?: unknown, resultIsSafeToSh
             const parts: string[] = [];
             for (const [key, value] of Object.entries(inner.args)) {
                 if (SECRET_KEY.test(key)) continue;
-                const text = plainValue(value);
+                const text = plainValue(value, key);
                 if (text) parts.push(`${plainLabel(tidyName(key))} ${text}`);
             }
             lines.push({ label: batch.names[index], text: parts.length ? oneLine(parts.join(' · '), LINE_TEXT_MAX) ?? 'Nothing to fill in' : 'Nothing to fill in' });
@@ -502,7 +502,7 @@ export function stepDetails(rawArgs: unknown, result?: unknown, resultIsSafeToSh
     for (const [key, value] of Object.entries(shownArgs)) {
         if (lines.length >= LINES_MAX) break;
         if (SECRET_KEY.test(key)) continue;
-        const text = plainValue(value);
+        const text = plainValue(value, key);
         if (text) lines.push({ label: plainLabel(tidyName(key)), text });
     }
     // A tool server's answer is its own words and can carry a password or a code in plain text, so it is shown only for a tool

@@ -141,6 +141,12 @@ export function stoppedIfStale(steps: BotSteps, nowMs: number): { steps: BotStep
     return { steps: { ...steps, state: "stopped", line: finished.join(" · ") }, stale: true };
 }
 
+/** How long until a working line goes stale (for a timer that clears what it drives), or undefined when it is not working or has no start. */
+export function msUntilStale(steps: BotSteps, nowMs: number): number | undefined {
+    if (steps.state !== "working" || steps.startedAt <= 0) return undefined;
+    return Math.max(0, steps.startedAt + STEPS_STALE_AFTER_MS - nowMs) + 1;
+}
+
 /** "1:05" for 65 seconds, "12:03" for longer; the clock beside a working line. */
 export function stepsClock(seconds: number): string {
     const s = Math.max(0, Math.floor(seconds));

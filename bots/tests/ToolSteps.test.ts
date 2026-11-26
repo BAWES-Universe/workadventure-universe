@@ -371,6 +371,7 @@ describe('a batch call by what its tools do (game #2131)', () => {
     });
 
     it('reads labels and capital words plainly in what a step sent', () => {
+        expect(stepDetails({ currency: 'USD', status: 'OPEN' })).toEqual([{ label: 'Currency', text: 'USD' }, { label: 'Status', text: 'Open' }]);
         expect(stepDetails({ label_ids: ['INBOX', 'CATEGORY_UPDATES'], user_id: 'me' })).toEqual([
             { label: 'Labels', text: 'Inbox, Category updates' },
             { label: 'User', text: 'me' },

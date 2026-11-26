@@ -63,10 +63,21 @@ describe('words', () => {
 });
 
 describe('argumentLines', () => {
+    it('reads a label in capitals as a word, and leaves any other value as it will run', () => {
+        const lines = argumentLines({ label_ids: ['INBOX'], status: 'OPEN', currency: 'USD', query: 'SQL', tags: ['API', 'CRM'] });
+        expect(lines).toEqual([
+            { label: 'Labels', text: 'Inbox' },
+            { label: 'Status', text: 'Open' },
+            { label: 'Currency', text: 'USD' },
+            { label: 'Query', text: 'SQL' },
+            { label: 'Tags', text: 'API, CRM' },
+        ]);
+    });
+
     it('shows every argument exactly as it will run, in the order the tool names its inputs', () => {
         const lines = argumentLines({ title: 'Fix login', team: 'WEB', priority: 2 }, { properties: { team: {}, title: {}, priority: {} } });
         expect(lines).toEqual([
-            { label: 'Team', text: 'Web' },
+            { label: 'Team', text: 'WEB' },
             { label: 'Title', text: 'Fix login' },
             { label: 'Priority', text: '2' },
         ]);
