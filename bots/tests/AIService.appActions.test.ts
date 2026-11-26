@@ -503,6 +503,55 @@ describe('a Brick with several ready-made Apps', () => {
         expect(made.propose).toHaveBeenCalledWith(expect.objectContaining({ toolName: 'GMAIL_REPLY_TO_THREAD', entry: expect.objectContaining({ serverId: 'g1' }) }));
     });
 
+    describe("the person's own App first under a link tool's name, with its tools Off (own Apps first)", () => {
+        const own: ToolServerEntry = { botId: 'b1', serverId: 'own1', serverUrl: 'https://own.example/mcp', authType: 'none', serverName: 'My link', fingerprint: 'fp-own' };
+        const SEARCH = 'COMPOSIO_SEARCH_TOOLS';
+        const ownOff = (): ServerPolicy => ({
+            serverId: 'own1',
+            kind: 'tools',
+            state: 'confirmed',
+            policyRevision: 2,
+            settings: DEFAULTS,
+            tools: new Map<string, PolicyTool>(
+                [SEARCH, BATCH].map((name) => [name, { name, heading: 'looksUp', fingerprint: name === SEARCH ? 'fp-own-search' : 'fp-own', suggestedHeading: 'looksUp', confirmed: true, setting: 'off' }])
+            ),
+        });
+        function ownFirst() {
+            const made = brickService(gmailPolicy());
+            const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'own1' ? ownOff() : gmailPolicy()));
+            made.service['toolGate'] = new ToolGate({ read } as never, { check: made.check } as never, { canManageBotTools: async () => false });
+            const servers = new Map<string, ToolServerEntry>([
+                [BATCH, { ...own, otherApps: [GMAIL] }],
+                [SEARCH, { ...own, fingerprint: 'fp-own-search', otherApps: [{ ...GMAIL, fingerprint: 'fp-search' }] }],
+            ]);
+            return { ...made, servers };
+        }
+
+        it('still offers the ready-made App’s search and batch', async () => {
+            const { service, servers } = ownFirst();
+            const defs = [SEARCH, BATCH].map((name) => ({ type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } } }));
+            vi.spyOn(MCPConnector, 'discoverToolsWithMapping').mockResolvedValue({ tools: defs, toolServerMap: servers } as never);
+            const { tools } = await service['buildTools']('b1', undefined, { isConfigured: () => true, adminApiToken: 't' } as never, 'dm', undefined, { signedIn: true, identifier: 'uuid-khalid' });
+            expect(tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(expect.arrayContaining([SEARCH, BATCH]));
+        });
+
+        it('sends a search through the ready-made App that allows it, and a batch action through its own App', async () => {
+            const { service, execute, servers } = ownFirst();
+            execute.mockResolvedValue([{ type: 'text', text: '{"results":[]}' }] as never);
+            const [searched] = await service['executeToolCalls']([{ id: 'c1', name: SEARCH, arguments: '{"queries":[{"use_case":"read mail"}]}' }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+            expect(searched.result).not.toHaveProperty('error');
+            await service['executeToolCalls']([{ id: 'c2', name: BATCH, arguments: JSON.stringify(batchArgs('GMAIL_FETCH_EMAILS')) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+            expect(execute.mock.calls.map((args: unknown[]) => args[0])).toEqual(['g1', 'g1']);
+        });
+
+        it('never sends an action no ready-made App owns to their own App when it is Off there', async () => {
+            const { service, execute, servers } = ownFirst();
+            const [result] = await service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify(batchArgs('NOTION_SEARCH')) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+            expect(execute).not.toHaveBeenCalled();
+            expect(JSON.stringify(result.result)).toContain('turned off');
+        });
+    });
+
     it('hides an action Off in any App from a lookup that went through another App', async () => {
         const { service, execute, servers } = twoApps(gmailPolicy({ GMAIL_DELETE_MESSAGE: 'off' }, { ...DEFAULTS, looksUp: 'off' }), calendarPolicy());
         execute.mockResolvedValue([{ type: 'text', text: '{"results":[{"tool_slug":"GMAIL_DELETE_MESSAGE"},{"tool_slug":"GMAIL_FETCH_EMAILS"},{"tool_slug":"GOOGLECALENDAR_FIND_EVENT"}]}' }] as never);
@@ -584,5 +633,58 @@ describe('an action not sorted yet that its owner turned Off', () => {
         expect(offNote(policy, 'Gmail')).toContain('Archive thread');
         // One left to its heading still follows it
         expect(isOffRow(policy, 'GMAIL_FETCH_EMAILS')).toBe(false);
+    });
+});
+
+describe("an action of an App the person has their own copy of (own Apps first)", () => {
+    // Universe's ready-made Exa was left out because the person has their own Exa: Gmail's link must never carry an Exa action
+    const withOwnExa = () => new Map<string, ToolServerEntry>([...SERVERS].map(([name, entry]) => [name, { ...entry, ownCopyApps: ['Exa'] }]));
+    const callWith = (service: AIService, servers: Map<string, ToolServerEntry>, args: unknown) =>
+        service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify(args) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+
+    it('is never sent through another ready-made App, and the Brick is sent to their own copy; the rest runs', async () => {
+        const { service, execute, propose } = brickService(gmailPolicy());
+        const [result] = await callWith(service, withOwnExa(), batchArgs('GMAIL_FETCH_EMAILS', 'EXA_SEARCH'));
+        expect(sentSlugs(execute)).toEqual([['GMAIL_FETCH_EMAILS']]);
+        expect(propose).not.toHaveBeenCalled();
+        expect(result.result.notDone).toEqual(["Search wasn't done here: use your owner's own Exa App for it."]);
+    });
+
+    it('alone: nothing is sent and no card is shown', async () => {
+        const { service, execute, propose } = brickService(gmailPolicy());
+        const [result] = await callWith(service, withOwnExa(), batchArgs('EXA_SEARCH', 'EXA_ANSWER'));
+        expect(execute).not.toHaveBeenCalled();
+        expect(propose).not.toHaveBeenCalled();
+        expect(result.result.outcome).toBe('not_sent');
+        expect(result.result.error).toContain("use your owner's own Exa App");
+    });
+
+    it("never takes a remaining App's own action, by its list or by its name, even when the left-out App's name starts it", async () => {
+        // "Google" was left out for the person's own copy; "Google Calendar" is still on. A Google Calendar action is never taken for Google's
+        const { service, execute, propose } = brickService(gmailPolicy());
+        const servers = new Map<string, ToolServerEntry>([...SERVERS].map(([name, entry]) => [name, { ...entry, serverName: 'Google Calendar', ownCopyApps: ['Google'] }]));
+        const [result] = await callWith(service, servers, batchArgs('GMAIL_FETCH_EMAILS', 'GOOGLE_CALENDAR_DELETE_EVENT', 'GOOGLE_SEARCH'));
+        // Listed in the remaining App: runs. Named after it: judged by it (asks first). Only Google's own is refused
+        expect(sentSlugs(execute)).toEqual([['GMAIL_FETCH_EMAILS']]);
+        expect(propose).toHaveBeenCalledWith(expect.objectContaining({ toolName: 'GOOGLE_CALENDAR_DELETE_EVENT' }));
+        expect(result.result.notDone).toEqual(["Search wasn't done here: use your owner's own Google App for it."]);
+    });
+
+    it("sends it to the owner's own server when that server holds the link tool first: that is their own account, not one Universe pays for", async () => {
+        const made = brickService(gmailPolicy());
+        const own: ToolServerEntry = { botId: 'b1', serverId: 'own1', serverUrl: 'https://own.example/mcp', authType: 'none', serverName: 'My tools', fingerprint: 'fp-own' };
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'own1' ? ({ serverId: 'own1', kind: 'tools', state: 'notCheckedYet', policyRevision: 1, settings: DEFAULTS, tools: new Map() } as ServerPolicy) : gmailPolicy()));
+        made.service['toolGate'] = new ToolGate({ read } as never, { check: made.check } as never, { canManageBotTools: async () => false });
+        const servers = new Map<string, ToolServerEntry>([[BATCH, { ...own, otherApps: [{ ...GMAIL, ownCopyApps: ['Exa'] }] }]]);
+        await callWith(made.service, servers, batchArgs('GMAIL_FETCH_EMAILS', 'EXA_SEARCH'));
+        const sent = made.execute.mock.calls.map((args: unknown[]) => [args[0], (args[3] as { tools: Array<{ tool_slug: string }> }).tools.map((t) => t.tool_slug)]);
+        expect(sent).toEqual(expect.arrayContaining([['g1', ['GMAIL_FETCH_EMAILS']], ['own1', ['EXA_SEARCH']]]));
+        expect(sent).toHaveLength(2);
+    });
+
+    it('changes nothing when no App was left out', async () => {
+        const { service, execute } = brickService(gmailPolicy());
+        await call(service, batchArgs('GMAIL_FETCH_EMAILS', 'GMAIL_LIST_LABELS'));
+        expect(sentSlugs(execute)).toEqual([['GMAIL_FETCH_EMAILS', 'GMAIL_LIST_LABELS']]);
     });
 });

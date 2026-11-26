@@ -60,12 +60,21 @@ export interface McpServerConfig {
     readyMade?: boolean;
     /** Where Orbit is, set when `readyMade`. Never sent anywhere else. */
     orbitUrl?: string;
+    /**
+     * Set by Orbit on a ready-made App when this Brick also has the person's own copy of the same App, switched on (their own link or
+     * key): the id of that own grant. The person's own copy is the one used, so this ready-made App is not offered at all (own Apps first).
+     */
+    ownCopyServerId?: string | null;
     /** When Orbit last saw this server's sign-in refused, or the server not answer (#1819); null when not */
     signInLostAt?: string | null;
     noAnswerAt?: string | null;
     /** The jobs its owner lets other people ask this Brick for, with the inputs people may fill in and what may come back (#2006). Only an App on a person's connection has any. */
     shared?: { jobs: SharedJob[] };
 }
+
+/** A ready-made App whose person also has their own copy of it on this Brick (Orbit says which): only their own copy is offered. */
+export const hasOwnCopy = (server: Pick<McpServerConfig, 'readyMade' | 'ownCopyServerId'>): boolean =>
+    server.readyMade === true && typeof server.ownCopyServerId === 'string' && server.ownCopyServerId.trim() !== '';
 
 /** One job an owner shared: the tool, the names of the inputs people may fill in, and the names of what may come back (null: the whole answer). */
 export interface SharedJob {
@@ -156,6 +165,11 @@ export interface ToolServerEntry {
      * names, so the model is offered the first one, and each action of a batch is sent through the App it belongs to.
      */
     otherApps?: ToolServerEntry[];
+    /**
+     * On a ready-made App's entry: the names of this Brick's other ready-made Apps that were left out because the person has their own
+     * copy of them (own Apps first). An action named after one of them is never sent through this App's link: their own copy is used.
+     */
+    ownCopyApps?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -966,7 +980,9 @@ export class MCPConnector {
 
         // Query each enabled server and collect tools
         const allTools: McpToolDefinition[] = [];
-        const enabledServers = servers.filter((s) => s.enabled);
+        // A ready-made App the person also has their own copy of is left out: their own copy is the one used, never the one Universe pays for
+        const enabledServers = servers.filter((s) => s.enabled && !hasOwnCopy(s));
+        const ownCopyApps = [...new Set(servers.filter((s) => s.enabled && hasOwnCopy(s)).map((s) => s.name).filter((name) => typeof name === 'string' && name.trim() !== ''))];
 
         // Track seen tool names across all servers to avoid duplicates
         const seenToolNames = new Set<string>();
@@ -983,6 +999,7 @@ export class MCPConnector {
                 serverName: server.name,
                 ...(server.connectionId ? { connectionId: server.connectionId } : {}),
                 ...(server.readyMade === true && server.orbitUrl ? { readyMade: true, orbitUrl: server.orbitUrl } : {}),
+                ...(server.readyMade === true && ownCopyApps.length > 0 ? { ownCopyApps } : {}),
                 ...(raw ? { fingerprint: fingerprintTool(raw, server) } : {}),
                 ...(raw?.inputSchema !== undefined ? { inputSchema: raw.inputSchema } : {}),
                 ...(title ? { title } : {}),
@@ -998,9 +1015,19 @@ export class MCPConnector {
                 toolServerMap.set(tool.function.name, entryFor(tool, server, title, raw));
                 return;
             }
-            // The name is taken by another App. The owner keeps the first, as always; but a job another App's owner shared under this name is kept
-            // aside, so someone else asking is still offered it and does not lose it to an App that shares nothing (#2006)
             const first = toolServerMap.get(tool.function.name);
+            // Own Apps first: a tool of an App that is not ready-made (the person's own, paid by nobody here) takes its name from a ready-made App's
+            // tool, whichever answered first, so the model is never offered the one Universe pays for in its place. The ready-made Apps are kept
+            // beside it, exactly as when the own App answered first, so each one's own actions still go through it
+            if (first?.readyMade && server.readyMade !== true) {
+                const at = allTools.findIndex((one) => one.function.name === tool.function.name);
+                if (at >= 0) allTools[at] = tool;
+                const { otherApps: before = [], ...previous } = first;
+                toolServerMap.set(tool.function.name, { ...entryFor(tool, server, title, raw), otherApps: [previous, ...before] });
+                return;
+            }
+            // The name is taken by another App. The owner keeps the first, as always; but a job another App's owner shared under this name is kept
+            // aside, so someone else asking is still offered it and does not lose it to an App that shares nothing (#2006).
             // Each ready-made App is kept beside the first, whichever server answered first (they answer in no fixed order): its actions
             // still go through it
             if (first && server.readyMade === true && server.orbitUrl && first.serverId !== server.id && !first.otherApps?.some((other) => other.serverId === server.id)) {
@@ -1105,7 +1132,7 @@ export class MCPConnector {
         return this.withKeyApps(keyApps, { tools: allTools, toolServerMap, issues: MCPConnector.health.issuesFor(botId, enabledIds) });
     }
 
-    /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner. */
+    /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner, unless that is a ready-made App (own Apps first). */
     private static async withKeyApps<T extends { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }>(
         keyApps: Promise<KeyApp[]>,
         found: T
@@ -1114,9 +1141,18 @@ export class MCPConnector {
         for (const tool of keyed.tools) {
             const name = tool.function.name;
             const entry = keyed.entries.get(name);
-            if (!entry || found.toolServerMap.has(name)) continue;
+            if (!entry) continue;
+            const taken = found.toolServerMap.get(name);
+            // Own Apps first: an App with the person's own key takes the name from a ready-made App's tool; any other App keeps it
+            if (taken && !taken.readyMade) continue;
+            const at = taken ? found.tools.findIndex((one) => one.function.name === name) : -1;
+            if (at >= 0) found.tools.splice(at, 1);
             found.tools.push(tool);
-            found.toolServerMap.set(name, entry);
+            if (taken) {
+                // The ready-made Apps it takes the name from are kept beside it, as for an own App's tool, so their own actions still go through them
+                const { otherApps: before = [], ...previous } = taken;
+                found.toolServerMap.set(name, { ...entry, otherApps: [previous, ...before] });
+            } else found.toolServerMap.set(name, entry);
         }
         return found;
     }

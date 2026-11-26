@@ -684,12 +684,13 @@ describe("the Bricks page (#1995)", () => {
                 "Keeps the family recipes"
             );
             expect(target.querySelector<HTMLElement>('[data-testid="bot-switch"]')).not.toBeNull();
-            // The parts a Brick has so far, in the mock's order (Memory and Files after Behavior). The rest come with their own issues.
+            // The parts a Brick has so far, in the mock's order (Vision right after Mind; Memory and Files after Behavior). The rest come with their own issues.
             const groups = [...target.querySelectorAll<HTMLElement>('[data-testid^="bot-page-group-"]')].map(
                 (group) => group.dataset.testid
             );
             expect(groups).toEqual([
                 "bot-page-group-mind",
+                "bot-page-group-vision",
                 "bot-page-group-say",
                 "bot-page-group-voice",
                 "bot-page-group-behavior",
