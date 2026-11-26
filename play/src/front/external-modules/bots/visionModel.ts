@@ -223,6 +223,10 @@ export function visionState(
             candidates,
         };
     }
+    // A key on the person's own computer never sends images to Universe AI unless they pick it (Orbit's default says the same)
+    if (main.keyId && main.group === "own-computer") {
+        return { main, effective: { choice: "this" }, picked: false, problem: false, candidates };
+    }
     return { main, effective: { choice: "universe-ai" }, picked: false, problem: false, candidates };
 }
 
