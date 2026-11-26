@@ -139,13 +139,15 @@ const WAITING_WORDS: Record<string, string> = {
     answer: 'an answer from them',
 };
 
+// Never "not started yet": a job that ran and went back in line can come back with no start time (Orbit clears it when a start is retried), so a queued job is only ever
+// said to be not working right now, which is true of every one of them (CodeRabbit on 7d05652e)
 const QUEUED_WORDS: Record<string, string> = {
-    turn: 'in line, not started yet: it starts by itself when the job before it ends',
-    allowance: "waiting, not started yet: this month's computer time is used up, and it starts by itself once they get more in Usage",
+    turn: 'in line, not working right now: it goes on by itself when the job before it ends',
+    allowance: "waiting, not working right now: this month's computer time is used up, and it goes on by itself once they get more in Usage",
     paused: 'paused: it carries on only when they say resume',
 };
 
-/** The same, for a job that already ran some of the way and is back in line (resumed after a pause): never "not started yet". */
+/** The same, for a job known to have run some of the way (a start time or steps done) and back in line, as after a pause and resume. */
 const QUEUED_AGAIN_WORDS: Record<string, string> = {
     turn: 'in line again after it ran part of the way: it carries on by itself when the job before it ends',
     allowance: "waiting after it ran part of the way: this month's computer time is used up, and it carries on by itself once they get more in Usage",
@@ -166,9 +168,9 @@ const ENDED_WORDS: Record<string, string> = {
 function liveLine(job: LiveJobNow, now: number): string {
     const name = quotedTitle(job.title);
     if (job.status === 'queued') {
-        // A job that ran and went back in line (a pause, then resume) has started: only one that never ran is "not started yet"
+        // A job known to have run (a pause, then resume) says so; any other is only not working right now
         const again = job.startedAt !== null || job.stepDone > 0;
-        const words = again ? (QUEUED_AGAIN_WORDS[job.queuedFor ?? ''] ?? 'waiting for a free computer after it ran part of the way: it carries on by itself') : (QUEUED_WORDS[job.queuedFor ?? ''] ?? 'waiting for a free computer, not started yet: it starts by itself');
+        const words = again ? (QUEUED_AGAIN_WORDS[job.queuedFor ?? ''] ?? 'waiting for a free computer after it ran part of the way: it carries on by itself') : (QUEUED_WORDS[job.queuedFor ?? ''] ?? 'waiting for a free computer, not working right now: it goes on by itself');
         return `- ${name}: ${words}.`;
     }
     const since = job.startedAt !== null ? ` Started ${agoWords(job.startedAt, now)}.` : '';

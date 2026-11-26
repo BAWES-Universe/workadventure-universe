@@ -71,10 +71,12 @@ describe('the note a Brick gets about its computer jobs', () => {
         );
         expect(note).toContain('- “Visa form”: working now, step 2 of 6 (Opening the form). Started 3 minutes ago.');
         expect(note).toContain('- “Bank sign-in”: waiting for them to sign in. They have the screen now. Started 1 hour ago.');
-        expect(note).toContain('- “Taxi booking”: in line, not started yet: it starts by itself when the job before it ends.');
+        expect(note).toContain('- “Taxi booking”: in line, not working right now: it goes on by itself when the job before it ends.');
         expect(note).toContain('- “Shop website”: paused: it carries on only when they say resume.');
-        expect(note).toContain("- “Price list”: waiting, not started yet: this month's computer time is used up");
-        expect(note).toContain('- “Menu”: waiting for a free computer, not started yet: it starts by itself.');
+        expect(note).toContain("- “Price list”: waiting, not working right now: this month's computer time is used up");
+        expect(note).toContain('- “Menu”: waiting for a free computer, not working right now: it goes on by itself.');
+        // A job back in line can have lost its start time (a retried start clears it): no queued job is ever said to have never started
+        expect(note).not.toContain('not started');
         expect(note).toContain('No job ended in the last week.');
     });
 
