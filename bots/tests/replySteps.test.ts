@@ -147,10 +147,25 @@ describe("a reply's room for tool results", () => {
         room.add(step(1, 'a'.repeat(200)));
         room.add(step(2, 'b'.repeat(200)));
         expect(room.steps[1]!.results[0]!.content).toBe('b'.repeat(200));
+    });
+
+    it('for a run, leaves out the oldest steps whole when what the model said in them leaves no room, never a call apart from its result', () => {
+        const room = new StepRoom(1000, true);
+        const said = (round: number) => ({ ...step(round, 'r'.repeat(100)), content: String(round).repeat(350) });
+        room.add(said(1));
+        room.add(said(2));
+        room.add(said(3));
+        // Each step is about 500 characters with what it said, so only the last two can be kept beside each other with their answers set aside
+        expect(room.size()).toBeLessThanOrEqual(1000);
+        expect(room.steps.map((one) => one.content[0])).toEqual(['2', '3']);
+        for (const kept of room.steps) expect(kept.calls.map((call) => call.id)).toEqual(kept.results.map((result) => result.id));
+        // Nothing of the newest step is cut when only what it says is left of the room
         const full = new StepRoom(500, true);
-        full.add({ ...step(1, 'a'.repeat(50)), content: 'x'.repeat(600) });
-        full.add(step(2, 'b'.repeat(300)));
-        expect(full.steps[1]!.results[0]!.content).toMatch(/^b\n\[Only the first 1 of 300 characters fit/);
+        full.add({ ...step(1, 'a'.repeat(50)), content: 'x'.repeat(300) });
+        full.add({ ...step(2, 'b'.repeat(300)), content: 'y'.repeat(300) });
+        expect(full.steps).toHaveLength(1);
+        expect(full.steps[0]!.content).toBe('y'.repeat(300));
+        expect(full.steps[0]!.results[0]!.content).toMatch(/^b+\n\[Only the first \d+ of 300 characters fit/);
     });
 
     it('keeps as much of one step larger than the room as fits, and says so', () => {
