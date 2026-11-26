@@ -16,7 +16,7 @@
 import { createHash } from 'crypto';
 import { SCRUBBED_LOOKUPS, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
-import { isJoinedLookup, joinLookupAnswers, lookupRequests } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, sessionRefused, withoutSession } from '../mcp/AppLookups';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
 import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
@@ -187,7 +187,7 @@ export class TaskApps {
             const heading = verdict.heading!;
             const asks = verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading);
             if (!asks) {
-                const answer = await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) });
+                const answer = await this.callWithSessionFallback(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) });
                 return asText(await this.withoutOffActions(run.brickId, name, listed, answer), isMailTool(name, entry.serverName));
             }
             return await this.askFor(
@@ -202,6 +202,17 @@ export class TaskApps {
             console.warn(`[TaskApps] A step of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
             return JSON.stringify({ error: 'That did not work just now.' });
         }
+    }
+
+    /**
+     * One call to an App's tool, tried once more without the session id it carried when its link refused that session (the model carries the
+     * session one App's link gave to another App's link). Only a refusal that names the session is tried again, only without the session,
+     * and as its own try (its own call id): it is the same call, already allowed or already approved on its card.
+     */
+    private async callWithSessionFallback(brickId: string, entry: ToolServerEntry, name: string, args: Record<string, unknown>, ownerId: string, use: { heading: ToolHeading; callId: string }): Promise<unknown> {
+        const answer = await this.deps.call(brickId, entry, name, args, ownerId, use);
+        const bare = sessionRefused(answer) ? withoutSession(args) : undefined;
+        return bare ? this.deps.call(brickId, entry, name, bare, ownerId, { ...use, callId: `${use.callId}:no-session` }) : answer;
     }
 
     /**
@@ -232,7 +243,7 @@ export class TaskApps {
             usable.map(async ({ app, args: own, verdict }) => {
                 let answer: unknown;
                 try {
-                    answer = await this.deps.call(run.brickId, app, name, own, run.userId, { heading: (verdict as { heading: ToolHeading }).heading, callId: requests.length === 1 ? step : `${step}:${app.serverId}` });
+                    answer = await this.callWithSessionFallback(run.brickId, app, name, own, run.userId, { heading: (verdict as { heading: ToolHeading }).heading, callId: requests.length === 1 ? step : `${step}:${app.serverId}` });
                 } catch (error) {
                     console.warn(`[TaskApps] A lookup of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
                     answer = { error: 'That did not work just now.' };

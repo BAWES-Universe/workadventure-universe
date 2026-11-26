@@ -508,6 +508,38 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(answer).toContain('Gmail did not answer');
     });
 
+    it('tries an App’s step again without the session id its link refused, once, as its own try', async () => {
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const seen: Array<{ args: Record<string, unknown>; callId: string }> = [];
+        const { apps } = setUp({}, {
+            discover: async () => ({ tools: [tool(BATCH)], servers: new Map([[BATCH, { ...gmail, otherApps: [calendar] }]]) }),
+            gate,
+            call: async (_brick, _app, _name, args, _owner, use) => {
+                seen.push({ args, callId: use.callId });
+                return args.session_id ? { error: 'Invalid session id sess-g1' } : [{ type: 'text', text: '{"successful":true,"data":{"ran":true}}' }];
+            },
+        });
+        const session = (await apps.open(run()))!;
+        const answer = await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(seen.map((one) => 'session_id' in one.args)).toEqual([true, false]);
+        expect(new Set(seen.map((one) => one.callId)).size).toBe(2);
+        expect(answer).toContain('successful');
+        expect(answer).not.toContain('Invalid session');
+    });
+
+    it('never tries a failure again that is not about the session, and never a write that asks first', async () => {
+        const { apps, call, propose } = withGate({ ...gmail, otherApps: [calendar] });
+        call.mockResolvedValue({ error: 'The link is not answering.' } as never);
+        const session = (await apps.open(run()))!;
+        await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(call).toHaveBeenCalledTimes(1);
+        call.mockClear();
+        await session.call(BATCH, { ...actions('GMAIL_REPLY_TO_THREAD') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(call).not.toHaveBeenCalled();
+        expect(propose).toHaveBeenCalled();
+    });
+
     it('does not offer or run a link tool the Apps share when every one of them has it Off', async () => {
         const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
         const read = vi.fn(async (_bot: string, serverId: string) => {
