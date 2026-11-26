@@ -190,9 +190,11 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         }
         // The lines that say it back go too, the bot's and the person's: only the last line it was said in is noted, and a thing
         // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
-        if (phrase.trim().length >= MIN_PHRASE) phrases.push({ words: wholeWords(phrase.trim(), ownName && sameCaseAsWritten(phrase.trim())), owner: mine });
-        // The lines that give a name are found in any capitals, for a long name too: "my name is sara" for "Sara"
-        if (ownName && phrase.trim().length >= MIN_PHRASE) phrases.push({ words: givenAs(phrase.trim()), owner: mine });
+        if (phrase.trim().length >= MIN_PHRASE) {
+            phrases.push({ words: wholeWords(phrase.trim(), ownName && sameCaseAsWritten(phrase.trim())), owner: mine });
+            // The lines that give a name are found in any capitals, for a long name too: "my name is sara" for "Sara"
+            if (ownName) phrases.push({ words: givenAs(phrase.trim()), owner: mine });
+        }
         // A value too short to match everywhere ("Amy") is still said back in the reply right after the line it came from
         else if (phrase.trim().length > 0) {
             const short = phrase.trim();
@@ -271,8 +273,12 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
             }
             return owners;
         };
+        const ownersAt = history.map((line) => takenBy(line));
+        // Where each thing was first said in the chat: a reply can only keep a thing's short value back from where it was said on
+        const firstSaid = new Map<number, number>();
+        ownersAt.forEach((owners, at) => owners.forEach((one) => firstSaid.set(one, Math.min(firstSaid.get(one) ?? at, at))));
         memory.conversationHistory = history.filter((line, index) => {
-            if (takenBy(line).size > 0) return false;
+            if (ownersAt[index].size > 0) return false;
             if (line.sender === 'person') return true;
             const text = line.message;
             if (phrases.some((phrase) => phrase.words.test(text))) return false;
@@ -280,11 +286,10 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
             if (echoes.some((echo) => echo.ownName && echo.words.test(text))) return false;
             // A later bot line that tells the person what they like back ("You love tea") goes too; one that only has the word stays
             if (echoes.some((echo) => echo.toldBack.test(text))) return false;
-            // The bot's reply right after a line a thing took, when it says that same thing's short value back ("I like tea" / "Tea it is!")
-            const before = history[index - 1];
-            if (!before) return true;
-            const owners = takenBy(before);
-            return !(owners.size > 0 && echoes.some((echo) => owners.has(echo.owner) && echo.words.test(text)));
+            // The bot's reply right after a line a thing took, when it says a short value back of that thing or of any other forgotten
+            // thing the person had already said ("I like jam" / "I like tea" / "Have it with jam!"). A thing said only later is not in it.
+            if (index === 0 || ownersAt[index - 1].size === 0) return true;
+            return !echoes.some((echo) => (firstSaid.get(echo.owner) ?? Infinity) <= index - 1 && echo.words.test(text));
         });
     }
     if (removed > 0) info.lastInfoUpdate = Date.now();

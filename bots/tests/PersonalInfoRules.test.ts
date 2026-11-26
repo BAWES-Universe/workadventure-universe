@@ -435,4 +435,20 @@ describe('what the bot keeps from a chat', () => {
         expect(dropItems(stored, new Set([target.id]))).toBe(1);
         expect(stored.conversationHistory.map((line) => line.message)).toEqual(['I walk a lot']);
     });
+    it("takes a reply right after a taken line when it says a short value of another forgotten thing already said earlier", () => {
+        const memory = new ConversationMemory();
+        const say = (text: string, at: number, sender: 'person' | 'bot' = 'person') => {
+            memory.addMessage(BOT, PERSON, text, sender, 'dm', false);
+            memory.getMemory(BOT, PERSON)!.conversationHistory.at(-1)!.timestamp = at;
+            if (sender === 'person') memory.extractPersonalInfo(BOT, PERSON, text, 'dm', at);
+        };
+        say('I like jam', 1000);
+        say('I like tea', 2000);
+        say('Have it with jam!', 2500, 'bot');
+        say('I like walking', 3000);
+        const stored = memory.getMemory(BOT, PERSON)!;
+        const ids = new Set(memoryItemsOf(stored).filter((item) => item.value === 'tea' || item.value === 'jam').map((item) => item.id));
+        expect(dropItems(stored, ids)).toBe(2);
+        expect(stored.conversationHistory.map((line) => line.message)).toEqual(['I like walking']);
+    });
 });
