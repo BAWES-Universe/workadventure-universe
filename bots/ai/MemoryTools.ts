@@ -68,6 +68,7 @@ function describe(item: MemoryItem): string {
         case 'pref':
             return `They like ${item.value}`;
         default:
+            if (item.label === 'dislikes') return `They do not like ${item.value.split('; ').join(', ')}`;
             return item.label === 'current_state' ? `They said they were ${item.value}` : `${item.label?.replace(/_/g, ' ') ?? 'A fact'}: ${item.value}`;
     }
 }
