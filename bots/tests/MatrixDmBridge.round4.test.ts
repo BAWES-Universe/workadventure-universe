@@ -525,6 +525,55 @@ describe('a message that arrives while the store that knows the chat is down', (
             // a chat that cannot be resolved is only reported, and never throws
             await expect(bridge.onGaveUp({ ...message('hi'), room_id: '!unknown:matrix.test' }, 'tries')).resolves.toBeUndefined();
         });
+
+        // CodeRabbit on the round 9 head: a Brick its owner deleted (Undo can still give it back) says nothing, a kept notice included
+        it('a Brick its owner deleted says nothing of an event it gave up on, kept notice or not', async () => {
+            const client = makeClient();
+            const stores = makeStores();
+            const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+            await bridge.onEvent(invite());
+            stores.deps.getBotConfig = vi.fn(async () => ({ botId: BOT, name: 'Nora', enabled: true, aiProviderRef: 'p', brick: { deleted: true } }) as never);
+            client.sendMessage.mockClear();
+            await bridge.onGaveUp(message('hello?'), 'tries');
+            await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-1', again: true })).resolves.toBe('nothing');
+            expect(client.sendMessage).not.toHaveBeenCalled();
+        });
+
+        // CodeRabbit on the round 10 head: the deletion is read fresh, and a kept notice waits when it cannot be read
+        it('a kept notice is sent again later when the Brick cannot be read, a note without an outbox goes on, and the Brick is read fresh', async () => {
+            const client = makeClient();
+            const stores = makeStores();
+            const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+            await bridge.onEvent(invite());
+            stores.deps.getBotConfig = vi.fn(async () => {
+                throw new Error('Orbit is down');
+            });
+            client.sendMessage.mockClear();
+            await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-2', again: false })).resolves.toBe('failed');
+            expect(client.sendMessage).not.toHaveBeenCalled();
+            stores.deps.getBotConfig = vi.fn(async () => ({ botId: BOT, name: 'Nora', enabled: true, aiProviderRef: 'p' }) as never);
+            await bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-3', again: false });
+            expect(stores.deps.getBotConfig).toHaveBeenCalledWith(BOT, true);
+        });
+    });
+
+    // CodeRabbit on the round 4 head of game #2121: a clear of another room of the Brick only holds sends for now: the kept notice stays and goes out after it
+    it('a kept notice waits while another room of the Brick is cleared, goes out after, and is dropped only for a Brick being purged', async () => {
+        const client = makeClient();
+        const stores = makeStores();
+        const bridge = new MatrixDmBridge(config, client as never, stores.deps);
+        await bridge.onEvent(invite());
+        client.sendMessage.mockClear();
+        (bridge as any).clearingRooms.set(BOT, 1);
+        await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-4', again: false })).resolves.toBe('failed');
+        expect(client.sendMessage).not.toHaveBeenCalled();
+        (bridge as any).clearingRooms.delete(BOT);
+        await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-4', again: false })).resolves.toEqual({ eventId: '$evt' });
+        expect(client.sendMessage).toHaveBeenCalledTimes(1);
+        client.sendMessage.mockClear();
+        (bridge as any).purgedBots.add(BOT);
+        await expect(bridge.onGaveUp(message('hello?'), 'tries', { txnId: 'notice-5', again: false })).resolves.toBe('nothing');
+        expect(client.sendMessage).not.toHaveBeenCalled();
     });
 
     it('the reply is kept as something the person was told only when Matrix gave the id of its text: a send that was suppressed keeps nothing', async () => {

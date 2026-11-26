@@ -166,6 +166,16 @@ export const CONTROL_WORDS = {
         titled: (title) => `Cancel ${title}? Its files are kept, and the time it used is on its receipt. To come back to it later, I can pause it instead.`,
         plain: 'Cancel your job? Its files are kept, and the time it used is on its receipt. To come back to it later, I can pause it instead.',
     } as ControlLine,
+    /**
+     * FINAL (24 Nov, `/mnt/project-files/brick-same-title-and-narrow-stop/strings.txt`): the person's yes to a Stop named only SOME of the jobs. Nothing is stopped yet: the statement comes FIRST
+     * ("Just “Visa form”, then. I won't stop “Taxi booking”."), then the question about exactly those jobs; their next plain yes acts on them only. `named` are already quoted; `others` is
+     * `othersOf(...)`.
+     */
+    narrowedStatement: (named: string[], others: string): string => `Just ${listed(named, 'and')}, then. I won't stop ${others}.`,
+    /** FINAL (same file): the question about two or more of them (one job has the approved `askCancel`). `titles` are already quoted. */
+    askCancelMany: (titles: string[]): string => `Cancel ${listed(titles, 'and')}? Their files are kept, and the time they used is on their receipts. To come back to them later, I can pause them instead.`,
+    /** FINAL (same file): said last, after the cancelled lines of the jobs they named. Only what Brick did, never where the other jobs are now. */
+    notStopped: (others: string): string => `I haven't stopped ${others}.`,
     /** FINAL: the question before Stop, which ends every job on the computer, paused ones too (by words; asked every time). `titles` are already quoted. */
     askStop: (titles: string[]): string =>
         titles.length === 1
@@ -217,6 +227,83 @@ export const CONTROL_REFUSALS = {
 export function listed(titles: string[], word: 'and' | 'or' = 'and'): string {
     if (titles.length <= 1) return titles[0] ?? '';
     return `${titles.slice(0, -1).join(', ')} ${word} ${titles[titles.length - 1]}`;
+}
+
+/**
+ * FINAL (24 Nov, `/mnt/project-files/brick-same-title-and-narrow-stop/strings.txt`): how long ago something was, in words. Never a clock time (Brick often has no time zone for the person).
+ * Under a minute "just now"; "a minute ago", "{n} minutes ago"; "an hour ago", "{n} hours ago" (whole hours, rounded down); "a day ago", "{n} days ago"; 30 days or more "over a month ago".
+ */
+export function ageOf(then: number, now: number): string {
+    const minutes = Math.max(0, Math.floor((now - then) / 60_000));
+    if (minutes < 1) return 'just now';
+    if (minutes === 1) return 'a minute ago';
+    if (minutes < 60) return `${minutes} minutes ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours === 1) return 'an hour ago';
+    if (hours < 24) return `${hours} hours ago`;
+    const days = Math.floor(hours / 24);
+    if (days === 1) return 'a day ago';
+    if (days < 30) return `${days} days ago`;
+    return 'over a month ago';
+}
+
+/** A job named in a question that tells jobs of one title apart: its title, and when it ended (an ended job) or when the person asked for it (a live one). */
+export interface DatedJob {
+    title: string;
+    /** Milliseconds: the end time of an ended job, the time a live job was asked for. Absent when Orbit did not say. */
+    at?: number;
+}
+
+/**
+ * FINAL (24 Nov, same file): "which one do you mean?" when two or more of the jobs named share a title. They are given newest first (at most three).
+ *  - Every job has one title: `Which “T” do you mean: the one that ended 25 minutes ago, or the one that ended 3 days ago?` (three: the later ones are bare ages); live: "the one you asked for ...".
+ *  - Mixed: only a title shown more than once gets its age, in brackets: `Which job do you mean: “T” (ended 25 minutes ago), “T” (ended 3 days ago) or “Taxi booking”?`.
+ *  - When two of a title would read the same, or a time is missing, they are told apart by their order: "the newer one, or the older one" / "(newer)", "(older)".
+ * No title shown twice: the plain question (`plain`). `same` says whether two titles are one title.
+ */
+export function whichDated(kind: 'ended' | 'live', jobs: DatedJob[], now: number, same: (a: string, b: string) => boolean, plain: (quoted: string[]) => string): string {
+    const quoted = quotedTitles(jobs.map((job) => job.title));
+    const groups = jobs.map((job) => jobs.filter((other) => same(other.title, job.title)));
+    if (groups.every((group) => group.length === 1)) return plain(quoted);
+    // The age phrases of a title's jobs, or null when two read the same or one has no time
+    const phrases = (group: DatedJob[]): string[] | null => {
+        if (group.some((one) => one.at === undefined)) return null;
+        const ages = group.map((one) => ageOf(one.at as number, now));
+        return new Set(ages).size === ages.length ? ages : null;
+    };
+    const order3 = ['the newest one', 'the one before it', 'the oldest one'];
+    if (groups.every((group) => group.length === jobs.length)) {
+        const ages = phrases(jobs);
+        const title = quoted[0];
+        const mine = (age: string): string => (kind === 'ended' ? (age === 'just now' ? 'the one that just ended' : `the one that ended ${age}`) : `the one you asked for ${age}`);
+        if (!ages) {
+            const words = jobs.length === 2 ? ['the newer one', 'the older one'] : order3;
+            return `Which ${title} do you mean: ${words.slice(0, -1).join(', ')}, or ${words[words.length - 1]}?`;
+        }
+        // Two: each says the whole of it. Three: the first says it, the others are bare ages
+        const parts = jobs.length === 2 ? ages.map(mine) : [mine(ages[0]), ...ages.slice(1)];
+        return `Which ${title} do you mean: ${parts.slice(0, -1).join(', ')}, or ${parts[parts.length - 1]}?`;
+    }
+    const items = jobs.map((job, index) => {
+        const group = groups[index];
+        if (group.length === 1) return quoted[index];
+        const ages = phrases(group);
+        const place = group.indexOf(job);
+        // Told apart by order, every one by its own word: two are the newer and the older; three the newest, the middle and the oldest; more are numbered by their place in the whole question, which is the number a pick names (CodeRabbit on the round 10 head)
+        if (!ages) return `${quoted[index]} (${group.length === 2 ? ['newer', 'older'][place] : group.length === 3 ? ['newest', 'middle', 'oldest'][place] : `no. ${index + 1}`})`;
+        const age = ages[place];
+        return `${quoted[index]} (${kind === 'ended' ? `ended ${age}` : `asked for ${age}`})`;
+    });
+    return `${kind === 'ended' ? 'Which job do you mean' : 'Which one do you mean'}: ${listed(items, 'or')}?`;
+}
+
+/**
+ * FINAL (24 Nov, same file): the jobs left alone, as "I won't stop ..." and "I haven't stopped ..." name them. One titled: “Taxi booking”; two or three titled: “A” and “B” / “A”, “B” and “C”;
+ * more than three, or any untitled: "the other job" / "the other {n} jobs". Never "still running": Brick says only what it did.
+ */
+export function othersOf(titles: Array<string | null | undefined>): string {
+    if (titles.length >= 1 && titles.length <= 3 && titles.every((title) => typeof title === 'string' && title.trim() !== '')) return listed(titles.map((title) => quotedTitle(title as string)), 'and');
+    return titles.length === 1 ? 'the other job' : `the other ${titles.length} jobs`;
 }
 
 /** One line, with the job's title quoted, or its plain form when there is none. */

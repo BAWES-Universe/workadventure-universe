@@ -692,6 +692,11 @@ export interface ComputerControlAsk {
     pauseRunning?: boolean;
     /** With `stop`: the jobs the person confirmed. Orbit ends only those still live, never a job that began after the question was asked. */
     confirmedJobIds?: string[];
+    /**
+     * With `cancel`, sent only when the job was shown as never started and so goes without a question: Orbit then cancels it only if it still has not started, and otherwise
+     * cancels nothing and answers `{ ok: false, reason: 'started' }` (the job began after it was listed: the person is asked first, as for any job that has started).
+     */
+    expected?: 'not_started';
     isGuest?: boolean;
     /**
      * This control's own id (GPT's sixth answer, finding 4), made once where the person asked for it and the same every time THAT ask is sent again: Orbit applies a control once
@@ -720,6 +725,8 @@ export interface ComputerControlJob {
     control: 'brick' | 'person';
     /** The job has been paused before (Orbit's `pausedBefore`, or a pause count above 0): a job put back in line after it ran is `queued` with `queuedFor` `turn` and has this set. */
     pausedBefore: boolean;
+    /** When the person asked for the job (milliseconds), from Orbit's `askedAt` (an ISO time): a question that tells two jobs of one title apart says how long ago. Absent when Orbit did not say. */
+    askedAt?: number;
 }
 
 export interface ComputerControlView {
@@ -766,6 +773,7 @@ export function controlJobOf(value: unknown): ComputerControlJob | null {
         waitingFor: textOrNull(value.waitingFor),
         control: value.control === 'person' ? 'person' : 'brick',
         pausedBefore: value.pausedBefore === true || (countOrNull(value.pauses) ?? 0) > 0,
+        ...(typeof value.askedAt === 'string' && Number.isFinite(Date.parse(value.askedAt)) ? { askedAt: Date.parse(value.askedAt) } : typeof value.askedAt === 'number' && Number.isFinite(value.askedAt) && value.askedAt > 0 ? { askedAt: value.askedAt } : {}),
     };
 }
 
@@ -1437,7 +1445,7 @@ export class AdminApiService {
         };
     }
 
-    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<AxiosResponse<T>> {
+    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch' | 'delete', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -1479,6 +1487,21 @@ export class AdminApiService {
     async claimBrickOffer(viaBotId: string, userId: string, topic: string): Promise<{ show: boolean; topic: string }> {
         const response = await this.brickCall<{ show?: unknown; topic?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });
         return { show: response.data?.show === true, topic: typeof response.data?.topic === 'string' ? response.data.topic : topic };
+    }
+
+    /**
+     * The card for this topic was claimed (`claimBrickOffer`) but never reached the person (the chat refused it twice): Orbit takes the claim back, so the topic is suggested again
+     * another time and a card nobody saw never closes it (GPT's fifth note, after release). Orbit takes back only a claim the person has not answered. Never throws; says whether Orbit
+     * took it back (an older Orbit without this answers 404 or 405: nothing changes, as before).
+     */
+    async releaseBrickOffer(viaBotId: string, userId: string, topic: string): Promise<boolean> {
+        try {
+            const response = await this.brickCall<{ released?: unknown }>('delete', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });
+            return response.data?.released === true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not take back an offer that was never shown:', error instanceof Error ? error.message : error);
+            return false;
+        }
     }
 
     /**
@@ -1837,16 +1860,19 @@ export class AdminApiService {
      * pick). An Orbit that sends no `ended` list is answered with the one `retry` job it names. `null` when Orbit cannot be asked or the computer is not on (nothing is listed, and nothing is
      * started either way). One request, read only.
      */
-    async computerEndedJobs(viaBotId: string, userId: string): Promise<Array<{ id: string; title: string }> | null> {
+    async computerEndedJobs(viaBotId: string, userId: string): Promise<Array<{ id: string; title: string; endedAt?: number }> | null> {
         try {
             const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown; ended?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1', ended: '5' });
             if (!(response.data?.available === true && response.data?.on === true)) return null;
-            const jobs: Array<{ id: string; title: string }> = [];
+            const jobs: Array<{ id: string; title: string; endedAt?: number }> = [];
             if (Array.isArray(response.data.ended)) {
                 for (const raw of response.data.ended) {
                     if (typeof raw !== 'object' || raw === null || (raw as { continuable?: unknown }).continuable !== true) continue;
                     const one = retryJobOf({ ...raw, how: 'ended' });
-                    if (one && !jobs.some((seen) => seen.id === one.id)) jobs.push({ id: one.id, title: one.title });
+                    // When it ended (milliseconds), as Orbit says it (a time, or a number): the question that tells two jobs of one title apart says how long ago
+                    const rawEnd = (raw as { endedAt?: unknown }).endedAt;
+                    const endedAt = typeof rawEnd === 'number' ? rawEnd : typeof rawEnd === 'string' ? Date.parse(rawEnd) : NaN;
+                    if (one && !jobs.some((seen) => seen.id === one.id)) jobs.push({ id: one.id, title: one.title, ...(Number.isFinite(endedAt) && endedAt > 0 ? { endedAt } : {}) });
                 }
                 return jobs;
             }
@@ -2247,6 +2273,7 @@ export class AdminApiService {
                     ...(ask.action === 'stop' && Array.isArray(ask.confirmedJobIds) && ask.confirmedJobIds.length > 0 ? { confirmedJobIds: ask.confirmedJobIds } : {}),
                     ...(typeof ask.text === 'string' ? { text: ask.text } : {}),
                     ...(ask.pauseRunning ? { pauseRunning: true } : {}),
+                    ...(ask.action === 'cancel' && ask.expected === 'not_started' ? { expected: 'not_started' } : {}),
                 },
                 undefined,
                 undefined,

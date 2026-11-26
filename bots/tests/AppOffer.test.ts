@@ -15,7 +15,7 @@ vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } })
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
 import { AdminApiService } from '../server/AdminApiService';
-import { APP_CONNECTED_EVENT, APP_CONNECTED_KEY, APP_OFFER_KEY, MatrixDmBridge, appConnectedLine, connectedAppOf } from '../matrix/MatrixDmBridge';
+import { APP_CONNECTED_EVENT, APP_CONNECTED_KEY, APP_OFFER_KEY, MatrixDmBridge, NOTICE_TXN_KEY, appConnectedLine, connectedAppOf } from '../matrix/MatrixDmBridge';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool, topicOf } from '../ai/AppTools';
 import type { BrickNote } from '../ai/BrickTools';
 import type { MatrixEvent } from '../matrix/MatrixAppServiceRouter';
@@ -251,7 +251,45 @@ describe('An App offer in a Brick\'s chat', () => {
 
         expect(order).toEqual(['answer', 'card']);
         const { kind: _kind, ...card } = offer;
-        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Connect your calendar?', [APP_OFFER_KEY]: card }, expect.any(String)]);
+        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: 'Connect your calendar?', [APP_OFFER_KEY]: card, [NOTICE_TXN_KEY]: expect.any(String) }, expect.any(String)]);
+    });
+
+    it('gives the claim back to Orbit when the card could not be sent even on the second try (GPT\'s fifth note, after release)', async () => {
+        const { bridge, client, deps } = makeBridge();
+        const releaseApp = vi.fn(async () => undefined);
+        deps.reply.mockResolvedValue({ text: "I can't see your calendar yet.", media: [], bricks: [offer], claimApp: vi.fn(async () => 'app google calendar'), releaseApp });
+        await bridge.onEvent(invite());
+
+        // got through on the second try: nothing is given back
+        client.sendMessage.mockRejectedValueOnce(new Error('homeserver busy'));
+        await bridge.onEvent(message("What's on my calendar tomorrow?"));
+        expect(releaseApp).not.toHaveBeenCalled();
+
+        client.sendMessage.mockRejectedValueOnce(new Error('homeserver busy')).mockRejectedValueOnce(new Error('homeserver busy'));
+        await bridge.onEvent(message('And on Friday?'));
+        expect(releaseApp).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not give the claim back when both tries got no answer but the card is in the room, or the room cannot be read (Sentry on 21de3f046)', async () => {
+        const { bridge, client, deps } = makeBridge();
+        const releaseApp = vi.fn(async () => undefined);
+        deps.reply.mockResolvedValue({ text: "I can't see your calendar yet.", media: [], bricks: [offer], claimApp: vi.fn(async () => 'app google calendar'), releaseApp });
+        await bridge.onEvent(invite());
+
+        // both answers lost, but the first try arrived: the card is among the Brick's own messages under its transaction id
+        client.sendMessage.mockRejectedValueOnce(new Error('timeout')).mockRejectedValueOnce(new Error('timeout'));
+        client.getRecentMessages.mockImplementationOnce(async () => {
+            const sent = client.sendMessage.mock.calls.filter(([, , content]: any[]) => APP_OFFER_KEY in content).pop()!;
+            return [{ type: 'm.room.message', room_id: ROOM, sender: BRICK_USER, event_id: '$card', content: sent[2] }] as MatrixEvent[];
+        });
+        await bridge.onEvent(message("What's on my calendar tomorrow?"));
+        expect(releaseApp).not.toHaveBeenCalled();
+
+        // both lost and the room cannot be read: nothing is known, the claim stays
+        client.sendMessage.mockRejectedValueOnce(new Error('timeout')).mockRejectedValueOnce(new Error('timeout'));
+        client.getRecentMessages.mockRejectedValueOnce(new Error('down'));
+        await bridge.onEvent(message('And on Friday?'));
+        expect(releaseApp).not.toHaveBeenCalled();
     });
 
     it('puts which call connects the App on the card, so the game signs in a ready-made App the ready-made way', async () => {
@@ -261,7 +299,7 @@ describe('An App offer in a Brick\'s chat', () => {
         await bridge.onEvent(invite());
         await bridge.onEvent(message('Any new email?'));
         const { kind: _kind, ...card } = gmail;
-        expect(client.sendMessage.mock.calls[0][2]).toEqual({ msgtype: 'm.text', body: 'Connect your calendar?', [APP_OFFER_KEY]: card });
+        expect(client.sendMessage.mock.calls[0][2]).toEqual({ msgtype: 'm.text', body: 'Connect your calendar?', [APP_OFFER_KEY]: card, [NOTICE_TXN_KEY]: expect.any(String) });
         expect(client.sendMessage.mock.calls[0][2][APP_OFFER_KEY].connectKind).toBe('readyMade');
     });
 
@@ -291,14 +329,14 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(appConnectedLine('Google Calendar')).toContain('[Apps](#apps)');
     });
 
-    // CodeRabbit on 68379005 (outside the diff): the continuation's moment of consent is the original event's own time, else the time the inbox kept with it, never this try's clock
-    it('gives the continuation the original event\'s time, or the time the inbox kept when it has none, the same on every try', async () => {
+    // CodeRabbit on 68379005 (outside the diff), and GPT's eighth note A2: the continuation's moment of consent is the original event's own time and nothing else, never a clock
+    it('gives the continuation the original event\'s own time; an event with no time of its own has none (not the inbox\'s arrival), the same on every try', async () => {
         const { bridge, deps } = makeBridge();
         deps.reply.mockResolvedValue({ text: 'Done.', media: [] });
         await bridge.onEvent(invite());
         const hooks = { paid: async () => undefined, durable: true, arrived: 1_234_567 };
         await bridge.onEvent(connected(), hooks);
-        expect(deps.reply.mock.calls[0][4].eventTs).toBe(1_234_567);
+        expect(deps.reply.mock.calls[0][4].eventTs).toBeUndefined();
         const timed = { ...connected(), origin_server_ts: 1_700_000_000_123 };
         await bridge.onEvent(timed, hooks);
         expect(deps.reply.mock.calls[1][4].eventTs).toBe(1_700_000_000_123);
@@ -319,24 +357,36 @@ describe('An App offer in a Brick\'s chat', () => {
         expect(client.sendText.mock.calls.map(([, , words]) => words)).toContain(appConnectedLine('Google Calendar'));
     });
 
-    // CodeRabbit on ea88b4c1, finding 6: the continuation a resting Brick remembers keeps the moment of consent the inbox kept, never the clock of the moment it was stored
-    it('keeps the inbox\'s time with a continuation it remembers while the Brick rests, and answers it later with that time', async () => {
+    // CodeRabbit on ea88b4c1, finding 6, and GPT's eighth note A2: the continuation a resting Brick remembers keeps the original event's own time (none when it had none), never a clock
+    it('keeps the original event\'s time with a continuation it remembers while the Brick rests, and answers it later with that time; an event with none stays without one', async () => {
         const { bridge, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
         deps.reply.mockResolvedValue({ text: 'Tomorrow: 10:00 standup.', media: [] });
         await bridge.onEvent(invite());
-        // taken in by the inbox a minute before the Brick rested on it
-        const arrived = Date.now() - 60_000;
-        await bridge.onEvent(connected(), { paid: async () => undefined, durable: true, arrived });
+        // the event's own time, a minute before the Brick rested on it
+        const own = Date.now() - 60_000;
+        await bridge.onEvent({ ...connected(), origin_server_ts: own }, { paid: async () => undefined, durable: true, arrived: Date.now() });
         expect(deps.reply).not.toHaveBeenCalled();
 
         deps.getBotConfig.mockResolvedValue({ ...config, enabled: true });
         await bridge.checkWaiting();
 
         expect(deps.reply).toHaveBeenCalledTimes(1);
-        expect(deps.reply.mock.calls[0][4]).toMatchObject({ note: true, eventTs: arrived });
+        expect(deps.reply.mock.calls[0][4]).toMatchObject({ note: true, eventTs: own });
     });
 
-    it('keeps the inbox\'s time with any message a resting Brick remembers that has no time of its own', async () => {
+    it('an event with no time of its own that the Brick remembers is answered later with none, whatever the inbox kept', async () => {
+        const { bridge, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
+        deps.reply.mockResolvedValue({ text: 'Tomorrow: 10:00 standup.', media: [] });
+        await bridge.onEvent(invite());
+        await bridge.onEvent(connected(), { paid: async () => undefined, durable: true, arrived: Date.now() - 60_000 });
+        deps.getBotConfig.mockResolvedValue({ ...config, enabled: true });
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        expect(deps.reply.mock.calls[0][4]).toMatchObject({ note: true });
+        expect(deps.reply.mock.calls[0][4].eventTs).toBeUndefined();
+    });
+
+    it('a message a resting Brick remembers that has no time of its own is answered later with none (a clock is not consent)', async () => {
         const { bridge, deps, config } = makeBridge({ botId: BRICK, name: 'Brick', enabled: false, aiProviderRef: 'universe-ai', roomUrl: '', brick: { ownerId: 'user-alice', isDefault: true } });
         deps.reply.mockResolvedValue({ text: 'Sure.', media: [] });
         await bridge.onEvent(invite());
@@ -348,7 +398,7 @@ describe('An App offer in a Brick\'s chat', () => {
         await bridge.checkWaiting();
 
         expect(deps.reply).toHaveBeenCalledTimes(1);
-        expect(deps.reply.mock.calls[0][4]).toMatchObject({ eventTs: arrived });
+        expect(deps.reply.mock.calls[0][4].eventTs).toBeUndefined();
     });
 
     it('ignores a connected event that is not whole, and one a bot sent', async () => {
