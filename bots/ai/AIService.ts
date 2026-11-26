@@ -10,7 +10,7 @@
 
 import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
-import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer, InstantListing } from '../server/AdminApiService';
+import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer, BotVisionPlan, InstantListing } from '../server/AdminApiService';
 import { KEY_NOT_LENT_LINE, reachFor } from '../server/AdminApiService';
 import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
@@ -232,8 +232,11 @@ function sentOnlyTo(options: TurnOptions | undefined, playerId: number | undefin
 type UsageTalker = { channel: 'dm' | 'nearby' | 'task'; userId?: string; isGuest?: boolean; greeting?: boolean; runId?: string; eventId?: string };
 
 type ResolvedProvider =
-    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key'; forOthers?: boolean }
+    | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key'; forOthers?: boolean; vision?: ResolvedVision }
     | { resting: true; line: string };
+
+/** Where this bot's images go, when Orbit says (the Vision row): its own model, Universe AI, or a Vision model on the maker's key. */
+type ResolvedVision = { choice: 'this' } | { choice: 'universe-ai' } | { choice: 'another'; config: AIProviderConfig };
 
 /** Refs that only Orbit can resolve for a bot: Universe AI (follows the Default) and a person's own key (`key-…`). */
 /**
@@ -891,7 +894,25 @@ export class AIService {
             // Orbit always says; if it ever didn't, the safe reading is that the person typed the address
             config.ownKey = { addressTyped: answer.keyAddressTyped !== false };
         }
-        return { resting: false, config, source: answer.source, ...(answer.forOthers ? { forOthers: true } : {}) };
+        return { resting: false, config, source: answer.source, ...(answer.forOthers ? { forOthers: true } : {}), vision: this.visionFromAnswer(answer.vision) };
+    }
+
+    /**
+     * Orbit's plan for the bot's images. A key picked for images that can't be read here is never swapped for Universe AI: the
+     * images are left to the bot's own model, as when Orbit itself says the key can't be used.
+     */
+    private visionFromAnswer(plan: BotVisionPlan | undefined): ResolvedVision | undefined {
+        if (!plan) return undefined;
+        if (plan.choice !== 'another') return { choice: plan.choice };
+        try {
+            // The model picked is the one that looks: no declared visionModel may stand in for it, and Orbit has checked it sees
+            const config = { ...this.buildProviderConfig(plan.credentials), visionModel: null, supportsVision: true };
+            config.ownKey = { addressTyped: plan.credentials.keyAddressTyped !== false };
+            return { choice: 'another', config };
+        } catch (error) {
+            console.error('[AIService] The key picked for images could not be read; leaving images to the bot\'s own model:', error);
+            return { choice: 'this' };
+        }
     }
 
     private buildProviderConfig(credentialsData: AIProviderCredentials): AIProviderConfig {
@@ -968,7 +989,20 @@ export class AIService {
                 console.warn('[AIService] No default vision provider configured; sending image URLs as text');
                 return '';
             }
+            return await this.describeImages(defaultConfig, images, abortSignal);
+        } catch (error) {
+            console.error('[AIService] Vision describe failed:', error);
+            return '';
+        }
+    }
 
+    /** Describe images with a given provider (fails soft, '' on any error), shared by Universe AI's default and a key picked for images. */
+    private async describeImages(
+        defaultConfig: AIProviderConfig,
+        images: string[],
+        abortSignal?: AbortSignal
+    ): Promise<string> {
+        try {
             // Use the provider's declared vision model when set (e.g.
             // deepseek-v4-flash-vision-exp on the DeepSeek entry). A declared
             // visionModel IS a capability assertion, so also force
@@ -1512,6 +1546,8 @@ export class AIService {
             }
 
             let config = resolved.config;
+            // Where this bot's images go, read here where `resolved` is known to be a provider and not a resting bot
+            const visionPlan = (resolved as Extract<ResolvedProvider, { resting: false }>).vision;
             if (turn) turn.guard = (config.limits ?? BOT_LIMIT_DEFAULTS).guard;
             // Usage is recorded against the provider that really answered (Universe AI is its Default, a key is the key)
             usageProviderId = config.providerId;
@@ -1534,13 +1570,28 @@ export class AIService {
                 // The configured main model is the bot's brain and must always
                 // be the one answering (persona, chat instructions, tools).
                 const visionCapable = this.providerRegistry.supportsVision(config);
-                if (!visionCapable) {
-                    // A person's own key without Vision never has its images described by Universe AI: the image would
-                    // leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
+                // Who looks: when Orbit says (the Vision row), what the owner picked or the shown default; otherwise as it always
+                // was. A person's own key without Vision never has its images described by Universe AI unless the owner picked it:
+                // the image would leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
+                const plan = visionPlan;
+                const lookWith: 'self' | 'link' | 'universe-ai' | 'another' = plan
+                    ? plan.choice === 'this'
+                        ? visionCapable
+                            ? 'self'
+                            : 'link'
+                        : plan.choice
+                    : visionCapable
+                      ? 'self'
+                      : resolved.source === 'own-key'
+                        ? 'link'
+                        : 'universe-ai';
+                if (lookWith !== 'self') {
                     const description =
-                        resolved.source === 'own-key'
-                            ? ''
-                            : await this.describeImagesViaDefaultVision(visionImages, abortSignal);
+                        lookWith === 'another' && plan?.choice === 'another'
+                            ? await this.describeImages(plan.config, visionImages, abortSignal)
+                            : lookWith === 'universe-ai'
+                              ? await this.describeImagesViaDefaultVision(visionImages, abortSignal)
+                              : '';
                     if (description) {
                         message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
                         // Persist the description into conversation history so
@@ -1558,6 +1609,11 @@ export class AIService {
                         } catch (memoryError) {
                             console.error('[AIService] Failed to persist vision description to memory:', memoryError);
                         }
+                    }
+                    else {
+                        // Nothing looked at it (the pick is "this model" and it can't see, or the one picked failed just now): say so
+                        // to the model, so it tells the person plainly instead of asking them to describe what they sent
+                        message = `${message}\n[The image could not be looked at, so what is in it is not known. Say so in one short line. Do not ask the person to describe it or to do anything else for it.]`;
                     }
                     // Images are NOT passed to a text-only main model (it would 400 on
                     // image_url blocks). The URL/description stays in the message text.
@@ -2302,7 +2358,7 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel);
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel, (resolved as { vision?: ResolvedVision }).vision);
                             // A card went to one person alone (#1658): the line everyone reads is the whole reply, said instead of the model's own words
                             if (present !== undefined && toolResults.some((tr) => readsForTheGroup(tr.name))) {
                                 readForTheGroup = true;
@@ -4594,6 +4650,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     }
 
     /**
+     * How an image a file tool opens is looked at, the same way as one people send (see the Vision row): the owner's pick when Orbit
+     * says, otherwise Universe AI's default vision, except for a bot on a person's own key. "This model" never sends it elsewhere.
+     */
+    private lookAtOpened(
+        vision: ResolvedVision | undefined,
+        source: string | undefined,
+        abortSignal?: AbortSignal
+    ): { look?: (url: string) => Promise<string> } {
+        if (vision) {
+            if (vision.choice === 'another') return { look: (url: string) => this.describeImages(vision.config, [url], abortSignal) };
+            if (vision.choice === 'universe-ai') return { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
+            return {};
+        }
+        return source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
+    }
+
+    /**
      * Run one file tool (#1508) for the person talking to the bot, in their chat. A file sent again goes out as it was:
      * in a bubble as a line of nearby chat, in a direct message with the reply. Never throws.
      */
@@ -4608,11 +4681,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             playerId?: number;
             abortSignal?: AbortSignal;
             source?: string;
+            /** Where this bot's images go, when Orbit says (the Vision row). */
+            vision?: ResolvedVision;
             /** Set when other people read the reply (#1993): everyone else who is there. */
             present?: readonly string[];
         }
     ): Promise<Record<string, unknown>> {
-        const { botClient, spaceName, botId, playerId, abortSignal, source, present } = where;
+        const { botClient, spaceName, botId, playerId, abortSignal, source, vision, present } = where;
         const admin = where.adminApiService ?? this.adminApiService;
         if (!admin || !botId || playerId === undefined) return { error: "Earlier files can't be looked up right now." };
         const who = this.chatCallFor(botId, playerId, botClient, spaceName);
@@ -4626,8 +4701,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             limits,
             artifacts: artifactsEnabled(),
             linkOf: (store) => linkOfStore(store),
-            // One look through Universe AI's vision, never for a bot on a person's own key (as for images people send)
-            ...(source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) }),
+            // One look at an image it opened, by whoever looks at images people send it: what the owner picked, or, with nothing
+            // picked, Universe AI's vision, never for a bot on a person's own key
+            ...this.lookAtOpened(vision, source, abortSignal),
             send: async (file, url) =>
                 this.someoneCameSince(botClient, spaceName, playerId, present)
                     ? SOMEONE_CAME
@@ -4945,7 +5021,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** The Apps a review in this reply said the computer could do better (the reply's own set, filled as it goes). */
         reviewedApps?: ReadonlySet<string>,
         /** Where the reply is said: the memory tools (what is remembered, forgetting it) are the person's own and run only in their direct message, whatever the model asks for. */
-        channel: 'world' | 'dm' = 'world'
+        channel: 'world' | 'dm' = 'world',
+        /** Where this bot's images go (the Vision row), when Orbit says: an image it opens is looked at the same way as one sent to it. */
+        vision?: ResolvedVision
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -5281,7 +5359,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runFileToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present }
+                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present, vision }
                         );
                         break;
 
