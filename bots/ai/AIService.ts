@@ -144,7 +144,7 @@ import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
 import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
-import { REPORT_TOOL, type ReportTurn, newReportTurn, noteWhatRan, reportToolDefinition, runReportTool } from './ReportTools';
+import { REPORT_TOOL, type ReportTurn, type StepSources, newReportTurn, noteWhatRan, reportToolDefinition, runReportTool } from './ReportTools';
 import {
     InstantOffers,
     endInstantTask,
@@ -2362,9 +2362,8 @@ export class AIService {
                             // Tool calls from a reply that hit its length cap may hold half a file (the repair of broken JSON would still
                             // pass it): the first round reads the cap from this chunk, later rounds from the previous round's last chunk
                             const replyCutOff = !!(followUpIterations === 1 ? chunk.metadata?.truncated : lastFollowUpDoneChunk?.metadata?.truncated);
-                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel, (resolved as { vision?: ResolvedVision }).vision, reportTurn);
-                            // A note to the Universe team later in this reply says which of these steps it is about and how it ended
-                            noteWhatRan(reportTurn, toolResults, {
+                            const toolResults = await this.executeToolCalls(pendingToolCalls, botClient, adminApiService || this.adminApiService, toolServerMap, playerUuid, spaceName, botId, playerId, abortSignal, toolTimeoutSeconds ?? botClient?.getFullConfig()?.toolTimeoutSeconds, replyCutOff, (resolved as { source?: string }).source, turnMedia, present, !!taskSettings, forOthers, options?.onlyForThem === true, reviewedApps, channel, (resolved as { vision?: ResolvedVision }).vision, reportTurn, {
+                                // A note to the Universe team says which of these steps it is about and how it ended (recorded as the round ends)
                                 apps: toolServerMap,
                                 offered: new Set((tools as Array<{ function?: { name?: string } }>).map((tool) => tool.function?.name ?? '').filter(Boolean)),
                             });
@@ -5073,7 +5072,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         /** Where this bot's images go (the Vision row), when Orbit says: an image it opens is looked at the same way as one sent to it. */
         vision?: ResolvedVision,
         /** This reply's notes to the Universe team: the steps it ran so far and its reference. */
-        reportTurn?: ReportTurn
+        reportTurn?: ReportTurn,
+        /** Where this reply's tools came from (its Apps, and the tools it was offered), to record each step for a note. */
+        reportSources?: StepSources
     ): Promise<Array<{ id: string; name: string; result: any; endedAt?: number }>> {
         // What this reply sends goes to its person alone unless other people read the reply (#1993)
         const only = present === undefined ? playerId : undefined;
@@ -5087,6 +5088,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
         }
         
+        // A note to the Universe team can be about a step of this same round: it waits until the round's other calls ended and were recorded
+        let othersRecorded: () => void = () => undefined;
+        const othersRan = new Promise<void>((resolve) => (othersRecorded = resolve));
+
         // Execute all tool calls in parallel for better performance
         const toolPromises = validToolCalls.map(async (toolCall) => {
             // A private answer was offered no tools: whatever the model asks for anyway would show its steps, cards and files to the whole space
@@ -5453,6 +5458,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         break;
 
                     case REPORT_TOOL:
+                        await othersRan;
                         result = await this.runReportToolCall(
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { adminApiService, botId, playerId, channel, source, turn: reportTurn }
@@ -5653,8 +5659,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             }
         });
 
+        // Each step this round ran (never a note itself), kept for a note later in this round or this reply
+        const recorded = Promise.all(toolPromises.filter((_, index) => validToolCalls[index].name !== REPORT_TOOL))
+            .then((results) => {
+                if (reportTurn && reportSources) noteWhatRan(reportTurn, results, reportSources);
+            })
+            .finally(othersRecorded);
+
         // Wait for all tool calls to complete in parallel
-        return Promise.all(toolPromises);
+        const results = await Promise.all(toolPromises);
+        await recorded.catch(() => undefined);
+        return results;
     }
 
     /**

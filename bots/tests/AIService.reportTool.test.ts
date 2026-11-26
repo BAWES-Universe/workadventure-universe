@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AIService } from "../ai/AIService";
 import { MCPConnector } from "../mcp/MCPConnector";
-import { REPORT_TOOL } from "../ai/ReportTools";
+import { REPORT_TOOL, newReportTurn } from "../ai/ReportTools";
 import { describeStep, resultOf } from "../ai/ToolSteps";
 import { openToolGate } from "./helpers/openToolGate";
 
@@ -75,6 +75,52 @@ describe("the note to the Universe team in a Brick's replies", () => {
         expect(memory.pendingBricks).toEqual([expect.objectContaining({ kind: "report", id: "n1", key: "k1", title: "Failed: Pages" })]);
         // Product-only: nothing the person wrote (or the model wrote into the call) goes to Orbit
         expect(JSON.stringify(sendBrickReport.mock.calls)).not.toContain("listings");
+    });
+
+    it("a note in the same round as the step it is about waits for that step, and the step is recorded once", async () => {
+        const service = openToolGate(new AIService(null!, null!, ""));
+        (service as unknown as { conversationMemory: unknown }).conversationMemory = {
+            getMemory: () => ({ userUuid: "uuid-alice", isGuest: false, playerName: "Alice", conversationHistory: [], pendingBricks: [] }),
+        };
+        service.noteBrick("b1", { isDefault: false, ownerId: "owner-1" });
+        const sendBrickReport = vi.fn(async () => ({
+            sent: true,
+            id: "n1",
+            takeBackKey: "k1",
+            note: { kind: "problem", area: "pages", effect: "stopped", title: "Failed: Pages", operation: "read_page", failure: "failed", retried: false },
+        }));
+        const admin = { isConfigured: () => true, sendBrickReport };
+        const turn = newReportTurn("$event-1");
+        const results = await service["executeToolCalls"](
+            [
+                { id: "1", name: REPORT_TOOL, arguments: JSON.stringify({ kind: "problem", area: "pages", effect: "stopped" }) },
+                { id: "2", name: "read_page", arguments: "{}" },
+            ],
+            undefined,
+            admin as never,
+            new Map(),
+            undefined,
+            undefined,
+            "b1",
+            7,
+            undefined,
+            null,
+            false,
+            "own-key",
+            undefined,
+            undefined,
+            false,
+            true,
+            false,
+            undefined,
+            "dm",
+            undefined,
+            turn,
+            { apps: new Map(), offered: new Set(["read_page", REPORT_TOOL]) }
+        );
+        expect(results.map((r: { id: string }) => r.id)).toEqual(["1", "2"]);
+        expect(turn.steps).toEqual([expect.objectContaining({ name: "read_page", operation: "read_page" })]);
+        expect(sendBrickReport).toHaveBeenCalledWith(expect.objectContaining({ operation: "read_page", failure: turn.steps[0].failure }));
     });
 
     it("never shows a note that did not go as sent", () => {
