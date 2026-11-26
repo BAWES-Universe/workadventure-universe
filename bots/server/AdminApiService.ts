@@ -418,6 +418,8 @@ export interface InstantToolInfo {
     strength?: string;
     /** The owner has never had a run of this App that worked: its first use says once that their own free account has no Universe limit. */
     firstUse?: boolean;
+    /** What kind of App it is, as Orbit says it: only a `research` one is told to the Brick as a research App (search right away, pick by strength). */
+    kind?: 'research';
 }
 
 /**
@@ -2001,6 +2003,7 @@ export class AdminApiService {
                 ...(asShort(tool.app, 40) ? { app: asShort(tool.app, 40) } : {}),
                 ...(asShort(tool.strength, 120) ? { strength: asShort(tool.strength, 120) } : {}),
                 ...(tool.firstUse === true ? { firstUse: true } : {}),
+                ...(tool.kind === 'research' ? { kind: 'research' as const } : {}),
             });
         }
         const research = answer.data.research as Record<string, unknown> | null | undefined;

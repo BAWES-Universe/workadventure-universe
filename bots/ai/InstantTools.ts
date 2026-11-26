@@ -75,7 +75,8 @@ export function instantToolDefinitions(listing: InstantListing | null): ToolDefi
 export function researchAppsOf(listing: InstantListing | null): Array<{ app: string; strength: string; firstUse: boolean }> {
     const apps: Array<{ app: string; strength: string; firstUse: boolean }> = [];
     for (const tool of listing?.ready ? listing.tools : []) {
-        if (!tool.app || apps.some((one) => one.app === tool.app)) continue;
+        // Only an App Orbit says is a research one: any other App's tool keeps the general rules (ask first, no search right away)
+        if (tool.kind !== 'research' || !tool.app || apps.some((one) => one.app === tool.app)) continue;
         apps.push({ app: tool.app, strength: tool.strength ?? '', firstUse: tool.firstUse === true });
     }
     return apps;

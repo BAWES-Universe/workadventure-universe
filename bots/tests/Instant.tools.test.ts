@@ -27,6 +27,7 @@ import {
     instantToolDefinitions,
     instantToolName,
     instantToolsNote,
+    researchAppsOf,
     isInstantTool,
     mixedTaskNote,
     newInstantTask,
@@ -261,9 +262,9 @@ describe('research Apps on by default: what the Brick knows about them', () => {
     const research = (over: Partial<InstantListing['tools'][number]>[] = []): InstantListing =>
         listing({
             tools: [
-                { name: 'EXA_GET_CONTENTS_ACTION', toolkit: 'exa', description: 'Read pages.', inputSchema: SEARCH_SCHEMA, fromMicros: 1600, app: 'Exa', strength: 'Papers, companies and people', firstUse: true },
-                { name: 'EXA_SEARCH', toolkit: 'exa', description: 'Search the web.', inputSchema: SEARCH_SCHEMA, fromMicros: 7600, app: 'Exa', strength: 'Papers, companies and people', firstUse: true },
-                { name: 'TAVILY_SEARCH', toolkit: 'tavily', description: 'Search the news.', inputSchema: SEARCH_SCHEMA, fromMicros: 8600, app: 'Tavily', strength: 'Fresh news and quick facts' },
+                { name: 'EXA_GET_CONTENTS_ACTION', toolkit: 'exa', description: 'Read pages.', inputSchema: SEARCH_SCHEMA, fromMicros: 1600, app: 'Exa', kind: 'research' as const, strength: 'Papers, companies and people', firstUse: true },
+                { name: 'EXA_SEARCH', toolkit: 'exa', description: 'Search the web.', inputSchema: SEARCH_SCHEMA, fromMicros: 7600, app: 'Exa', kind: 'research' as const, strength: 'Papers, companies and people', firstUse: true },
+                { name: 'TAVILY_SEARCH', toolkit: 'tavily', description: 'Search the news.', inputSchema: SEARCH_SCHEMA, fromMicros: 8600, app: 'Tavily', kind: 'research' as const, strength: 'Fresh news and quick facts' },
             ].map((tool, at) => ({ ...tool, ...(over[at] ?? {}) })),
         });
 
@@ -272,13 +273,14 @@ describe('research Apps on by default: what the Brick knows about them', () => {
             ready: true,
             reason: null,
             tools: [
-                { name: 'EXA_SEARCH', toolkit: 'exa', description: 'Search', inputSchema: SEARCH_SCHEMA, fromMicros: 7600, app: 'Exa', strength: ' Papers,\n companies ', firstUse: true },
+                { name: 'EXA_SEARCH', toolkit: 'exa', description: 'Search', inputSchema: SEARCH_SCHEMA, fromMicros: 7600, app: 'Exa', kind: 'research', strength: ' Papers,\n companies ', firstUse: true },
                 { name: 'TAVILY_SEARCH', toolkit: 'tavily', description: null, inputSchema: SEARCH_SCHEMA, fromMicros: 8600, app: 'x'.repeat(41), strength: 'y'.repeat(121), firstUse: 'yes' },
             ],
         });
         const found = await admin().instantTools(BRICK);
-        expect(found?.tools[0]).toMatchObject({ app: 'Exa', strength: 'Papers, companies', firstUse: true });
+        expect(found?.tools[0]).toMatchObject({ app: 'Exa', kind: 'research', strength: 'Papers, companies', firstUse: true });
         expect(found?.tools[1]).not.toHaveProperty('app');
+        expect(found?.tools[1]).not.toHaveProperty('kind');
         expect(found?.tools[1]).not.toHaveProperty('strength');
         expect(found?.tools[1]).not.toHaveProperty('firstUse');
     });
@@ -308,6 +310,16 @@ describe('research Apps on by default: what the Brick knows about them', () => {
         expect(none).not.toMatch(/no Universe limit/);
         // With no research App in the listing (an older Orbit), the general rules stay as they were
         expect(instantToolsNote(listing())).not.toMatch(/Research Apps/);
+    });
+
+    it('only Apps Orbit calls research Apps get the research instructions: another App’s tool, with a name and a line, keeps the general rules', () => {
+        const other = listing({ tools: [{ name: 'GMAIL_SEND', toolkit: 'gmail', description: 'Send mail.', inputSchema: SEARCH_SCHEMA, fromMicros: 1000, app: 'Gmail', strength: 'Your mail', firstUse: true }] });
+        expect(researchAppsOf(other)).toEqual([]);
+        const note = instantToolsNote(other);
+        expect(note).not.toMatch(/Research Apps|search right away|no Universe limit/);
+        // Mixed: only the research one is named as research
+        const mixed = listing({ tools: [...research().tools, ...other.tools] });
+        expect(researchAppsOf(mixed).map((one) => one.app)).toEqual(['Exa', 'Tavily']);
     });
 
     it('tells the Brick to use its owner’s own search App first', () => {
