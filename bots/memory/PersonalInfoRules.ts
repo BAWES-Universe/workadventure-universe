@@ -39,17 +39,36 @@ const CLAUSE_END = /\s*(?:[,;:]|\b(?:and|but|though|although|however|because|whi
  * The parts of a message that each say one thing ("I'm not hungry, I'm tired" is two), each with whether its sentence was a
  * question. A "not" is only looked for in the part that holds the thing, so "my name is Sara and I don't like tea" keeps the name.
  */
-function clausesOf(message: string): Array<{ text: string; question: boolean }> {
-    return sentencesOf(message).flatMap((sentence) => {
+function clausesOf(message: string): Array<{ text: string; question: boolean; takenBack: boolean }> {
+    const sentences = sentencesOf(message).map((sentence) => {
         const clauses = sentence.text
             .split(CLAUSE_END)
             .map((text) => text.trim())
             .filter(Boolean);
         // A question asks in its last clause, or in all of them when it starts by asking ("Am I tired and hungry?")
         const asksAll = sentence.question && ASKS.test(sentence.text);
-        return clauses.map((text, index) => ({ text, question: sentence.question && (asksAll || index === clauses.length - 1) }));
+        return clauses.map((text, index) => ({ text, question: sentence.question && (asksAll || index === clauses.length - 1), takenBack: false }));
     });
+    // A "not" on its own at the very end takes back what was said just before it: "I'm tired not", "I'm tired, not really", "I'm tired. Not.", "my birthday is May 3 lol not"
+    const result: Array<{ text: string; question: boolean; takenBack: boolean }> = [];
+    for (const clauses of sentences) {
+        for (const clause of clauses) {
+            if (BARE_NOT.test(clause.text)) {
+                const before = result[result.length - 1];
+                if (before) before.takenBack = true;
+            } else {
+                clause.takenBack = NOT_AT_THE_END.test(clause.text);
+                result.push(clause);
+            }
+        }
+    }
+    return result;
 }
+
+/** A clause that is only "not" or "not really", maybe after "lol" or "jk": it takes back the clause before it. */
+const BARE_NOT = /^(?:(?:lol|lmao|haha|jk)[\s,.!]*)?not(?:\s+really)?[\s.!?]*$/iu;
+/** A clause that ends in "not" or "lol not": it takes itself back. */
+const NOT_AT_THE_END = /\s(?:(?:lol|lmao|haha|jk)[\s,.!]*)?not(?:\s+really)?[\s.!?]*$/iu;
 
 /** Words said just before "like" / "feel" / "am" that turn it around, or put it in another's mouth. */
 const NEGATED = new RegExp(`\\b(?:not|never|no longer|hardly|barely|rarely|dont|cannot|can${APOS}?t|won${APOS}?t|isn${APOS}?t|wasn${APOS}?t|don${APOS}?t|doesn${APOS}?t|didn${APOS}?t|n${APOS}t)\\b|n${APOS}t\\b`, 'iu');
@@ -136,7 +155,7 @@ export function nameIn(message: string): string | null {
             const at = sentence.text.indexOf(clause.text, cursor);
             const before = at === -1 ? '' : sentence.text.slice(0, at);
             if (at !== -1) cursor = at + clause.text.length;
-            if (clause.question) continue;
+            if (clause.question || clause.takenBack) continue;
             for (const { form, bare } of NAME_FORMS) {
                 const match = form.exec(clause.text);
                 if (!match?.[1] || negatedBy(clause.text, match)) continue;
@@ -199,7 +218,7 @@ function isATitle(phrase: string): boolean {
 
 function thingOf(rest: string): string | null {
     let phrase = rest
-        .split(/\s*(?:[;:()]|,\s*(?:thanks|thank you|thx|please|pls|lol|haha|honestly|though|ok|okay|really|btw)\b|\s[-–—]\s|\b(?:but|because|since|so|though|although|except|unless|when|whenever|if|which|that|and then)\b)/iu)[0]
+        .split(/\s*(?:[;:()]|,\s*(?:not|thanks|thank you|thx|please|pls|lol|haha|honestly|though|ok|okay|really|btw)\b|\s[-–—]\s|\b(?:but|because|since|so|though|although|except|unless|when|whenever|if|which|that|and then)\b)/iu)[0]
         .replace(/\s+(?:too|a lot|a bit|very much|so much|as well|also|though|however|anymore|now|again|right now|lol|lmao|haha|btw|please|pls|thanks|thank you|honestly|tbh)$/iu, '')
         .trim()
         .replace(/[\s,.!?…"'`“”]+$/u, '');
@@ -267,9 +286,12 @@ export function tastesIn(message: string): Tastes {
         }
         if (!list.some((kept) => kept.toLowerCase() === value.toLowerCase())) list.push(value);
     };
-    for (const sentence of sentencesOf(message).flatMap(sayingsOf)) {
+    const sayings = sentencesOf(message).flatMap(sayingsOf);
+    for (const [at, sentence] of sayings.entries()) {
         if (sentence.question) continue;
         const text = sentence.text;
+        // A "not" at the very end takes it back ("I like tea, not really", "I hate tea. Not.")
+        if (NOT_AT_THE_END.test(text) || (at + 1 < sayings.length && BARE_NOT.test(sayings[at + 1].text))) continue;
         const negative = NEG_LIKE.exec(text) ?? CANT_STAND.exec(text);
         if (negative) {
             if (!HEDGE.test(text.slice(0, negative.index))) push(dislikes, likes, thingOf(negative[negative.length - 1]));
@@ -304,7 +326,7 @@ const STATE = new RegExp(`\\bi(?:${APOS}m| am| feel)\\s+(${STATES})\\b(?!\\s+(?:
 /** How the person says they feel now ("I'm tired"), and not what they say they do not ("I'm not tired", "am I tired?"). */
 export function stateIn(message: string): string | null {
     for (const sentence of clausesOf(message)) {
-        if (sentence.question) continue;
+        if (sentence.question || sentence.takenBack) continue;
         const match = STATE.exec(sentence.text);
         if (match?.[1] && !negatedBy(sentence.text, match)) return match[1].toLowerCase();
     }
@@ -324,7 +346,7 @@ const BIRTHDAY_ON = [
 /** True when the person says it is their own birthday today (not a friend's, and not "it's not my birthday"). */
 export function birthdayIsToday(message: string): boolean {
     return clausesOf(message).some((sentence) => {
-        const match = sentence.question ? null : BIRTHDAY_TODAY.exec(sentence.text);
+        const match = sentence.question || sentence.takenBack ? null : BIRTHDAY_TODAY.exec(sentence.text);
         return match !== null && !negatedBy(sentence.text, match);
     });
 }
@@ -332,7 +354,7 @@ export function birthdayIsToday(message: string): boolean {
 /** The day the person says their own birthday is, as they wrote it ("March 3", "3/3"). */
 export function birthdayDateIn(message: string): string | null {
     for (const sentence of clausesOf(message)) {
-        if (sentence.question) continue;
+        if (sentence.question || sentence.takenBack) continue;
         for (const form of BIRTHDAY_ON) {
             const match = form.exec(sentence.text);
             if (match?.[1] && !negatedBy(sentence.text, match)) return match[1];
