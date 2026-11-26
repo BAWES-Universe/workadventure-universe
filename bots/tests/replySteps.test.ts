@@ -148,6 +148,18 @@ describe("a reply's room for tool results", () => {
         expect(room.steps[1]!.results[0]!.content).toBe('b'.repeat(200));
     });
 
+    it('for a run, keeps the total within the room across several results even when nothing is left for their text (only the notes)', () => {
+        const room = new StepRoom(1000, true);
+        const results = [9, 9, 9, 9, 1000].map((length, n) => ({ id: `c${n}`, name: 's', content: 'r'.repeat(length) }));
+        const note = (whole: number) => `\n[Only the first 0 of ${whole.toLocaleString('en-US')} characters fit in this reply's room for tool results ("Room for tool results in one reply").]`.length;
+        // What the model said takes what the room has left once the five notes are counted: no text of any result fits
+        const calls = results.map((result) => ({ id: result.id, name: 's', arguments: '{}' }));
+        const said = 1000 - calls.length * 3 - results.reduce((total, result) => total + note(result.content.length), 0);
+        room.add({ content: 'x'.repeat(said), calls, results });
+        expect(room.size()).toBeLessThanOrEqual(1000);
+        for (const result of room.steps[0]!.results) expect(result.content.startsWith('\n[Only the first 0 of')).toBe(true);
+    });
+
     it('for a run, leaves out the oldest steps whole when what the model said in them leaves no room, never a call apart from its result', () => {
         const room = new StepRoom(1000, true);
         const said = (round: number) => ({ ...step(round, 'r'.repeat(100)), content: String(round).repeat(350) });

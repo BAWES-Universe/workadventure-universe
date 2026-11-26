@@ -243,7 +243,7 @@ export class StepRoom {
         const left = this.total ? this.room - this.size() : this.room;
         if (sizeOf(step) > left) this.setAsideArguments(step);
         // The notes of the cuts are part of what is kept, so for all the steps together they are counted before the room is shared out
-        if (sizeOf(step) > left) this.fit(step, Math.max(0, left - (sizeOf(step) - resultsSizeOf(step)) - (this.total ? this.notesOf(step) : 0)));
+        if (sizeOf(step) > left) this.fit(step, Math.max(0, left - (sizeOf(step) - resultsSizeOf(step)) - (this.total ? this.notesOf(step) : 0)), this.total);
         this.steps.push(step);
     }
 
@@ -311,7 +311,8 @@ export class StepRoom {
         return changed;
     }
 
-    private fit(step: ReplyStep, room: number): boolean {
+    /** `empty`: a result may be left with none of its text, only the note (when the room has nothing left); else each keeps at least a character. */
+    private fit(step: ReplyStep, room: number, empty = false): boolean {
         // Shortest first, so the room a short result leaves goes to the longer ones
         const cuts = step.results
             .map((result) => ({ result, cut: this.cut.get(result) ?? { whole: result.content, kept: result.content.length } }))
@@ -319,7 +320,7 @@ export class StepRoom {
         let left = room;
         let changed = false;
         cuts.forEach(({ result, cut }, i) => {
-            const each = Math.max(1, Math.floor(left / (cuts.length - i)));
+            const each = empty ? Math.floor(left / (cuts.length - i)) : Math.max(1, Math.floor(left / (cuts.length - i)));
             left = Math.max(0, left - Math.min(cut.kept, each));
             if (cut.kept <= each) return;
             const kept = clipped(cut.whole, each);
