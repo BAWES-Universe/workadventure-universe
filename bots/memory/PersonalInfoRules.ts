@@ -54,6 +54,11 @@ function clausesOf(message: string): Array<{ text: string; question: boolean }> 
 /** Words said just before "like" / "feel" / "am" that turn it around, or put it in another's mouth. */
 const NEGATED = new RegExp(`\\b(?:not|never|no longer|hardly|barely|rarely|dont|cannot|can${APOS}?t|won${APOS}?t|isn${APOS}?t|wasn${APOS}?t|don${APOS}?t|doesn${APOS}?t|didn${APOS}?t|n${APOS}t)\\b|n${APOS}t\\b`, 'iu');
 
+/** A "not" only turns round what comes after it: "my name is Sara so don't call me Sarah" still gives Sara, "I'm not tired" does not give tired. */
+function negatedBy(text: string, match: RegExpExecArray): boolean {
+    return NEGATED.test(text.slice(0, match.index + match[0].length));
+}
+
 // ---- Name -------------------------------------------------------------------------------------------------------------
 
 /** Capitalised words that follow "I'm" or "call me" without being a name, whichever way the person introduces themselves. */
@@ -131,10 +136,10 @@ export function nameIn(message: string): string | null {
             const at = sentence.text.indexOf(clause.text, cursor);
             const before = at === -1 ? '' : sentence.text.slice(0, at);
             if (at !== -1) cursor = at + clause.text.length;
-            if (clause.question || NEGATED.test(clause.text)) continue;
+            if (clause.question) continue;
             for (const { form, bare } of NAME_FORMS) {
                 const match = form.exec(clause.text);
-                if (!match?.[1]) continue;
+                if (!match?.[1] || negatedBy(clause.text, match)) continue;
                 if (TASK_WORD.test(before + clause.text.slice(0, match.index))) continue;
                 const name = match[1];
                 const lower = name.toLowerCase();
@@ -299,9 +304,9 @@ const STATE = new RegExp(`\\bi(?:${APOS}m| am| feel)\\s+(${STATES})\\b(?!\\s+(?:
 /** How the person says they feel now ("I'm tired"), and not what they say they do not ("I'm not tired", "am I tired?"). */
 export function stateIn(message: string): string | null {
     for (const sentence of clausesOf(message)) {
-        if (sentence.question || NEGATED.test(sentence.text)) continue;
+        if (sentence.question) continue;
         const match = STATE.exec(sentence.text);
-        if (match?.[1]) return match[1].toLowerCase();
+        if (match?.[1] && !negatedBy(sentence.text, match)) return match[1].toLowerCase();
     }
     return null;
 }
@@ -318,16 +323,19 @@ const BIRTHDAY_ON = [
 
 /** True when the person says it is their own birthday today (not a friend's, and not "it's not my birthday"). */
 export function birthdayIsToday(message: string): boolean {
-    return clausesOf(message).some((sentence) => !sentence.question && !NEGATED.test(sentence.text) && BIRTHDAY_TODAY.test(sentence.text));
+    return clausesOf(message).some((sentence) => {
+        const match = sentence.question ? null : BIRTHDAY_TODAY.exec(sentence.text);
+        return match !== null && !negatedBy(sentence.text, match);
+    });
 }
 
 /** The day the person says their own birthday is, as they wrote it ("March 3", "3/3"). */
 export function birthdayDateIn(message: string): string | null {
     for (const sentence of clausesOf(message)) {
-        if (sentence.question || NEGATED.test(sentence.text)) continue;
+        if (sentence.question) continue;
         for (const form of BIRTHDAY_ON) {
             const match = form.exec(sentence.text);
-            if (match?.[1]) return match[1];
+            if (match?.[1] && !negatedBy(sentence.text, match)) return match[1];
         }
     }
     return null;
