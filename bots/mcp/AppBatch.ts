@@ -74,10 +74,16 @@ export function actionName(slug: string, appName?: string): string {
 
 const lowerFirst = (text: string) => (/^[A-Z][a-z]/.test(text) ? text[0].toLowerCase() + text.slice(1) : text);
 
-/** One action is its name; two are "Fetch emails and list labels"; more are "Fetch emails and 2 more". */
+/**
+ * One action is its name; two are "Fetch emails and list labels"; more are "Fetch emails and 2 more". The same action
+ * called again is said once with its count ("Fetch emails 3 times"), never "Fetch emails and fetch emails".
+ */
 export function batchTitle(names: string[]): string {
     if (names.length <= 1) return names[0] ?? 'Use a tool';
-    if (names.length === 2) return `${names[0]} and ${lowerFirst(names[1])}`;
+    if (names.every((name) => name === names[0])) return `${names[0]} ${names.length} times`;
+    // Another action's name is never the same as the first, so "and ..." always names something new
+    const others = names.filter((name) => name !== names[0]);
+    if (names.length === 2) return `${names[0]} and ${lowerFirst(others[0])}`;
     return `${names[0]} and ${names.length - 1} more`;
 }
 

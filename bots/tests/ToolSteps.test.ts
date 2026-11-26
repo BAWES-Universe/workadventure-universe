@@ -325,6 +325,12 @@ describe('a batch call by what its tools do (game #2131)', () => {
     const labels = { tool_slug: 'GMAIL_LIST_LABELS', arguments: {} };
     const call = (tools: unknown[], extra: Record<string, unknown> = {}) => ({ id: 'c1', name: 'COMPOSIO_MULTI_EXECUTE_TOOL', arguments: JSON.stringify({ tools, ...extra }) });
 
+    it('says the same action once, with how many times', () => {
+        expect(describeStep(call([fetch, fetch]), undefined, 'Gmail').done).toBe('Used Fetch emails 2 times');
+        expect(describeStep(call([fetch, labels, fetch]), undefined, 'Gmail').done).toBe('Used Fetch emails and 2 more');
+        expect(describeStep(call([labels, fetch]), undefined, 'Gmail').done).toBe('Used List labels and fetch emails');
+    });
+
     it('tells a write from a read by its action, not by the App name or a list noun', () => {
         const make = { tool_slug: 'GETRESPONSE_CREATE_LIST', arguments: {} };
         expect(describeStep(call([make]), undefined, 'GetResponse').kind).toBe('write');
