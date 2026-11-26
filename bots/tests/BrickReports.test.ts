@@ -306,6 +306,23 @@ describe('The send_to_universe_team tool', () => {
         expect(await twin).toMatchObject({ sent: false, uncertain: true });
     });
 
+    it('a call beside one that Orbit refused or found taken back is told the same, never "already sent"', async () => {
+        for (const [answer, says] of [
+            [kept({ again: true, takenBack: true }), 'took this note back'],
+            [{ sent: false, reason: 'limit' }, 'enough notes today'],
+        ] as const) {
+            const ctx = context();
+            let release: () => void = () => undefined;
+            ctx.admin.sendBrickReport.mockImplementation(() => new Promise((resolve) => (release = () => resolve(answer))));
+            const first = runReportTool(args, ctx);
+            const twin = runReportTool(args, ctx);
+            release();
+            expect(await first).toMatchObject({ sent: false, note: expect.stringContaining(says) });
+            expect(await twin).toMatchObject({ sent: false, note: expect.stringContaining(says) });
+            expect(ctx.notes).toEqual([]);
+        }
+    });
+
     it('never says it was sent when Orbit said no, or the note was taken back', async () => {
         const limit = context({ admin: { sendBrickReport: vi.fn(async () => ({ sent: false, reason: 'limit' })) } as never });
         expect(await runReportTool(args, limit)).toMatchObject({ sent: false, note: expect.stringContaining('Do not say it was sent') });

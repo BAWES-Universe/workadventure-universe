@@ -184,8 +184,8 @@ export interface ReportToolContext {
     context?: BrickReportSend['context'];
 }
 
-/** Per reply (its list of notes), the notes being sent this moment, by reference, each with whether it went once Orbit answers. */
-const sending = new WeakMap<BrickNote[], Map<string, Promise<boolean>>>();
+/** Per reply (its list of notes), the notes being sent this moment, by reference, each with what the Brick is told once Orbit answers. */
+const sending = new WeakMap<BrickNote[], Map<string, Promise<Record<string, unknown>>>>();
 
 const NOT_CONFIRMED =
     'Could not confirm the note reached the Universe team. Do not send it again in this reply and never say it was sent; if the person asked you to report it, say in one short sentence that you could not confirm it went.';
@@ -223,35 +223,40 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
 
     // The notes this reply already sent, and the ones being sent right now (tool calls of one round run side by side)
     const sentAlready = () => (context.notes ?? []).filter((note): note is ReportSentNote => note.kind === 'report');
-    const flying = context.notes ? (sending.get(context.notes) ?? new Map<string, Promise<boolean>>()) : new Map<string, Promise<boolean>>();
+    const flying = context.notes ? (sending.get(context.notes) ?? new Map<string, Promise<Record<string, unknown>>>()) : new Map<string, Promise<Record<string, unknown>>>();
     const same = sentAlready().find((note) => note.ref === ref);
     if (same) return draftWords && !same.wordsDraft ? addDraftWords(same, report, context) : ALREADY_SENT;
-    // The same note is being sent beside this call: say what that one says, never "sent" before it is
+    // The same note is being sent beside this call: say what that one says (taken back, refused, not confirmed), never "sent" before it is
     const twin = flying.get(ref);
     if (twin) {
-        if (!(await twin)) return { sent: false, uncertain: true, note: NOT_CONFIRMED };
+        const firstAnswer = await twin;
+        if (firstAnswer.sent !== true) return firstAnswer;
         const first = sentAlready().find((note) => note.ref === ref);
         return first && draftWords && !first.wordsDraft ? addDraftWords(first, report, context) : ALREADY_SENT;
     }
     if (sentAlready().length + flying.size >= NOTES_PER_REPLY) return { sent: false, note: 'Enough notes for one reply. Do not send more now and do not mention it.' };
 
-    let outcome: Awaited<ReturnType<AdminApiService['sendBrickReport']>> | undefined;
-    // Held before Orbit is asked, so a call beside this one sees it (and waits for whether it went); let go once the answer is in
-    let went: (sent: boolean) => void = () => undefined;
-    flying.set(ref, new Promise<boolean>((resolve) => (went = resolve)));
+    // Held before Orbit is asked, so a call beside this one sees it and waits for what it is told; let go once the answer is in
+    const answer = sendNew(report, context);
+    flying.set(ref, answer);
     if (context.notes) sending.set(context.notes, flying);
     try {
-        // Asked once more with the same reference when the answer is lost: Orbit keeps one note per reference and answers the same receipt
-        for (let attempt = 0; attempt < 2 && !outcome; attempt++) {
-            try {
-                outcome = await context.admin.sendBrickReport(report);
-            } catch (error) {
-                console.warn('[ReportTools] Could not send a note to the Universe team:', error instanceof Error ? error.message : error);
-            }
-        }
+        return await answer;
     } finally {
         flying.delete(ref);
-        went(outcome?.sent === true);
+    }
+}
+
+/** Sends a note this reply has not sent yet, and keeps it for the line under the answer when it went. Never throws. */
+async function sendNew(report: BrickReportSend, context: ReportToolContext): Promise<Record<string, unknown>> {
+    let outcome: Awaited<ReturnType<AdminApiService['sendBrickReport']>> | undefined;
+    // Asked once more with the same reference when the answer is lost: Orbit keeps one note per reference and answers the same receipt
+    for (let attempt = 0; attempt < 2 && !outcome; attempt++) {
+        try {
+            outcome = await context.admin.sendBrickReport(report);
+        } catch (error) {
+            console.warn('[ReportTools] Could not send a note to the Universe team:', error instanceof Error ? error.message : error);
+        }
     }
     if (!outcome) return { sent: false, uncertain: true, note: NOT_CONFIRMED };
     if (outcome.sent === false) {
@@ -263,7 +268,7 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
         kind: 'report',
         id: outcome.id,
         key: outcome.takeBackKey,
-        ref,
+        ref: report.ref,
         noteKind: outcome.note.kind,
         area: outcome.note.area,
         title: outcome.note.title,
