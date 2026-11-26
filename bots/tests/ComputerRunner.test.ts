@@ -721,6 +721,24 @@ describe('the person’s part', () => {
             expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', why: sharedBusyWhy('signin'), basis: 'browser_shared' }]);
         });
 
+        it('CodeRabbit: sends the end at the bound again until Orbit takes it', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+            answering(orbit, Array.from({ length: 1000 }, () => SHARED));
+            const answer = orbit.action;
+            let lost = 2;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'finish' && lost > 0) {
+                    lost--;
+                    seen.actions.push(body);
+                    throw new Error('Orbit could not be reached');
+                }
+                return answer(botId, jobId, body);
+            };
+            await runShared(orbit);
+            expect(finished(seen)).toHaveLength(3);
+            expect(finished(seen).every((f) => f.basis === 'browser_shared' && f.cause === 'ours')).toBe(true);
+        });
+
         it('says the step the job waited for, and names no other job, title or person', () => {
             expect(sharedBusyWhy('signin')).toBe("The computer stayed busy with other work, so I couldn't hand it to you to sign in.");
             expect(sharedBusyWhy('pay')).toContain('to pay');

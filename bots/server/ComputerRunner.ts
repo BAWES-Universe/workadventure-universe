@@ -1861,7 +1861,9 @@ export function createComputerRunner(deps: RunnerDeps): ComputerRunner {
                     continue;
                 }
                 if (sharedTooLong) {
-                    if ((await finish(job, 'failed', { signal, cause: 'ours', generation, run, ...held(), why: sharedBusyWhy(ending.waitingFor), basis: 'browser_shared' })) === 'stale') {
+                    // Sent until Orbit takes it: an end that did not get through must not leave the job going with nobody working on it
+                    const ended = await sendFinishUntilTaken(job, () => finish(job, 'failed', { signal, cause: 'ours', generation, run, ...held(), why: sharedBusyWhy(ending.waitingFor), basis: 'browser_shared' }), signal);
+                    if (ended === 'stale') {
                         await readAgain();
                         continue;
                     }
