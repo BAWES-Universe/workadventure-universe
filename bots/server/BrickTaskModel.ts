@@ -6,6 +6,7 @@
 import type { AIService } from '../ai/AIService';
 import type { BrickTaskModel, DueRun, TaskOutcome } from './BrickRunner';
 import type { TaskApps, TaskAppsSession } from './BrickTaskApps';
+import { cutWithNote } from './BrickAppAnswer';
 import { FINISH_CHECK_TOOL, NO_FINISH_REASON, READ_PAGE_TOOL, TASK_MAX_STEPS, readFinish, taskPrompt, taskToolDefinitions, type TaskResult } from './BrickTaskRun';
 
 /** What the model of a Brick is told about the Brick itself. */
@@ -29,9 +30,6 @@ export interface TaskModelDeps {
 
 const KEY_TURNED_DOWN = 'The AI this Brick thinks with would not let it in, so the check could not run';
 const ASK_TURNED_DOWN = 'The AI this Brick thinks with turned this check down';
-
-/** What a page gives back to the model at most (it is information for one check, not a file). */
-const PAGE_RESULT_MAX = 12_000;
 
 export class ModelTaskRunner implements BrickTaskModel {
     constructor(private readonly deps: TaskModelDeps) {}
@@ -58,7 +56,8 @@ export class ModelTaskRunner implements BrickTaskModel {
         const runTool = async (name: string, args: Record<string, unknown>): Promise<string> => {
             if (name === READ_PAGE_TOOL) {
                 const page = await this.deps.readPage(run.brickId, typeof args.url === 'string' ? args.url : '');
-                return JSON.stringify(page).slice(0, PAGE_RESULT_MAX);
+                // The room a chat reply has; a page longer than that says it was cut
+                return cutWithNote(JSON.stringify(page));
             }
             if (name === FINISH_CHECK_TOOL) {
                 const read = readFinish(args, run.kind);

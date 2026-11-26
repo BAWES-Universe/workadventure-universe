@@ -187,7 +187,7 @@ function argumentsAside(args: string, longer: number): string {
 }
 
 /** Text up to `max` characters, never ending in half an emoji. */
-function clipped(text: string, max: number): string {
+export function clipped(text: string, max: number): string {
     if (text.length <= max) return text;
     const end = /[\uD800-\uDBFF]/.test(text[max - 1] ?? '') ? max - 1 : max;
     return text.slice(0, Math.max(0, end));
@@ -197,7 +197,7 @@ type StepResult = ReplyStep['results'][number];
 
 const asideLine = (name: string, whole: number) =>
     `[${name}: ${whole.toLocaleString('en-US')} characters, set aside to make room. Call it again if you need it.]`;
-const cutNote = (kept: number, whole: number) =>
+export const cutNote = (kept: number, whole: number) =>
     `\n[Only the first ${kept.toLocaleString('en-US')} of ${whole.toLocaleString('en-US')} characters fit in this reply's room for tool results ("Room for tool results in one reply").]`;
 
 /**

@@ -20,9 +20,13 @@ import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolAp
 import type { ToolHeading } from '../mcp/ToolCatalog';
 import type { DueRun } from './BrickRunner';
 import { FINISH_CHECK_TOOL, READ_PAGE_TOOL, type ToolDefinition } from './BrickTaskRun';
+import { fitAppAnswer, RUN_ANSWER_MAX } from './BrickAppAnswer';
 
-/** What an App's answer to a step can be at most, as text for the model (the rest is cut). */
-export const APP_RESULT_MAX = 12_000;
+/**
+ * What an App's answer to a step can be at most, as text for the model: the room a chat reply has. An answer longer than that is first
+ * made smaller (encoded bodies and raw HTML out), then shortened by whole items, and only then cut, and it always says so (BrickAppAnswer).
+ */
+export const APP_RESULT_MAX = RUN_ANSWER_MAX;
 
 export interface TaskAppsDeps {
     /** The tools the Brick's Apps give, and where each one lives. Throws when they cannot be listed. */
@@ -47,7 +51,7 @@ export interface TaskAppsSession {
 
 const asText = (value: unknown): string => {
     try {
-        return (typeof value === 'string' ? value : JSON.stringify(value ?? null)).slice(0, APP_RESULT_MAX);
+        return fitAppAnswer(value, APP_RESULT_MAX);
     } catch {
         return JSON.stringify({ error: 'That gave back something that cannot be read.' });
     }
