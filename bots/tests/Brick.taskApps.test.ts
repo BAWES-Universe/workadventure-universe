@@ -117,6 +117,13 @@ describe('what a run does with an App', () => {
         expect(call.mock.calls[3][5].callId).not.toBe(first);
     });
 
+    it('lets the gate see what a step asks for, so reconnecting an App asks first while a plain check runs', async () => {
+        const { apps, decide } = setUp({ connect: RUN('changesThings') });
+        const session = (await apps.open(run()))!;
+        await session.call('connect', { reinitiate_all: true });
+        expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ toolName: 'connect', args: { reinitiate_all: true } }));
+    });
+
     it('asks on a card, never runs, for a step that makes something new or sends or deletes, even when it is set to right away', async () => {
         for (const heading of ['makesNew', 'deletesOrSends'] as const) {
             const { apps, call, propose, room } = setUp({ act: RUN(heading) });

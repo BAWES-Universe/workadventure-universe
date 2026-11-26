@@ -14,7 +14,7 @@
  * Pure of the AI and of the chat: the tools, the gate, the cards and the call are somebody else's (injected).
  */
 import { createHash } from 'crypto';
-import { SCRUBBED_LOOKUPS, isOffRow, withoutOff } from '../mcp/AppActions';
+import { SCRUBBED_LOOKUPS, isBatchTool, isOffRow, withoutOff } from '../mcp/AppActions';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
 import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
@@ -113,10 +113,12 @@ export class TaskApps {
         return policies.length > 0 ? withoutOff(answer, (slug) => policies.some((policy) => isOffRow(policy!, slug))) : answer;
     }
 
-    private gateCall(run: DueRun, toolName: string, entry: ToolServerEntry): GateCall {
+    private gateCall(run: DueRun, toolName: string, entry: ToolServerEntry, args?: Record<string, unknown>): GateCall {
         return {
             botId: run.brickId,
             toolName,
+            // What the call asks for, where it changes the verdict (reconnecting an App asks first). A batch is never judged by it here
+            ...(args !== undefined && !isBatchTool(toolName) ? { args } : {}),
             ...(entry.title ? { toolTitle: entry.title } : {}),
             serverId: entry.serverId,
             ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {}),
@@ -139,7 +141,7 @@ export class TaskApps {
         if (!entry) return JSON.stringify({ error: 'That is not something a check can do.' });
         try {
             // The check right before the call: the tool, the person and the settings as they are now
-            const verdict = await this.deps.gate.decide(this.gateCall(run, name, entry));
+            const verdict = await this.deps.gate.decide(this.gateCall(run, name, entry, args));
             const why = this.refusal(verdict, name);
             if (why !== null) return refused(why);
             if (verdict.kind === 'refuse') return refused(verdict.line);

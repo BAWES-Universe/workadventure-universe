@@ -271,6 +271,22 @@ describe('several batches that run right away', () => {
     });
 });
 
+describe('the App’s connection', () => {
+    it('is checked right away, and reconnected only after the person’s OK on a card', async () => {
+        const { service, execute, propose } = brickService(gmailPolicy());
+        execute.mockResolvedValue([{ type: 'text', text: 'connected' }] as never);
+        const servers = new Map<string, ToolServerEntry>([['COMPOSIO_MANAGE_CONNECTIONS', { ...GMAIL, fingerprint: 'fp-connect', title: 'Connections' }]]);
+        const manage = (args: unknown) => service['executeToolCalls']([{ id: 'c1', name: 'COMPOSIO_MANAGE_CONNECTIONS', arguments: JSON.stringify(args) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+        await manage({ toolkits: ['gmail'] });
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(propose).not.toHaveBeenCalled();
+        const [asked] = await manage({ toolkits: ['gmail'], reinitiate_all: true });
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(propose).toHaveBeenCalledTimes(1);
+        expect(asked.result.status).toBe('waiting_for_ok');
+    });
+});
+
 describe('what runs is what the card showed', () => {
     it('sends each action as its slug and its inputs only, never other keys the model added', async () => {
         const { service, execute, propose } = brickService(gmailPolicy());
