@@ -258,6 +258,20 @@ describe('a session id that Calendar’s link does not know', () => {
         expect(sent.get('cal1')?.session_id).toBe('sess-cal1');
     });
 
+    it('never says nothing was done for a failed call whose error shows that some of its actions ran', async () => {
+        const { service, execute } = twoApps(gmailPolicy(), calendarPolicy());
+        execute.mockImplementation(async (...args: unknown[]) =>
+            (args[0] === 'cal1'
+                ? { error: 'Tool error: Invalid session {"results":[{"tool_slug":"GOOGLECALENDAR_EVENTS_LIST","response":{"successful":true}}]}', outcome: 'failed' }
+                : text({ successful: true, data: { results: [{ index: 0, tool_slug: 'GMAIL_FETCH_EMAILS', response: { successful: true } }] } })) as never
+        );
+        const servers = new Map<string, ToolServerEntry>([[BATCH, { ...GMAIL, otherApps: [CALENDAR] }]]);
+        const [batched] = await service['executeToolCalls']([{ id: 'c1', name: BATCH, arguments: JSON.stringify({ tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', arguments: {} }, { tool_slug: 'GOOGLECALENDAR_EVENTS_LIST', arguments: {} }], session_id: 'sess-g1' }) }], undefined, undefined, servers as never, 'uuid-khalid', undefined, 'b1', 7);
+        const said = JSON.stringify(batched.result);
+        expect(said).toContain('Not sure it was done');
+        expect(said).not.toContain('Did not work, nothing was done');
+    });
+
     it('shows the card of a write to another App without that App’s unknown session id, so the approved batch carries none', async () => {
         const { service, execute, propose } = twoApps(gmailPolicy(), calendarPolicy());
         const servers = new Map<string, ToolServerEntry>([[BATCH, { ...GMAIL, otherApps: [CALENDAR] }]]);

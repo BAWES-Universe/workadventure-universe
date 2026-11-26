@@ -6,7 +6,7 @@
  * so these two lookups are asked of every App that allows them and the answers are joined into one. What each App's answer holds
  * is kept; an App that did not answer is named, never left out in silence.
  */
-import { SCRUBBED_LOOKUPS, ownerOfAction } from './AppActions';
+import { SCRUBBED_LOOKUPS, SHOWS_ACTIONS_RAN, ownerOfAction } from './AppActions';
 import type { ToolServerEntry } from './MCPConnector';
 import type { ServerPolicy } from './ToolPolicy';
 
@@ -166,8 +166,6 @@ const REFUSAL_WORDS = new Set([
     'provided', 'given', 'supplied', 'sent', 'your',
 ]);
 
-/** What an answer that ran something looks like: results of actions, or a success, in words or in JSON. A refusal before anything ran has none of it. */
-const RAN_SOMETHING = /tool_slug|"results"|"response"|"successful"\s*:\s*true/i;
 
 /**
  * Whether a call failed only because the App's link refused the session id it was given, so that nothing ran: the model carries the
@@ -188,7 +186,7 @@ export function sessionRefused(answer: unknown, args: Record<string, unknown>): 
     const inner = isObject(data) && isObject(data.data) ? data.data : undefined;
     const hasResults = (value: Record<string, unknown> | undefined) => Array.isArray(value?.results) && value.results.length > 0;
     if (hasResults(isObject(data) ? data : undefined) || hasResults(inner)) return false;
-    if (RAN_SOMETHING.test(line)) return false;
+    if (SHOWS_ACTIONS_RAN.test(line)) return false;
     if (!SESSION_NOT_ACCEPTED.test(line)) return false;
     // Only a bare refusal: its words are the refusal's own, and a session id named in it is exactly the one that was sent (compared as it is,
     // right after the word "session" or "id"), nothing that could tell of an action or of another session

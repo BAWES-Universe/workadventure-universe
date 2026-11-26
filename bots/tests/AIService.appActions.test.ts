@@ -617,6 +617,8 @@ describe('reading each action’s outcome from a batch answer', () => {
     it('keeps the call’s own outcome when the call failed or the answer has no list', async () => {
         const { batchOutcomes } = await import('../mcp/AppActions');
         expect(batchOutcomes({ error: 'x', outcome: 'failed' }, slugs, 'failed')).toEqual(['failed', 'failed']);
+        // A failure that carries the results of actions in its words may have run some of them: never "nothing was done"
+        expect(batchOutcomes({ error: 'Tool error: Boom {"results":[{"tool_slug":"GMAIL_FETCH_EMAILS","response":{"successful":true}}]}', outcome: 'failed' }, slugs, 'failed')).toEqual(['uncertain', 'uncertain']);
         expect(batchOutcomes(text({ successful: true, data: {} }), slugs, 'succeeded')).toEqual(['succeeded', 'succeeded']);
         expect(batchOutcomes('done', slugs, 'succeeded')).toEqual(['succeeded', 'succeeded']);
         expect(batchOutcomes(text({ successful: false, error: 'partial' }), slugs, 'succeeded')).toEqual(['uncertain', 'uncertain']);

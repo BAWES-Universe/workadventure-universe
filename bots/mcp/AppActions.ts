@@ -280,6 +280,9 @@ export function withoutOff(result: unknown, isOff: (slug: string) => boolean): u
     return result;
 }
 
+/** What an answer that ran something looks like: results of actions, or a success, in words or in JSON. A refusal before anything ran has none of it. */
+export const SHOWS_ACTIONS_RAN = /tool_slug|"results"|"response"|"successful"\s*:\s*true/i;
+
 /** What happened to one action of a batch call, in the words of `outcomeOf`. */
 export type PartOutcome = 'succeeded' | 'failed' | 'notSent' | 'uncertain';
 
@@ -315,6 +318,9 @@ function answerData(answer: unknown): Record<string, unknown> | undefined {
  * call's own outcome for every action, as before. `slugs` are the actions as sent, in order.
  */
 export function batchOutcomes(answer: unknown, slugs: readonly string[], whole: PartOutcome): PartOutcome[] {
+    // A call that failed with the results of actions in its error words (a tool that ran some of the work and then failed) is not known to
+    // have done nothing: it is never counted as nothing done, and its things are not given back to the limit
+    if (whole === 'failed' && isObject(answer) && typeof answer.error === 'string' && SHOWS_ACTIONS_RAN.test(answer.error)) return slugs.map(() => 'uncertain');
     if (whole !== 'succeeded') return slugs.map(() => whole);
     const data = answerData(answer);
     const inner = data && isObject(data.data) ? data.data : data;
