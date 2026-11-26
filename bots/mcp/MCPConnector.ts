@@ -1361,7 +1361,9 @@ export class MCPConnector {
         }
 
         if (response.error) {
-            const errMsg = response.error.message || JSON.stringify(response.error);
+            // Its data beside the message can tell that some of the work ran: it stays in the error, as for a tool that failed
+            const errData = response.error.data;
+            const errMsg = [response.error.message || JSON.stringify(response.error), errData === undefined || errData === null ? '' : typeof errData === 'string' ? errData : JSON.stringify(errData)].filter((part) => part !== '').join(' ');
             // The server's words can quote what the tool was given (an email, a file): the log keeps the outcome only
             console.warn(`[MCPConnector] Tool ${toolName} returned an error`);
             return { error: `Tool error: ${errMsg}`, outcome: 'failed' satisfies ToolCallOutcome };

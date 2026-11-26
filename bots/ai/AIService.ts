@@ -31,7 +31,7 @@ import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, typ
 import type { ToolHeading } from '../mcp/ToolCatalog';
 import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
-import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, withoutSession } from '../mcp/AppLookups';
 import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
@@ -5595,7 +5595,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                     break;
                                 }
                                 if (split.kind === 'parts') {
-                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
+                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, sessionFrom: shareable?.serverId, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
                                     break;
                                 }
                             }
@@ -5913,6 +5913,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         toolName: string;
         args: Record<string, unknown>;
         parts: AppPart[];
+        /** The App whose link gave the session id the model carries (the one first under the link's tool names): the others' links do not know it. */
+        sessionFrom?: string;
         playerId?: number;
         playerUuid?: string;
         botClient?: BotClient;
@@ -5921,6 +5923,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         toolTimeoutSeconds?: number | null;
     }): Promise<unknown> {
         const { botId, args, playerId, botClient, spaceName } = input;
+        // One batch of one App's actions, as it is shown on a card and sent. The session id of another App's link is taken out of it, so the
+        // link is never sent one it does not know: a write is sent once and never tried again, so a refusal of the session must not happen
+        const batchFor = (group: AppPart[]): Record<string, unknown> => {
+            const batch = batchOf(args, group);
+            const entry = group[0]?.entry;
+            return input.sessionFrom && entry?.readyMade && entry.serverId !== input.sessionFrom ? (withoutSession(batch) ?? batch) : batch;
+        };
         const byIndex = (a: AppPart, b: AppPart) => a.index - b.index;
         const notDone: string[] = [];
         const asking: AppPart[] = [];
@@ -5964,7 +5973,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                           botId,
                           input.toolName,
                           first.entry,
-                          batchOf(args, group),
+                          batchFor(group),
                           { ...(first.decision as Extract<GateDecision, { kind: 'ask' }>), heading: strictestOf(group.map((part) => part.heading)) },
                           playerId,
                           botClient,
@@ -6013,7 +6022,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const results: Array<{ group: AppPart[]; answer: Awaited<ReturnType<AIService['callMcpTool']>>; outcomes: PartOutcome[] }> = [];
         for (const group of groups.values()) {
             const { entry, heading } = group[0];
-            const answer = await this.callWithSessionFallback(entry, input.toolName, batchOf(args, group), input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
+            const answer = await this.callWithSessionFallback(entry, input.toolName, batchFor(group), input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
                 botId,
                 callId: groups.size === 1 ? input.callId : oneApp ? `${input.callId}:${heading}` : `${input.callId}:${entry.serverId}:${heading}`,
                 heading,

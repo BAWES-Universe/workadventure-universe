@@ -610,6 +610,16 @@ describe('MCPConnector', () => {
                 expect((failed as { outcome: string }).outcome).toBe('failed');
             });
 
+            it('keeps the data of a protocol error in the error too', async () => {
+                mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                    body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: { jsonrpc: '2.0', id: '2', error: { code: -32000, message: 'Invalid session', data: { results: [{ tool_slug: 'A' }] } } } }
+                );
+                const failed = (await MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', {}, 'none')) as { error: string; outcome: string };
+                expect(failed.error).toContain('Invalid session');
+                expect(failed.error).toContain('tool_slug');
+                expect(failed.outcome).toBe('failed');
+            });
+
             it('adds the data as text when content holds no text', async () => {
                 expect(await callWith({ content: [], structuredContent: data })).toEqual([
                     { type: 'text', text: JSON.stringify(data) },

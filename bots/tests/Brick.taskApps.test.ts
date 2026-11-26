@@ -508,22 +508,29 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(answer).toContain('Gmail did not answer');
     });
 
-    it('never tries a step of actions again, even when the link refused its session id: a repeated write is worse than a refused one', async () => {
+    it('sends a step to another App without the session id of the first App’s link, once, and never tries it again', async () => {
         const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
         const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
-        const seen: Array<{ args: Record<string, unknown>; callId: string }> = [];
+        const seen: Array<{ app: string; args: Record<string, unknown> }> = [];
         const { apps } = setUp({}, {
             discover: async () => ({ tools: [tool(BATCH)], servers: new Map([[BATCH, { ...gmail, otherApps: [calendar] }]]) }),
             gate,
-            call: async (_brick, _app, _name, args, _owner, use) => {
-                seen.push({ args, callId: use.callId });
+            call: async (_brick, app, _name, args) => {
+                seen.push({ app: app.serverId, args });
                 return args.session_id ? { error: 'Invalid session id sess-g1' } : [{ type: 'text', text: '{"successful":true,"data":{"ran":true}}' }];
             },
         });
         const session = (await apps.open(run()))!;
         const answer = await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-g1' });
         expect(seen).toHaveLength(1);
-        expect(answer).toContain('Invalid session');
+        expect(seen[0].app).toBe(calendar.serverId);
+        expect('session_id' in seen[0].args).toBe(false);
+        expect(answer).toContain('successful');
+        // The first App's own step keeps the session id of its own link
+        seen.length = 0;
+        await session.call(BATCH, { ...actions('GMAIL_FETCH_EMAILS') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(seen).toHaveLength(1);
+        expect(seen[0].args.session_id).toBe('sess-g1');
     });
 
     it('never tries a step again that may have run some of its actions, even when the error says session', async () => {

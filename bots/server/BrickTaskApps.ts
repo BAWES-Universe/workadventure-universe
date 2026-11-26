@@ -16,7 +16,7 @@
 import { createHash } from 'crypto';
 import { SCRUBBED_LOOKUPS, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
-import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession } from '../mcp/AppLookups';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, withoutSession } from '../mcp/AppLookups';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
 import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
@@ -286,7 +286,10 @@ export class TaskApps {
             owners.set(app.serverId, app);
         }
         if (owners.size > 1) return { line: `That asked for actions of ${[...owners.values()].map((app) => app.serverName || 'an App').join(' and ')} at once. Ask for each App's actions in a step of its own.` };
-        return { app: [...owners.values()][0], args: batchOf(args, parts) };
+        const app = [...owners.values()][0];
+        const batch = batchOf(args, parts);
+        // The session id the model carries is the one the first App's link gave: another App's link does not know it, and a write is sent once
+        return { app, args: app.readyMade && app.serverId !== first.serverId ? (withoutSession(batch) ?? batch) : batch };
     }
 
     /** The card for this step, in the person's own chat: it waits there, and the run only ends. */
