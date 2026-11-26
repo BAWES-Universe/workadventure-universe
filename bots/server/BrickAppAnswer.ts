@@ -32,6 +32,7 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 /** Long enough that a run of base64 characters is a body or an attachment and not a word, a token or an id. */
 const ENCODED_MIN = 1000;
 const BASE64_TEXT = /^[A-Za-z0-9+/_-]+={0,2}$/;
+const HEX_ONLY = /^[0-9a-fA-F-]+$/;
 const DATA_URI = /^data:[^;,]{1,100};base64,/i;
 const HTML_TAG = /<\/?(?:html|head|body|div|span|table|tbody|tr|td|p|a|br|img|ul|ol|li|h[1-6]|style|script|center|font|b|i|strong|em)\b[^>]*>/gi;
 const HTML_DOCUMENT = /<(?:!doctype|html|body)\b/i;
@@ -47,7 +48,13 @@ function isEncoded(text: string): boolean {
     const spaces = (text.match(/\s/g) ?? []).length;
     // Prose has a space every few characters; mail's base64 only has its line breaks
     if (spaces > text.length * 0.04) return false;
-    return BASE64_TEXT.test(text.replace(/\s+/g, ''));
+    const lines = text.trim().split(/\s+/);
+    // A list of identifiers (commit SHAs, UUIDs) is short runs, one to a line; base64 is one run, or lines wrapped at 64 or 76 columns
+    if (lines.slice(0, -1).some((line) => line.length < 60)) return false;
+    const joined = lines.join('');
+    // Hex digits and dashes alone are hashes and ids; base64 of a body or a file has other letters in it
+    if (HEX_ONLY.test(joined)) return false;
+    return BASE64_TEXT.test(joined);
 }
 
 /** The text of a mail or page written in HTML: no tags, styles or scripts, one blank line between blocks. */

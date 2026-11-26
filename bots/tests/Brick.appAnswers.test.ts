@@ -54,6 +54,17 @@ describe('an answer that fits and has nothing to take out', () => {
 
     it('keeps prose, ids and short encoded values; only long base64 is an encoded body', () => {
         // Words with no punctuation are still words: a space every few characters is not base64
+        // Lists of long identifiers, one to a line, are not base64 either: commit SHAs, SHA-256 hashes and UUIDs
+        const sha = (n: number) => n.toString(16).padStart(40, 'a');
+        const hashes = { shas: Array.from({ length: 40 }, (_, n) => sha(n)).join('\n'), sha256: Array.from({ length: 20 }, (_, n) => sha(n).repeat(2).slice(0, 64)).join('\n'), uuids: Array.from({ length: 40 }, (_, n) => `0b8f067a-df0f-43f8-af12-${String(n).padStart(12, '0')}`).join(' ') };
+        expect(fitAppAnswer(hashes)).toBe(JSON.stringify(hashes));
+        // Nor a list of file ids or tokens with other letters in them (33 characters each, like a Drive id)
+        const ids = { ids: Array.from({ length: 40 }, (_, n) => `1Zx${String(n).padStart(2, '0')}QpRsTuVwXyZgHjKlMnOpQrStUvWx`).join('\n') };
+        expect(ids.ids.length).toBeGreaterThan(1_000);
+        expect(fitAppAnswer(ids)).toBe(JSON.stringify(ids));
+        // Mail's own base64 is still taken out, wrapped at 76 columns with line breaks as well as in one run
+        const wrapped = Buffer.from(prose(3_000)).toString('base64').replace(/(.{76})/g, '$1\r\n');
+        expect(JSON.parse(fitAppAnswer({ data: wrapped })).data).toMatch(/^\[encoded content left out/);
         const answer = { text: prose(5_000), plain: 'hello world '.repeat(200), id: 'AbCdEf_-123', token: base64url('short') };
         expect(fitAppAnswer(answer)).toBe(JSON.stringify(answer));
     });
