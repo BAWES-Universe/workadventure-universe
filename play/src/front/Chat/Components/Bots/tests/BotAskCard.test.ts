@@ -240,6 +240,15 @@ describe("the card a bot shows before it changes something", () => {
             expect(text()).toContain("Created 2 events.");
         });
 
+        it("hides fenced data too, and keeps a bracketed word before plain text", async () => {
+            await show(ask({ answer: { option: "approve", result: '```json\n{"ok":true}\n```' } }));
+            expect(target.querySelector(".ask-result")).toBeNull();
+            await show(ask({ answer: { option: "approve", result: "[]" } }));
+            expect(target.querySelector(".ask-result")).toBeNull();
+            await show(ask({ answer: { option: "approve", result: "[Gmail] Message sent successfully." } }));
+            expect(text()).toContain("[Gmail] Message sent successfully.");
+        });
+
         it("says how long allow more lasts and offers Ask me again", async () => {
             await show(
                 ask({

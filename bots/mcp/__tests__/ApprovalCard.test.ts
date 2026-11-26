@@ -19,6 +19,8 @@ import {
     parseTap,
     rememberOffer,
     resultLine,
+    resultText,
+    looksLikeData,
     tidyName,
     type CardFacts,
 } from '../ApprovalCard';
@@ -261,6 +263,20 @@ describe('how a call ended', () => {
         expect(resultLine([{ type: 'text', text: '  [1, 2, 3]' }])).toBeUndefined();
         expect(resultLine([{ type: 'text', text: '{"a":1}' }, { type: 'text', text: 'Created 2 events' }])).toBe('Created 2 events');
         expect(resultLine([{ type: 'text', text: 'x'.repeat(500) }])!.length).toBeLessThanOrEqual(300);
+        // Fenced data is data; a bracketed word before plain text is a sentence
+        expect(resultLine('```json\n{"ok":true}\n```')).toBeUndefined();
+        expect(resultLine('[Gmail] Message sent successfully.')).toBe('[Gmail] Message sent successfully.');
+        expect(resultLine('[]')).toBeUndefined();
+        expect(looksLikeData('[{"id":1}]')).toBe(true);
+        expect(looksLikeData('["a"]')).toBe(true);
+        expect(looksLikeData('[ERROR] no such team')).toBe(false);
+    });
+
+    it('keeps what came back for the bot even when the card does not show it', () => {
+        expect(resultText('{"successful":true}')).toBe('{"successful":true}');
+        expect(resultText([{ type: 'text', text: 'Created   2 events' }])).toBe('Created 2 events');
+        expect(resultText([{ type: 'image' }])).toBeUndefined();
+        expect(resultText([{ type: 'text', text: 'x'.repeat(500) }])!.length).toBeLessThanOrEqual(300);
     });
 });
 
