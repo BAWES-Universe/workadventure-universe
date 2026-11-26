@@ -159,6 +159,10 @@ export class RemotePlayer extends Character implements ActivatableInterface {
     }
 
     public isActivatable(): boolean {
+        // A destroyed avatar (its user left) has no scene anymore, so its card cannot be opened.
+        if (this.isDestroyed() || !this.scene) {
+            return false;
+        }
         return this.isClickable();
     }
 
