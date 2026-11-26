@@ -164,6 +164,8 @@
         // a Public one only once something is published, and not when that version is gone
         pageUrl: () =>
             openScope === "link" || (openScope === "public" && published && !publishedGone) ? link : undefined,
+        // The version on screen: Orbit never charges terms set on a newer one on it
+        shownVersion: () => opened?.version.number,
     });
     const payLine = payments.line;
     // The line under the page: what it says and what can be pressed (the approved mock M1)

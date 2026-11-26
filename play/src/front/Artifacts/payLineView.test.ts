@@ -229,6 +229,13 @@ describe("the line under a paying page says what the approved mock says", () => 
             actions: [],
             closable: false,
         });
+        // The page was published again since it was opened: open it again, nothing to press here
+        expect(view({ problem: "page_changed" })).toMatchObject({
+            title: "This page was updated.",
+            sub: "Close it and open it again to see the latest version before you pay.",
+            actions: [],
+            closable: false,
+        });
         expect(view({})).toBeNull();
     });
 

@@ -122,6 +122,10 @@ export function describePayLine(
     if (line.problem === "not_published") {
         return { title: LL.payUnavailable(), sub: LL.payNotTakingSub(), actions: restoreToo, closable: false };
     }
+    // The version on screen is older than the one the payment was set on: opening it again shows the latest
+    if (line.problem === "page_changed") {
+        return { title: LL.payPageChanged(), sub: LL.payPageChangedSub(), actions: restoreToo, closable: false };
+    }
     if (line.problem === "limit") {
         // An answer that may have made an order (an uncertain refusal) can be checked
         return {

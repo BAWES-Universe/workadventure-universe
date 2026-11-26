@@ -54,6 +54,8 @@ const PayBody = z
         /** What a guest's window keeps for them (Orbit stores only its hash), and the code of a receipt link they opened. Orbit checks their form. */
         recoveryCode: z.string().max(200).optional(),
         receiptCode: z.string().max(200).optional(),
+        /** With a start: the version the window has open. Orbit never charges terms set on a newer version on it. */
+        shownVersion: z.number().int().min(1).max(1_000_000).optional(),
     })
     .strict();
 /**
@@ -69,6 +71,8 @@ export function parsePayBody(
     if ([request.start, request.order, request.check, request.restore].filter(Boolean).length > 1) return null;
     if (request.check && !request.intentId) return null;
     if (request.intentId && !request.start && !request.check) return null;
+    // The version on screen goes only with a start (it is what the start is checked against)
+    if (request.shownVersion !== undefined && !request.start) return null;
     return { chat, request };
 }
 const PublishBody = z.object({ chat: Chat.optional(), version: z.number().int().min(1).optional() }).strict();

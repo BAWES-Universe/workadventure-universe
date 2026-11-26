@@ -27,10 +27,14 @@ import type { ArtifactChat, ArtifactPay, ArtifactPayRequest } from "./ArtifactAp
 /** The id a page gives its request: short and plain, so it can only be echoed back and never carry anything else. */
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** `not_published`: the owner set the page's payment on a version newer than the one this person is shown; nothing was made (the page hears `unavailable`). */
+/**
+ * `not_published`: the owner set the page's payment on a version newer than the one this person is shown; nothing was made (the page hears `unavailable`).
+ * `page_changed`: the version on screen is older than the one the payment was set on; nothing was made, and opening it again shows the latest.
+ */
 export type PayProblem =
     | "unavailable"
     | "not_published"
+    | "page_changed"
     | "limit"
     | "not_paid"
     | "cant_confirm"
@@ -156,6 +160,8 @@ export interface PagePaymentsOptions {
     storage?: Pick<Storage, "getItem" | "setItem"> | null;
     /** Random plain characters of a length (for wishes and recovery codes). */
     randomId?: (length: number) => string;
+    /** The version of the page on show, taken at the tap: Orbit never charges terms set on a newer version than the one on screen. */
+    shownVersion?: () => number | undefined;
 }
 
 export interface PagePayments {
@@ -534,17 +540,26 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const gotNoAnswer = (error: unknown) => !(error instanceof ArtifactRequestError) || error.status === 0;
 
     /** A start that got no answer at all is sent again with the same wish; an answer, whatever it says, is final. */
-    const startWithTries = async (intentId: string, signal: AbortSignal, attempt = 1): Promise<ArtifactPay> => {
+    const startWithTries = async (
+        intentId: string,
+        signal: AbortSignal,
+        shownVersion: number | undefined,
+        attempt = 1
+    ): Promise<ArtifactPay> => {
         try {
             // The answer of a start that was dropped says nothing about who the buyer is
-            return await ask({ start: true, intentId }, signal, () => !signal.aborted);
+            return await ask(
+                { start: true, intentId, ...(shownVersion ? { shownVersion } : {}) },
+                signal,
+                () => !signal.aborted
+            );
         } catch (error) {
             if (!gotNoAnswer(error) || signal.aborted || destroyed || attempt >= START_TRIES) {
                 throw error;
             }
             await waitFor(TRY_AGAIN_MS);
             if (signal.aborted || destroyed) throw error;
-            return startWithTries(intentId, signal, attempt + 1);
+            return startWithTries(intentId, signal, shownVersion, attempt + 1);
         }
     };
 
@@ -561,6 +576,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         const asker = sessions.get(request);
         activeSession = asker;
         target = { intentId, request, from, session: asker };
+        // The version on screen at the tap: every try of this start says the same one
+        const version = options.shownVersion?.();
+        const shownVersion =
+            typeof version === "number" && Number.isSafeInteger(version) && version > 0 ? version : undefined;
         // Opened now, in the same moment as the page's tap, so a blocked pop-up is the only thing left that can go wrong
         let popup: Window | null = null;
         try {
@@ -584,7 +603,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 },
             };
             startInFlight = mine;
-            const started = startWithTries(intentId, abort.signal);
+            const started = startWithTries(intentId, abort.signal, shownVersion);
             const slow = new Promise<"slow">((resolve) => {
                 slowTimer = setTimeout(() => resolve("slow"), START_FOR_MS);
             });
@@ -643,11 +662,16 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 // Orbit says "unsure" when it refused a start that may still have made an order: Check payment stays; without it the refusal is clear
                 const lost = gotNoAnswer(error) || (error instanceof ArtifactRequestError && error.unsure);
                 // Orbit refused because the payment was set on a version this person is not shown yet: definite, nothing was made, and the line says so
-                const unpublished =
-                    !limit && !lost && error instanceof ArtifactRequestError && error.code === "not_published";
+                // The version on screen is older than the one the payment was set on: the same, and opening it again shows the latest
+                const code = error instanceof ArtifactRequestError ? error.code : undefined;
+                const refusal: PayProblem = limit
+                    ? "limit"
+                    : !lost && (code === "not_published" || code === "page_changed")
+                    ? code
+                    : "unavailable";
                 end(
                     {
-                        problem: limit ? "limit" : unpublished ? "not_published" : "unavailable",
+                        problem: refusal,
                         ...(lost ? { canCheck: true } : {}),
                     },
                     limit ? "limit" : "unavailable",

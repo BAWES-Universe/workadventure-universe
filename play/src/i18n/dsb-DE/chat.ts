@@ -302,6 +302,8 @@ const chat: DeepPartial<Translation["chat"]> = {
         payNeedsUpdateOwnerSub: "Pšosy {maker}, aby bok znowego napórał.",
         payUnavailable: "Płaśenja njejsu k dispoziciji",
         payNotTakingSub: "Toś ten bok rowno žedne płaśenja njepśiwzejo. Wopytaj pózdźej hyšći raz.",
+        payPageChanged: "Toś ten bok jo se zaktualizěrował.",
+        payPageChangedSub: "Zacyń jen a wócyń jen znowego, aby wiźeł nejnowšu wersiju, nježli zapłaśiš.",
         payLimit: "Pśewjele wopytow nětko.",
         payLimitSub: "Wopytaj za chylu hyšći raz.",
         payBoughtBefore: "Južo kupjony?",

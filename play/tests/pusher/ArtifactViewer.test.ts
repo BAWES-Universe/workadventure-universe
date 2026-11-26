@@ -68,6 +68,11 @@ describe("what the payment side of a page accepts", () => {
             chat: undefined,
             request: { restore: true, recoveryCode: code },
         });
+        // The version on screen at the tap goes with a start only
+        expect(parsePayBody({ start: true, intentId: wish, shownVersion: 3 })).toEqual({
+            chat: undefined,
+            request: { start: true, intentId: wish, shownVersion: 3 },
+        });
         expect(parsePayBody({ order: "o1" })).toEqual({ chat: undefined, request: { order: "o1" } });
         expect(parsePayBody({})).toEqual({ chat: undefined, request: {} });
         for (const bad of [
@@ -84,6 +89,11 @@ describe("what the payment side of a page accepts", () => {
             { restore: true, recoveryCode: "x".repeat(201) },
             { start: true, amount: "1.000" },
             { start: true, extra: 1 },
+            { shownVersion: 3 },
+            { check: true, intentId: wish, recoveryCode: code, receiptCode: code, shownVersion: 3 },
+            { start: true, intentId: wish, shownVersion: 0 },
+            { start: true, intentId: wish, shownVersion: 1.5 },
+            { start: true, intentId: wish, shownVersion: "3" },
         ]) {
             expect(parsePayBody(bad), JSON.stringify(bad)).toBeNull();
         }
