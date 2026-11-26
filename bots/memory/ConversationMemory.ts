@@ -9,7 +9,7 @@
  */
 
 import { withoutFileNotes } from '../services/ChatFiles';
-import { birthdayDateIn, birthdayIsToday, DISLIKE_LABEL, dislikeLabel, nameIn, stateIn, tastesIn, visionNoteOf } from './PersonalInfoRules';
+import { birthdayDateIn, birthdayIsToday, DISLIKE_LABEL, dislikeLabel, nameIn, plainThing, stateIn, tastesIn, visionNoteOf } from './PersonalInfoRules';
 
 /** How many things they do not like are kept. */
 const MAX_DISLIKES = 10;
@@ -609,7 +609,8 @@ export class ConversationMemory {
     private dropLike(info: PersonalInfo, thing: string): void {
         const before = info.preferences?.length ?? 0;
         info.preferences = (info.preferences ?? []).filter((kept) => {
-            if (kept.toLowerCase() !== thing.toLowerCase()) return true;
+            // A favorite is kept as "pizza (favorite food)": it is the same thing as "pizza"
+            if (plainThing(kept).toLowerCase() !== plainThing(thing).toLowerCase()) return true;
             if (info.heard) delete info.heard[`pref:${kept}`];
             if (info.drawnFrom) delete info.drawnFrom[`pref:${kept}`];
             return false;
@@ -619,8 +620,9 @@ export class ConversationMemory {
 
     /** They now say they like it: it is no longer something they do not like. */
     private dropDislike(info: PersonalInfo, thing: string): void {
-        const label = dislikeLabel(thing);
-        if (info.facts.get(label)?.toLowerCase() !== thing.toLowerCase()) return;
+        const plain = plainThing(thing);
+        const label = dislikeLabel(plain);
+        if (info.facts.get(label)?.toLowerCase() !== plain.toLowerCase()) return;
         info.facts.delete(label);
         if (info.heard) delete info.heard[`fact:${label}`];
         if (info.drawnFrom) delete info.drawnFrom[`fact:${label}`];

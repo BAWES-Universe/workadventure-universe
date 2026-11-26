@@ -321,4 +321,16 @@ describe('what the bot keeps from a chat', () => {
         expect(dropItems(stored, new Set([target.id]))).toBe(1);
         expect(stored.conversationHistory.map((line) => line.message)).toEqual(['I like steam rooms', 'Steam rooms are great']);
     });
+    it('treats a favorite and the same thing said plainly as one thing, across messages', () => {
+        let memory = learnFrom('my favorite food is pizza', 'I hate pizza');
+        let info = memory.getMemory(BOT, PERSON)!.personalInfo;
+        expect(info.preferences).toEqual([]);
+        expect(info.facts.get(dislikeLabel('pizza'))).toBe('pizza');
+        expect(Object.keys(info.drawnFrom ?? {}).filter((key) => key.startsWith('pref:'))).toEqual([]);
+
+        memory = learnFrom('I hate pizza', 'my favorite food is pizza');
+        info = memory.getMemory(BOT, PERSON)!.personalInfo;
+        expect(info.preferences).toEqual(['pizza (favorite food)']);
+        expect([...info.facts.keys()].some((key) => key.startsWith('dislike_'))).toBe(false);
+    });
 });

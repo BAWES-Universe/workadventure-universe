@@ -144,6 +144,9 @@ const TABLE: Array<[string, Partial<Said>]> = [
     ['i like pizza', { likes: ['pizza'] }],
     ['I like pizza.\nI hate olives.', { likes: ['pizza'], dislikes: ['olives'] }],
     ['I hate Mondays, but I love Fridays', { likes: ['Fridays'], dislikes: ['Mondays'] }],
+    // a favorite and its opposite in one message: the last one said stands
+    ['my favorite food is pizza. Actually I hate pizza', { dislikes: ['pizza'] }],
+    ['I hate pizza. Actually my favorite food is pizza', { likes: ['pizza (favorite food)'] }],
     // quoted or requested words are not theirs
     ['Please translate "my name is Sara" into French', {}],
     ['Can you write "I am Noor" on a card?', {}],

@@ -170,6 +170,11 @@ export function dislikeLabel(thing: string): string {
     return `${DISLIKE_LABEL}${slug || 'thing'}_${hash.toString(36)}`;
 }
 
+/** A like kept as "pizza (favorite food)" is "pizza" when it is set against what they do not like. */
+export function plainThing(value: string): string {
+    return value.replace(/\s*\((?:favou?rite)[^)]*\)\s*$/iu, '').trim();
+}
+
 export interface Tastes {
     likes: string[];
     dislikes: string[];
@@ -185,8 +190,9 @@ export function tastesIn(message: string): Tastes {
     // The last thing said about something stands: "I hate coffee. Actually I love coffee." is a like
     const push = (list: string[], other: string[], value: string | null) => {
         if (!value) return;
-        const opposite = other.findIndex((kept) => kept.toLowerCase() === value.toLowerCase());
-        if (opposite !== -1) other.splice(opposite, 1);
+        for (let index = other.length - 1; index >= 0; index--) {
+            if (plainThing(other[index]).toLowerCase() === plainThing(value).toLowerCase()) other.splice(index, 1);
+        }
         if (!list.some((kept) => kept.toLowerCase() === value.toLowerCase())) list.push(value);
     };
     for (const sentence of sentencesOf(message).flatMap(sayingsOf)) {
