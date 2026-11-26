@@ -199,7 +199,9 @@ export async function runReportTool(args: Record<string, unknown>, context: Repo
     const step = stepOf(context.turn, kind, args.step);
     const operation = step?.operation ?? 'none';
     const failure = step?.failure ?? FAILURE_OF_KIND[kind];
-    const retried = !!step && (context.turn?.steps.filter((other) => other.name === step.name).length ?? 0) > 1;
+    // Tried again: the same tool failed earlier in this reply (the same tool run twice on different things is not trying again)
+    const steps = context.turn?.steps ?? [];
+    const retried = !!step && steps.slice(0, steps.indexOf(step)).some((other) => other.name === step.name && other.failure !== null);
     const draftWords = typeof args.words === 'string' && args.words.trim() ? args.words.trim().slice(0, WORDS_MAX) : undefined;
     const replyRef = context.turn?.replyRef ?? `reply:${randomUUID()}`;
     // Every App is "app" to Orbit, so which App it was (its connection, or its tool for one with none) keeps two Apps' notes apart

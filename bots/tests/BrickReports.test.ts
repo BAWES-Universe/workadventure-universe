@@ -176,6 +176,22 @@ describe('The send_to_universe_team tool', () => {
         expect(ctx.admin.sendBrickReport).toHaveBeenCalledTimes(2);
     });
 
+    it('tried again only when the same tool failed earlier in the reply, not when it ran twice on different things', async () => {
+        const sources = { apps: new Map(), offered: new Set(['read_page']) };
+        const twoPages = newReportTurn('$event-1');
+        noteWhatRan(twoPages, [{ name: 'read_page', result: { text: 'first page' } }], sources);
+        noteWhatRan(twoPages, [{ name: 'read_page', result: { error: 'The page did not open' } }], sources);
+        const once = context({ turn: twoPages });
+        await runReportTool(args, once);
+        expect(sentOf(once)).toMatchObject({ operation: 'read_page', failure: 'failed', retried: false });
+        const failedTwice = newReportTurn('$event-1');
+        noteWhatRan(failedTwice, [{ name: 'read_page', result: { error: 'The page did not open' } }], sources);
+        noteWhatRan(failedTwice, [{ name: 'read_page', result: { error: 'The page did not open' } }], sources);
+        const again = context({ turn: failedTwice });
+        await runReportTool(args, again);
+        expect(sentOf(again)).toMatchObject({ retried: true });
+    });
+
     it('a problem with no step named is about the last step that failed, not a later one that only came back empty', async () => {
         const turn = newReportTurn('$event-1');
         const sources = { apps: new Map(), offered: new Set(['read_page', 'list_files']) };
