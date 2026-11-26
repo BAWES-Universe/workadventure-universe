@@ -254,6 +254,22 @@ export function withVisionChoice(
 }
 
 /**
+ * Whether a refused save is one that put the Vision pick back: the save carried a pick that is not what was last saved
+ * (a refusal about a position or a route leaves the pick alone), and the page still shows that pick (a newer one has its own
+ * save coming).
+ */
+export function refusalPutsPickBack(sent: unknown, shown: unknown, saved: string | null): boolean {
+    let savedVision: unknown = null;
+    try {
+        savedVision = saved ? (JSON.parse(saved) as { vision?: unknown }).vision ?? null : null;
+    } catch {
+        savedVision = null;
+    }
+    const sentJson = JSON.stringify(sent ?? null);
+    return sentJson !== JSON.stringify(savedVision) && sentJson === JSON.stringify(shown ?? null);
+}
+
+/**
  * The bot with what a refused save asked for put back to what was last saved: the Vision pick for a behavior save (kind
  * "config", `saved` is the behavior config as last saved, as JSON) or the "Runs on" ref for an AI save (kind "ai", `saved` is
  * the AI config as last saved). Without this the refused value stays in the page and is sent again with every later save

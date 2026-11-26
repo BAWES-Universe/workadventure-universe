@@ -5,6 +5,7 @@ import {
     readVisionPick,
     visionCandidates,
     visionMain,
+    refusalPutsPickBack,
     visionState,
     withVisionChoice,
     withoutRefused,
@@ -468,5 +469,31 @@ describe("withoutRefused", () => {
     it("copes with a saved value that can't be read", () => {
         const refused = bot({ assignedSpace: space, vision: { choice: "this" } });
         expect(withoutRefused(refused, "config", "{nope").behaviorConfig).toEqual({ assignedSpace: space });
+    });
+});
+
+describe("refusalPutsPickBack", () => {
+    const another = { choice: "another", keyId: "key-1", model: "m" };
+    const saved = JSON.stringify({ vision: { choice: "universe-ai" } });
+
+    it("puts a refused new pick back while the page still shows it", () => {
+        expect(refusalPutsPickBack(another, another, saved)).toBe(true);
+    });
+
+    it("leaves the pick alone when the refused save carried the pick that was already saved (the refusal is about something else)", () => {
+        expect(refusalPutsPickBack({ choice: "universe-ai" }, { choice: "universe-ai" }, saved)).toBe(false);
+    });
+
+    it("leaves the pick alone when nothing was saved and none was picked", () => {
+        expect(refusalPutsPickBack(undefined, undefined, JSON.stringify({}))).toBe(false);
+        expect(refusalPutsPickBack(undefined, undefined, null)).toBe(false);
+    });
+
+    it("leaves a newer pick made while the save was on its way", () => {
+        expect(refusalPutsPickBack(another, { choice: "this" }, saved)).toBe(false);
+    });
+
+    it("puts a first pick back when nothing was saved yet", () => {
+        expect(refusalPutsPickBack(another, another, null)).toBe(true);
     });
 });

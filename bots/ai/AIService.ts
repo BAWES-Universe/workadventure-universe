@@ -1545,6 +1545,8 @@ export class AIService {
             }
 
             let config = resolved.config;
+            // Where this bot's images go, read here where `resolved` is known to be a provider and not a resting bot
+            const visionPlan = (resolved as Extract<ResolvedProvider, { resting: false }>).vision;
             if (turn) turn.guard = (config.limits ?? BOT_LIMIT_DEFAULTS).guard;
             // Usage is recorded against the provider that really answered (Universe AI is its Default, a key is the key)
             usageProviderId = config.providerId;
@@ -1570,7 +1572,7 @@ export class AIService {
                 // Who looks: when Orbit says (the Vision row), what the owner picked or the shown default; otherwise as it always
                 // was. A person's own key without Vision never has its images described by Universe AI unless the owner picked it:
                 // the image would leave their key (or their own computer) and Universe would pay for it. The link stays in the text.
-                const plan = resolved.vision;
+                const plan = visionPlan;
                 const lookWith: 'self' | 'link' | 'universe-ai' | 'another' = plan
                     ? plan.choice === 'this'
                         ? visionCapable

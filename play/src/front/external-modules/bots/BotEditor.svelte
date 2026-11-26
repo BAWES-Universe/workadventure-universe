@@ -45,7 +45,7 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
-    import { withoutRefused } from "./visionModel";
+    import { refusalPutsPickBack, withoutRefused } from "./visionModel";
     import { newBotRef } from "./mindModel";
     import { aiModelPlan } from "./modelPickerModel";
     import { botDataFromSave } from "./savedBotModel";
@@ -245,17 +245,13 @@
                                         : savedConfigOnSchedule;
                                 // A refusal can only be about the Vision pick when this save carried one that is not what was saved:
                                 // a refusal about anything else (a position, a route) leaves the pick as it is
-                                let savedVision: unknown = null;
-                                try {
-                                    savedVision = saved ? (JSON.parse(saved) as { vision?: unknown }).vision ?? null : null;
-                                } catch {
-                                    savedVision = null;
-                                }
-                                const visionInThisSave = JSON.stringify(bot.behaviorConfig?.vision ?? null);
                                 if (
                                     currentBot &&
-                                    visionInThisSave !== JSON.stringify(savedVision) &&
-                                    JSON.stringify(currentBot.behaviorConfig?.vision ?? null) === visionInThisSave
+                                    refusalPutsPickBack(
+                                        bot.behaviorConfig?.vision,
+                                        currentBot.behaviorConfig?.vision,
+                                        saved
+                                    )
                                 ) {
                                     const reverted = withoutRefused(currentBot, "config", saved);
                                     // Only when something was really put back: a refusal about something else changes nothing here,
