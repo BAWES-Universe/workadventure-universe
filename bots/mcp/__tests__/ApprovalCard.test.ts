@@ -65,6 +65,16 @@ describe('words', () => {
 });
 
 describe('argumentLines', () => {
+    it('never rewrites an id, even in a label-like input', () => {
+        const lines = argumentLines({ order_id: 'ORD_12345', label_ids: ['INBOX', 'Label_123'], sort_by: 'CREATED_AT', status: 'ORD_12345' });
+        expect(lines).toEqual([
+            { label: 'Order', text: 'ORD_12345' },
+            { label: 'Labels', text: 'Inbox, Label_123' },
+            { label: 'Sort by', text: 'Created at' },
+            { label: 'Status', text: 'ORD_12345' },
+        ]);
+    });
+
     it('reads a label in capitals as a word, and leaves any other value as it will run', () => {
         const lines = argumentLines({ label_ids: ['INBOX'], status: 'OPEN', currency: 'USD', query: 'SQL', tags: ['API', 'CRM'] });
         expect(lines).toEqual([
@@ -270,6 +280,11 @@ describe('how a call ended', () => {
         expect(looksLikeData('[{"id":1}]')).toBe(true);
         expect(looksLikeData('["a"]')).toBe(true);
         expect(looksLikeData('[ERROR] no such team')).toBe(false);
+        expect(looksLikeData('[1] emails found')).toBe(false);
+        expect(looksLikeData('[2024-05-01] Message sent')).toBe(false);
+        expect(looksLikeData('[1, 2, 3]')).toBe(true);
+        expect(looksLikeData('[1,')).toBe(true);
+        expect(resultLine('[2024-05-01] Message sent')).toBe('[2024-05-01] Message sent');
     });
 
     it('keeps what came back for the bot even when the card does not show it', () => {

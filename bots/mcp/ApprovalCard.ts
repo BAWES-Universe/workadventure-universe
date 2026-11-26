@@ -299,7 +299,14 @@ export function looksLikeData(text: string): boolean {
     const fence = /^```[\w-]*\s*/.exec(body);
     if (fence) body = body.slice(fence[0].length).trimStart();
     if (body.startsWith('{')) return true;
-    return /^\[\s*(?:[[{"\]\d-]|true\b|false\b|null\b)/.test(body);
+    if (!body.startsWith('[')) return false;
+    try {
+        JSON.parse(body);
+        return true;
+    } catch {
+        // Not whole JSON (cut short, or a fence after it): a list still starts with `[{`, `[[`, `["`, `[]` or a value and a comma, while "[1] emails found" or "[2024-05-01] Sent" is a sentence
+        return /^\[\s*(?:[[{"\]]|-?\d+(?:\.\d+)?\s*,|(?:true|false|null)\s*,)/.test(body);
+    }
 }
 
 /** The first text of what a tool gave back, whatever it says, on one line (for the bot's own follow-up, where it is data and never an instruction). */

@@ -112,8 +112,8 @@ export function plainLabel(label: string): string {
     return one ? one[1] : label;
 }
 
-/** One ALL-CAPS word, or several joined by underscores: "INBOX", "CATEGORY_UPDATES". Digits only follow an underscore, so an id is never taken for one. */
-const CAPS_WORD = /^[A-Z]+(?:_[A-Z0-9]+)*$/;
+/** One ALL-CAPS word, or several joined by underscores: "INBOX", "CATEGORY_UPDATES". Letters only, so an id like "ORD_12345" is never taken for one. */
+const CAPS_WORD = /^[A-Z]+(?:_[A-Z]+)*$/;
 
 /** A value in plain words: "CATEGORY_UPDATES" reads "Category updates". Any other text stays exactly as it will run. */
 export function plainWords(value: string): string {
@@ -127,7 +127,7 @@ export function plainWords(value: string): string {
  * Inputs whose capital words are labels, not names or codes: a mail "Label ids" of INBOX, a "Status" of OPEN. Any other input
  * (a currency of USD, a query of SQL) shows exactly as it will run.
  */
-const WORD_KEY = /^(label|folder|mailbox|categor(y|ie)|status|priority|visibility|sort|order)s?(_?ids?)?(_?by)?$/;
+const WORD_KEY = /^(labels?(_?ids?)?|folders?|mailbox(es)?|categor(y|ies)|status|priority|visibility|sort(_?by)?)$/;
 
 /** Whether an input's capital words read as plain words: "label_ids", "labelIds" and "Label ids" do, "currency" does not. */
 export function readsAsWords(key: string): boolean {

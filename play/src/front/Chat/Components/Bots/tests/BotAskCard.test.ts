@@ -247,6 +247,8 @@ describe("the card a bot shows before it changes something", () => {
             expect(target.querySelector(".ask-result")).toBeNull();
             await show(ask({ answer: { option: "approve", result: "[Gmail] Message sent successfully." } }));
             expect(text()).toContain("[Gmail] Message sent successfully.");
+            await show(ask({ answer: { option: "approve", result: "[2024-05-01] Message sent" } }));
+            expect(text()).toContain("[2024-05-01] Message sent");
         });
 
         it("says how long allow more lasts and offers Ask me again", async () => {
