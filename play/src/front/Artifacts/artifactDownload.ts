@@ -95,14 +95,13 @@ export function hasTable(markdown: string): boolean {
     return markdownTables(markdown).length > 0;
 }
 
+/** The marks a file name cannot hold on some system: path marks, quotes, and every control character. */
+// eslint-disable-next-line no-control-regex
+const UNSAFE_NAME_MARKS = /[\\/:*?"<>|\u0000-\u001f]/g;
+
 /** A name safe on every system: no path marks, no control characters, never empty, never more than a sensible length. */
 export function fileNameOf(title: string, ending: string, version?: number): string {
-    // eslint-disable-next-line no-control-regex
-    const clean = title
-        .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .replace(/^\.+/, "");
+    const clean = title.replace(UNSAFE_NAME_MARKS, " ").replace(/\s+/g, " ").trim().replace(/^\.+/, "");
     const base =
         (clean.slice(0, FILE_NAME_MAX).trim() || "Document") + (version !== undefined ? ` (version ${version})` : "");
     return `${base}.${ending}`;
