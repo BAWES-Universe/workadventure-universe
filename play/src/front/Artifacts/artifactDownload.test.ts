@@ -173,7 +173,10 @@ describe("sheetNamesOf", () => {
 
 describe("files", () => {
     it("puts every table of a long document in the spreadsheet, with no cut", async () => {
-        const tables = Array.from({ length: 70 }, (_, n) => ({ title: `Part ${n + 1}`, rows: [["a"], [String(n + 1)]] }));
+        const tables = Array.from({ length: 70 }, (_, n) => ({
+            title: `Part ${n + 1}`,
+            rows: [["a"], [String(n + 1)]],
+        }));
         const blob = await spreadsheetFile(tables, (n) => `Table ${n}`);
         const book = XLSX.read(new Uint8Array(await readBlob<ArrayBuffer>(blob, "buffer")), { type: "array" });
         expect(book.SheetNames).toHaveLength(70);

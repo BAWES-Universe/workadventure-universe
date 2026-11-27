@@ -63,7 +63,8 @@ function decode(text: string): string {
 /** The blocks inside a block that holds others: a quote, a list and each of its items. */
 function childBlocks(token: Token): Token[] {
     if (token.type === "list") return (token as Tokens.List).items;
-    if ("tokens" in token && token.tokens && (token.type === "blockquote" || token.type === "list_item")) return token.tokens;
+    if ("tokens" in token && token.tokens && (token.type === "blockquote" || token.type === "list_item"))
+        return token.tokens;
     return [];
 }
 
@@ -94,11 +95,15 @@ export function hasTable(markdown: string): boolean {
     return markdownTables(markdown).length > 0;
 }
 
+/** The marks a file name cannot hold on some system: path marks, quotes, and every control character. */
+// eslint-disable-next-line no-control-regex
+const UNSAFE_NAME_MARKS = /[\\/:*?"<>|\u0000-\u001f]/g;
+
 /** A name safe on every system: no path marks, no control characters, never empty, never more than a sensible length. */
 export function fileNameOf(title: string, ending: string, version?: number): string {
-    // eslint-disable-next-line no-control-regex
-    const clean = title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().replace(/^\.+/, "");
-    const base = (clean.slice(0, FILE_NAME_MAX).trim() || "Document") + (version !== undefined ? ` (version ${version})` : "");
+    const clean = title.replace(UNSAFE_NAME_MARKS, " ").replace(/\s+/g, " ").trim().replace(/^\.+/, "");
+    const base =
+        (clean.slice(0, FILE_NAME_MAX).trim() || "Document") + (version !== undefined ? ` (version ${version})` : "");
     return `${base}.${ending}`;
 }
 
@@ -120,12 +125,18 @@ function tabName(wanted: string, room: number, fallback: string): string {
 export function sheetNamesOf(tables: DocumentTable[], fallback: (number: number) => string): string[] {
     const used = new Set<string>();
     return tables.map((table, index) => {
-        const wanted = table.title.replace(/[[\]:*?/\\]/g, " ").replace(/\s+/g, " ").trim();
+        const wanted = table.title
+            .replace(/[[\]:*?/\\]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
         const spare = tabName(fallback(index + 1), SHEET_NAME_MAX, "Sheet");
         let name = tabName(wanted, SHEET_NAME_MAX, spare);
         for (let n = 2; used.has(name.toLowerCase()); n++) {
             const suffix = ` ${n}`;
-            name = tabName(wanted, SHEET_NAME_MAX - suffix.length, spare).slice(0, SHEET_NAME_MAX - suffix.length).trim() + suffix;
+            name =
+                tabName(wanted, SHEET_NAME_MAX - suffix.length, spare)
+                    .slice(0, SHEET_NAME_MAX - suffix.length)
+                    .trim() + suffix;
         }
         used.add(name.toLowerCase());
         return name;
@@ -142,7 +153,10 @@ export function markdownFile(markdown: string): Blob {
  * words "=1+1", never a formula, and a number-like text stays as written. The sheet code is loaded only now, when someone
  * asked for the file.
  */
-export async function spreadsheetFile(tables: DocumentTable[], fallbackName: (number: number) => string): Promise<Blob> {
+export async function spreadsheetFile(
+    tables: DocumentTable[],
+    fallbackName: (number: number) => string
+): Promise<Blob> {
     const XLSX = await import("xlsx");
     const names = sheetNamesOf(tables, fallbackName);
     const book = XLSX.utils.book_new();
@@ -155,7 +169,10 @@ export async function spreadsheetFile(tables: DocumentTable[], fallbackName: (nu
                 sheet[XLSX.utils.encode_cell({ r, c })] = { t: "s", v: value };
             });
         });
-        sheet["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(table.rows.length - 1, 0), c: Math.max(widest - 1, 0) } });
+        sheet["!ref"] = XLSX.utils.encode_range({
+            s: { r: 0, c: 0 },
+            e: { r: Math.max(table.rows.length - 1, 0), c: Math.max(widest - 1, 0) },
+        });
         sheet["!cols"] = Array.from({ length: widest }, (_, c) => ({
             wch: Math.min(60, Math.max(8, ...table.rows.map((row) => (row[c] ?? "").length + 2))),
         }));
