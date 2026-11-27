@@ -109,6 +109,15 @@ describe("file names", () => {
         expect(fileNameOf("Notes", "md", 1)).toBe("Notes (version 1).md");
         expect(fileNameOf("x".repeat(500), "md").length).toBeLessThanOrEqual(104);
     });
+
+    it("never cuts a two-unit character in half", () => {
+        // The cut falls between the two units of the emoji: the whole character goes, no broken mark stays
+        const name = fileNameOf("a".repeat(99) + "😀" + "b", "md");
+        expect(name).toBe("a".repeat(99) + ".md");
+        const tabs = sheetNamesOf([{ title: "a".repeat(30) + "😀 end", rows: [["x"]] }], (n) => `Table ${n}`);
+        expect(tabs).toEqual(["a".repeat(30)]);
+        expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(name + tabs[0])).toBe(false);
+    });
 });
 
 describe("sheetNamesOf", () => {

@@ -99,11 +99,21 @@ export function hasTable(markdown: string): boolean {
 // eslint-disable-next-line no-control-regex
 const UNSAFE_NAME_MARKS = /[\\/:*?"<>|\u0000-\u001f]/g;
 
+/**
+ * The first `max` units of a text, never ending on half of a character: a character outside the basic range (an emoji, a
+ * rare ideograph) takes two units, and a cut between them would leave a broken mark in the name.
+ */
+function cut(text: string, max: number): string {
+    const end = text.charCodeAt(max - 1);
+    const splits = max > 0 && max < text.length && end >= 0xd800 && end <= 0xdbff;
+    return text.slice(0, splits ? max - 1 : max);
+}
+
 /** A name safe on every system: no path marks, no control characters, never empty, never more than a sensible length. */
 export function fileNameOf(title: string, ending: string, version?: number): string {
     const clean = title.replace(UNSAFE_NAME_MARKS, " ").replace(/\s+/g, " ").trim().replace(/^\.+/, "");
     const base =
-        (clean.slice(0, FILE_NAME_MAX).trim() || "Document") + (version !== undefined ? ` (version ${version})` : "");
+        (cut(clean, FILE_NAME_MAX).trim() || "Document") + (version !== undefined ? ` (version ${version})` : "");
     return `${base}.${ending}`;
 }
 
@@ -113,8 +123,7 @@ export function fileNameOf(title: string, ending: string, version?: number): str
  * Anything it cannot keep is the fallback instead.
  */
 function tabName(wanted: string, room: number, fallback: string): string {
-    const name = wanted
-        .slice(0, room)
+    const name = cut(wanted, room)
         .replace(/^'+|'+$/g, "")
         .trim()
         .replace(/^'+|'+$/g, "");
@@ -133,10 +142,7 @@ export function sheetNamesOf(tables: DocumentTable[], fallback: (number: number)
         let name = tabName(wanted, SHEET_NAME_MAX, spare);
         for (let n = 2; used.has(name.toLowerCase()); n++) {
             const suffix = ` ${n}`;
-            name =
-                tabName(wanted, SHEET_NAME_MAX - suffix.length, spare)
-                    .slice(0, SHEET_NAME_MAX - suffix.length)
-                    .trim() + suffix;
+            name = tabName(wanted, SHEET_NAME_MAX - suffix.length, spare).trim() + suffix;
         }
         used.add(name.toLowerCase());
         return name;
