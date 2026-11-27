@@ -76,12 +76,11 @@ describe("routeStops", () => {
 });
 
 describe("Show tool calls", () => {
-    it("is off for a bot that never had the setting, and for anything but true", () => {
-        expect(showsToolCalls(bot("idle"))).toBe(false);
-        expect(showsToolCalls(bot("idle", { showToolCalls: false }))).toBe(false);
-        expect(showsToolCalls(undefined)).toBe(false);
-        expect(showsToolCalls(bot("idle", { showToolCalls: "yes" as unknown as boolean }))).toBe(false);
+    it("is on for a bot that never had the setting, and off only when its owner turned it off", () => {
+        expect(showsToolCalls(bot("idle"))).toBe(true);
+        expect(showsToolCalls(undefined)).toBe(true);
         expect(showsToolCalls(bot("idle", { showToolCalls: true }))).toBe(true);
+        expect(showsToolCalls(bot("idle", { showToolCalls: false }))).toBe(false);
     });
 
     it("turns on and off without touching the rest of the behavior", () => {

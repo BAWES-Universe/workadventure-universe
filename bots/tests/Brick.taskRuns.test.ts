@@ -704,6 +704,27 @@ describe('each model call of a run is on the books, one row each, under the runâ
         expect(runTool.mock.calls[0][1]).toEqual({ result: 'tell_them', extra: {} });
     });
 
+    it('runs nothing for a call that only began (Claude names a call at its block start): a stream that broke before it was complete leaves no call', async () => {
+        const { ai } = service([[{ content: '', done: false, toolCalls: [{ id: 'c1', name: 'read_web_page', arguments: '', began: true }] }, done(100)]]);
+        const runTool = vi.fn(async () => '{}');
+        await ai.runBrickTask({ ...base, permit: async () => true, runTool });
+        expect(runTool).not.toHaveBeenCalled();
+    });
+
+    it('runs the complete call once when its block start came first, with the arguments that followed', async () => {
+        const { ai } = service([
+            [
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: 'finish_check', arguments: '', began: true }] },
+                { content: '', done: false, toolCalls: [{ id: 'c1', name: 'finish_check', arguments: '{"result":"nothing_new"}' }] },
+                done(100),
+            ],
+        ]);
+        const runTool = vi.fn(async (_name: string, _args?: Record<string, unknown>) => '{"ok":true}');
+        await ai.runBrickTask({ ...base, permit: async () => true, runTool });
+        expect(runTool).toHaveBeenCalledTimes(1);
+        expect(runTool.mock.calls[0][1]).toEqual({ result: 'nothing_new' });
+    });
+
     it('does not go on when the finish was refused: the model is told and calls it again', async () => {
         const { ai } = service([
             [{ content: '', done: false, toolCalls: [{ id: 'c1', name: 'finish_check', arguments: '{"result":"nothing_new"}' }] }, done(100)],

@@ -1648,12 +1648,17 @@ export abstract class BaseBehavior {
         this.config = { ...this.config, ...config };
     }
 
-    /** Read only when tools are used, so Orbit edits apply without idle work or polling. */
+    /**
+     * "Show app use": on unless its owner turned it off. A bot that never had the setting shows it (it starts on). Read only when
+     * tools are used, so Orbit edits apply without idle work or polling.
+     */
     protected async shouldShowToolCalls(botId: string): Promise<boolean> {
-        if (!this.adminApiService) return this.config.showToolCalls === true;
+        if (!this.adminApiService) return this.config.showToolCalls !== false;
         try {
             const botConfig = await this.adminApiService.getBotConfiguration(botId, 2000);
-            return botConfig?.behaviorConfig?.showToolCalls === true;
+            // No answer at all is a settings outage, not a bot without the setting: it shows nothing
+            if (!botConfig) return false;
+            return botConfig.behaviorConfig?.showToolCalls !== false;
         } catch {
             // A settings outage must not interrupt the reply or expose tool details.
             return false;
