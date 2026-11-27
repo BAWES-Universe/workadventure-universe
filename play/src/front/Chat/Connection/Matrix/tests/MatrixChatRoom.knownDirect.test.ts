@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Room } from "matrix-js-sdk";
 
 vi.mock("matrix-js-sdk", async (importOriginal) => {
