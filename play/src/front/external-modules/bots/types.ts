@@ -68,7 +68,7 @@ export interface BotData {
         conversationRadius?: number; // For social bots: detection range for players
         patrolWaypoints?: Array<{ x: number; y: number }>; // For patrol bots
         minTimeBetweenConversations?: number; // For social bots
-        showToolCalls?: boolean; // Show a 🔍 bubble when the bot uses an outside (MCP) tool; off when missing
+        showToolCalls?: boolean; // "Show app use": which app the bot used, in chat; on when missing, off only when its owner turned it off
         vision?: VisionPick | null; // Where its images go (the Vision row); nothing = the owner picked nothing
         [key: string]: unknown;
     };

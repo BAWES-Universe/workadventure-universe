@@ -215,6 +215,67 @@ describe("AIService – the steps a reply shows (#1545)", () => {
         expect(reset.toolSteps[0]).toMatchObject({ id: "c1", detail: "upbeat funk" });
     });
 
+    it("starts the line when a provider says a call began (Claude's block start), then runs the complete call once, announced once", async () => {
+        const { admin, memory } = buildMocks();
+        const events: string[] = [];
+        mockExecuteToolCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+        mockGenerateStream
+            .mockImplementationOnce(async function* () {
+                yield { content: "", done: false, toolCalls: [{ id: "c1", name: "generate_music", arguments: "", began: true }] };
+                events.push("the page is being written");
+                yield { content: "", done: false, toolCalls: [{ id: "c1", name: "generate_music", arguments: '{"prompt":"upbeat funk"}' }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
+            })
+            .mockImplementationOnce(says("Here it is."));
+        const service = openToolGate(new AIService(memory, admin, "http://admin.local"));
+        const chunks: any[] = [];
+        for await (const chunk of service.generateBotResponseStream("bot-1", 42, "make me a song", "You are a bot.", "universe-ai", "!dm:matrix.test", "", undefined, undefined, undefined, undefined, "dm")) {
+            if (chunk.toolSteps) events.push(chunk.reset ? "reset" : "begun");
+            chunks.push(chunk);
+        }
+        // Announced once, before the complete call; the reset that starts the run carries the complete call
+        expect(events).toEqual(["begun", "the page is being written", "reset"]);
+        expect(chunks.find((chunk) => chunk.toolSteps && !chunk.reset).toolSteps).toEqual([
+            { id: "c1", doing: "Using Make a song", done: "Used Make a song", group: "tool:generate_music", kind: "write" },
+        ]);
+        expect(chunks.find((chunk) => chunk.toolSteps && chunk.reset).toolSteps[0]).toMatchObject({ id: "c1", detail: "upbeat funk" });
+        expect(mockExecuteToolCall).toHaveBeenCalledTimes(1);
+        expect(mockExecuteToolCall.mock.calls[0].flat().some((value) => JSON.stringify(value).includes("upbeat funk"))).toBe(true);
+    });
+
+    it("runs nothing for a call that only began: a stream that broke before the call was complete leaves no call behind", async () => {
+        const { admin, memory } = buildMocks();
+        mockGenerateStream
+            .mockImplementationOnce(async function* () {
+                yield { content: "", done: false, toolCalls: [{ id: "c1", name: "generate_music", arguments: "", began: true }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 0, latency: 10, error: true, errorStatus: 500 } };
+            })
+            .mockImplementation(says("Sorry."));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
+        expect(mockExecuteToolCall).not.toHaveBeenCalled();
+        // Its step does not end as done: it is told it did not run
+        expect(chunks.filter((chunk) => chunk.toolStepResults).flatMap((chunk) => chunk.toolStepResults)).toEqual([
+            { id: "c1", ok: false, note: "Not run: the reply was cut off before it was ready" },
+        ]);
+    });
+
+    it("starts the line for a later round's call that began", async () => {
+        const { admin, memory } = buildMocks();
+        mockExecuteToolCall.mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+        mockGenerateStream
+            .mockImplementationOnce(calls({ id: "c1", name: "generate_music", args: { prompt: "funk" } }))
+            .mockImplementationOnce(async function* () {
+                yield { content: "", done: false, toolCalls: [{ id: "c2", name: "generate_music", arguments: "", began: true }] };
+                yield { content: "", done: false, toolCalls: [{ id: "c2", name: "generate_music", arguments: '{"prompt":"disco"}' }] };
+                yield { content: "", done: true, metadata: { tokensUsed: 5, latency: 10, error: false } };
+            })
+            .mockImplementation(says("Both made."));
+        const chunks = await reply(openToolGate(new AIService(memory, admin, "http://admin.local")));
+        const begun = chunks.filter((chunk) => chunk.toolSteps && !chunk.reset).flatMap((chunk) => chunk.toolSteps.map((step: any) => step.id));
+        expect(begun).toEqual(["c1", "c2"]);
+        expect(mockExecuteToolCall).toHaveBeenCalledTimes(2);
+    });
+
     it("announces nothing for a call without a name, or one the line does not show", async () => {
         const { admin, memory } = buildMocks();
         mockGenerateStream

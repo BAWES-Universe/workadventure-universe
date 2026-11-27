@@ -127,6 +127,12 @@ export interface ToolCall {
     id: string;
     name: string;
     arguments: string; // JSON string
+    /**
+     * Set by a provider that knows a call has begun while its arguments are still being written (Claude's `content_block_start`):
+     * it only names the call so the steps line can start now. It is never run or stored as a call; the complete call that follows
+     * with the same id is. A broken stream therefore never leaves a half-written call behind.
+     */
+    began?: true;
 }
 
 /**

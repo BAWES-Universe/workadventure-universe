@@ -260,7 +260,7 @@ describe("AnthropicProvider", () => {
                 ])
             );
             const chunks = await drain(new AnthropicProvider().generateStream("s", "take me to the cafe", config(), [{ type: "function", function: { name: "go_to" } }]));
-            const calls = chunks.flatMap((chunk) => chunk.toolCalls ?? []);
+            const calls = chunks.flatMap((chunk) => chunk.toolCalls ?? []).filter((call) => !call.began);
             expect(calls).toEqual([{ id: "toolu_1", name: "go_to", arguments: '{"place":"cafe"}' }]);
             expect(chunks[chunks.length - 1].metadata).toMatchObject({ error: false, completionTokens: 20 });
         });
@@ -290,7 +290,7 @@ describe("AnthropicProvider", () => {
             expect(sentNames.every((name: string) => /^[A-Za-z0-9_-]{1,64}$/.test(name))).toBe(true);
             expect(new Set(sentNames).size).toBe(4);
             expect(sentNames[1]).toBe("go_to");
-            expect(chunks.flatMap((chunk) => chunk.toolCalls ?? []).map((call) => call.name)).toEqual(["files.read", "go_to", long]);
+            expect(chunks.flatMap((chunk) => chunk.toolCalls ?? []).filter((call) => !call.began).map((call) => call.name)).toEqual(["files.read", "go_to", long]);
         });
 
         it("gives a tool with no arguments an empty object", async () => {
@@ -302,7 +302,39 @@ describe("AnthropicProvider", () => {
                 ])
             );
             const chunks = await drain(new AnthropicProvider().generateStream("s", "wave", config()));
-            expect(chunks.flatMap((chunk) => chunk.toolCalls ?? [])).toEqual([{ id: "toolu_2", name: "wave", arguments: "{}" }]);
+            expect(chunks.flatMap((chunk) => chunk.toolCalls ?? []).filter((call) => !call.began)).toEqual([{ id: "toolu_2", name: "wave", arguments: "{}" }]);
+        });
+
+        it("names a tool call the moment its block starts, before any of its arguments are written, then hands it over whole", async () => {
+            fetchMock.mockImplementationOnce(async () =>
+                events([
+                    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_7", name: "files_read", input: {} } },
+                    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"path":"a' } },
+                    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '.txt"}' } },
+                    { type: "content_block_stop", index: 0 },
+                    { type: "message_stop" },
+                ])
+            );
+            const chunks = await drain(new AnthropicProvider().generateStream("s", "hi", config(), [{ type: "function", function: { name: "files.read" } }]));
+            const calls = chunks.flatMap((chunk) => chunk.toolCalls ?? []);
+            // First a name only (under the name the tool servers know), marked as begun, then the complete call with the same id
+            expect(calls).toEqual([
+                { id: "toolu_7", name: "files.read", arguments: "", began: true },
+                { id: "toolu_7", name: "files.read", arguments: '{"path":"a.txt"}' },
+            ]);
+            // The name comes before the arguments are all in: it is the first chunk with a call
+            expect(chunks.findIndex((chunk) => chunk.toolCalls?.[0]?.began)).toBeLessThan(chunks.findIndex((chunk) => chunk.toolCalls && !chunk.toolCalls[0].began));
+        });
+
+        it("hands over no complete call when the stream breaks inside a tool block, only the name that began", async () => {
+            fetchMock.mockImplementationOnce(async () =>
+                events([
+                    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_8", name: "go_to", input: {} } },
+                    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"pla' } },
+                ])
+            );
+            const chunks = await drain(new AnthropicProvider().generateStream("s", "hi", config(), [{ type: "function", function: { name: "go_to" } }]));
+            expect(chunks.flatMap((chunk) => chunk.toolCalls ?? []).filter((call) => !call.began)).toEqual([]);
         });
 
         it("says a reply was cut off when it hit the cap", async () => {

@@ -73,14 +73,26 @@ describe('per-bot steps line in the shared response path', () => {
         expect(off.send).toHaveBeenCalledWith('same-room', expect.any(String), 'Here is a new answer.', false);
     });
     it.each([{}, { showToolCalls: 'true' }, null])(
-        'missing or malformed setting stays off (%j)',
+        'a setting that is missing or not an explicit off shows the steps line (%j)',
         async (behaviorConfig) => {
-            const bot = new TestBehavior({ type: 'idle', showToolCalls: true });
+            const bot = new TestBehavior({ type: 'idle', showToolCalls: false });
             bot.readSetting.mockResolvedValue({ behaviorConfig });
             await bot.reply('bot');
-            expect(stepsSent(bot)).toEqual([]);
+            expect(stepsSent(bot)).toHaveLength(2);
         }
     );
+    it('only an explicit off hides it', async () => {
+        const bot = new TestBehavior({ type: 'idle' });
+        bot.readSetting.mockResolvedValue({ behaviorConfig: { showToolCalls: false } });
+        await bot.reply('bot');
+        expect(stepsSent(bot)).toEqual([]);
+    });
+    it('no answer from Orbit at all is an outage: nothing is shown', async () => {
+        const bot = new TestBehavior();
+        bot.readSetting.mockResolvedValue(null);
+        await bot.reply('bot');
+        expect(stepsSent(bot)).toEqual([]);
+    });
     it('reads the switch again when tools are used, including a running bot switched off', async () => {
         const bot = new TestBehavior();
         bot.readSetting

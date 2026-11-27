@@ -447,6 +447,12 @@ export class AnthropicProvider implements AIProvider {
                             const block: ClaudeContentBlock | undefined = event.content_block;
                             if (block?.type === 'tool_use') {
                                 toolBlocks.set(event.index, { id: block.id || '', name: block.name || '', json: '' });
+                                // The call has begun though its arguments are not written yet (a whole page can take a minute): say
+                                // so now, so the steps line starts at once. The complete call comes at the block's stop.
+                                if (block.id && block.name) {
+                                    const began: ToolCall = { id: block.id, name: originalNames.get(block.name) ?? block.name, arguments: '', began: true };
+                                    yield { content: '', done: false, toolCalls: [began] };
+                                }
                             }
                             break;
                         }
