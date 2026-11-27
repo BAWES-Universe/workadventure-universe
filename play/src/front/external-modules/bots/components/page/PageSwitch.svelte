@@ -15,6 +15,7 @@
     class="bp-switch"
     {id}
     aria-label={label}
+    aria-checked={checked}
     title={label}
     {checked}
     {disabled}

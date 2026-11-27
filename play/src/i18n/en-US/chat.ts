@@ -1940,6 +1940,23 @@ const chat: BaseTranslation = {
                 justFor: "Just for {action:string}",
                 cardLink: "What {brick:string} may do with {app:string}",
             },
+            // The Apps row on a Brick's own page and the screen it opens
+            onBrick: {
+                title: "Apps",
+                none: "No apps yet",
+                // Apps the Brick has switched off: "Gmail · off", "Gmail and Notion · off", or after the ones that are on: "Gmail · Notion off"
+                // The row's line also says whether chat shows which app it used ("Show app use")
+                useShown: "App use shown",
+                useHidden: "App use hidden",
+                withUse: "{use:string} · {apps:string}",
+                useNotSaved: "Couldn't change Show app use. It is back to how it was.",
+                allOff: "{names:string} · off",
+                someOff: "{on:string} · {off:string} off",
+                needsSignIn: "{app:string} needs signing in again",
+                needSignInMany: "{count:number} apps need signing in again",
+                top: "Tap an app to choose what {brick:string} may do with it.",
+                noneNote: "{brick:string} has no apps yet. When a job needs one, it asks you. Or connect one yourself.",
+            },
             // The Apps row on the Bricks page
             rowNone: "Connect email, calendar, GitHub and more",
             and: "and",
