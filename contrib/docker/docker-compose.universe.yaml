@@ -1,16 +1,25 @@
 # Universe-specific docker-compose override
 # This file overrides image names to use universe images from GHCR
 # Used in conjunction with docker-compose.prod.yaml
-# GITHUB_REPOSITORY_OWNER and VERSION must be set as environment variables
+# UNIVERSE_IMAGE_OWNER (the lowercase GitHub owner of the images, e.g. bawes-universe) and VERSION must be set
+# as environment variables. It is not called GITHUB_REPOSITORY_OWNER because GitHub Actions runners reserve
+# every GITHUB_* name and refuse to override it, and Docker image names must be lowercase.
 
 version: "3.6"
 services:
   play:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/play-universe:${VERSION}
+    image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/play-universe:${VERSION}
   back:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/back-universe:${VERSION}
+    image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/back-universe:${VERSION}
+    # back/Dockerfile.universe health-checks http://localhost:80/ping (and EXPOSEs 80), while the app's own
+    # default is 8080. Without this the container runs fine but is reported unhealthy and
+    # `docker compose up` aborts with "dependency failed to start: container docker-back-1 is unhealthy".
+    environment:
+      - HTTP_PORT=80
+    labels:
+      traefik.http.services.back.loadbalancer.server.port: "80"
   uploader:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/uploader-universe:${VERSION}
+    image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/uploader-universe:${VERSION}
   map-storage:
-    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/map-storage-universe:${VERSION}
+    image: ghcr.io/${UNIVERSE_IMAGE_OWNER}/map-storage-universe:${VERSION}
 

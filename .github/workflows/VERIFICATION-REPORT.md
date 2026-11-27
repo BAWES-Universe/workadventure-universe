@@ -24,7 +24,7 @@ All required Dockerfile.universe files exist:
 
 - ✅ `contrib/docker/docker-compose.universe.yaml` exists
 - ✅ All 4 services (play, back, map-storage, uploader) are referenced
-- ✅ Image naming convention is correct: `ghcr.io/${GITHUB_REPOSITORY_OWNER}/${service}-universe:${VERSION}`
+- ✅ Image naming convention is correct: `ghcr.io/${UNIVERSE_IMAGE_OWNER}/${service}-universe:${VERSION}`
 
 ### 4. Workflow Components Verified ✓
 
