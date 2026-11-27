@@ -24,12 +24,25 @@ export function seedShowAppUse(botId: string, show: boolean): void {
     states.update((all) => (all[botId] === show ? all : { ...all, [botId]: show }));
 }
 
-const busy = new Set<string>();
+/** The Bricks whose change is on its way to Orbit. Kept here, not in the switch's row, so the row is disabled again when the
+ * person leaves the screen and comes back before the save ends. */
+const saving = writable<Record<string, boolean>>({});
+export const showAppUseSaving: Readable<Record<string, boolean>> = { subscribe: saving.subscribe };
+
+function setSaving(botId: string, on: boolean): void {
+    saving.update((all) => {
+        if (on) return all[botId] ? all : { ...all, [botId]: true };
+        if (!all[botId]) return all;
+        const rest = { ...all };
+        delete rest[botId];
+        return rest;
+    });
+}
 
 /** Forgets what was known (signed out, and for tests). */
 export function forgetShowAppUse(): void {
     states.set({});
-    busy.clear();
+    saving.set({});
 }
 
 /**
@@ -37,15 +50,15 @@ export function forgetShowAppUse(): void {
  * while one is on its way does nothing (false): the switch is disabled meanwhile, so this is only a second guard.
  */
 export async function changeShowAppUse(botId: string, show: boolean): Promise<boolean> {
-    if (busy.has(botId)) return false;
+    if (get(saving)[botId]) return false;
     const before = shownIn(get(states), botId);
-    busy.add(botId);
+    setSaving(botId, true);
     seedShowAppUse(botId, show);
     try {
         const saved = await changeMyBrick(botId, { behaviorConfig: { showToolCalls: show } });
         if (!saved) seedShowAppUse(botId, before);
         return saved;
     } finally {
-        busy.delete(botId);
+        setSaving(botId, false);
     }
 }

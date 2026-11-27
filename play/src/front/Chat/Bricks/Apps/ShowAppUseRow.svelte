@@ -1,7 +1,7 @@
 <script lang="ts">
     import LL from "../../../../i18n/i18n-svelte";
     import PageSwitch from "../../../external-modules/bots/components/page/PageSwitch.svelte";
-    import { changeShowAppUse, shownIn, showAppUseStates } from "./BrickShowAppUse";
+    import { changeShowAppUse, shownIn, showAppUseSaving, showAppUseStates } from "./BrickShowAppUse";
 
     /**
      * "Show app use" on a Brick's Apps screen: one switch, with the words the bot page's own switch has. Moving it saves at
@@ -12,21 +12,18 @@
 
     $: text = $LL.mapEditor.edit.bots.page.tools;
     $: on = shownIn($showAppUseStates, botId);
-    let busy = false;
+    // From the store, so it still holds when the screen was left and opened again before the save ended.
+    $: busy = $showAppUseSaving[botId] === true;
     let failed = false;
 
     function change(show: boolean) {
         if (busy) return;
-        busy = true;
         failed = false;
         changeShowAppUse(botId, show)
             .then((saved) => {
                 failed = !saved;
             })
-            .catch((error) => console.error(error))
-            .finally(() => {
-                busy = false;
-            });
+            .catch((error) => console.error(error));
     }
 </script>
 
