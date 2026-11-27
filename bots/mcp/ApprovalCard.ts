@@ -308,6 +308,13 @@ export function outcomeOf(result: unknown): 'succeeded' | 'failed' | 'notSent' |
     return 'succeeded';
 }
 
+/** Data inside a code fence as the data alone, so it is read as data like the same data without one. Text without a fence as it is, trimmed. */
+function withoutFence(text: string): string {
+    const body = text.trim();
+    const fence = /^```[\w-]*\s*/.exec(body);
+    return fence ? body.slice(fence[0].length).replace(/\s*```\s*$/, '').trim() : body;
+}
+
 /**
  * Whether text is data that reads as code: JSON that starts with `{` or a list (`[1, 2]`, `[{...}]`, `["a"]`, `[]`), also
  * inside a code fence. A bracketed word before plain text ("[Gmail] Message sent") is a sentence, not data.
@@ -340,7 +347,7 @@ export function resultText(result: unknown, mail = false, max: number = RUN_ANSW
     for (const item of items) {
         const text = typeof item === 'string' ? item : isPlain(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : undefined;
         if (!text?.trim()) continue;
-        texts.push(looksLikeData(text) ? text.trim() : text.replace(/\s+/g, ' ').trim());
+        texts.push(looksLikeData(text) ? withoutFence(text) : text.replace(/\s+/g, ' ').trim());
     }
     try {
         if (texts.length > 0) return fitAppAnswer(texts.length === 1 ? texts[0] : texts, max, mail);

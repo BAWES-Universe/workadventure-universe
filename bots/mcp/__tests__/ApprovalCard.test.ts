@@ -328,6 +328,25 @@ describe('how a call ended', () => {
         expect(text).not.toContain('QUJDQUJD');
     });
 
+    it('reads JSON inside a code fence as data too, so a fenced mail answer is tidied like an unfenced one', () => {
+        const message = {
+            id: 'm1',
+            threadId: 't1',
+            labelIds: ['INBOX'],
+            subject: 'Invoice',
+            payload: { mimeType: 'multipart/alternative', headers: [{ name: 'Received', value: 'from x' }, { name: 'Subject', value: 'Invoice' }], body: { data: 'QUJD'.repeat(2000) } },
+        };
+        const fenced = '```json\n' + JSON.stringify({ messages: [message] }, null, 2) + '\n```';
+        const text = resultText([{ type: 'text', text: fenced }], true)!;
+        expect(text).toContain('Invoice');
+        expect(text).toContain('encoded content left out');
+        expect(text).not.toContain('QUJDQUJD');
+        expect(text.startsWith('{')).toBe(true);
+        // Plain prose and unfenced JSON are as before
+        expect(resultText('Created   2 events')).toBe('Created 2 events');
+        expect(resultText('{"ok":true}')).toBe('{"ok":true}');
+    });
+
     it('gives the bot an answer that is data and not a content block, and nothing for a picture', () => {
         expect(resultText({ events: [{ title: 'Standup' }] })).toBe('{"events":[{"title":"Standup"}]}');
         expect(resultText({ type: 'image', data: 'abc' })).toBeUndefined();
