@@ -209,6 +209,22 @@ export class PendingBrickChatRoom implements ChatRoom {
         return words;
     }
 
+    /**
+     * Takes every word this screen still holds out of it, for a screen that is dropped and replaced: the words given back
+     * for the box and not read yet (the setup failed while the person was elsewhere), then the lines still waiting to go.
+     * Each comes once, as written; the screen holds none of them after.
+     */
+    takeUnsentWords(): string[] {
+        const given = get(this.back);
+        this.back.set(undefined);
+        const queued = this.unsentWords();
+        if (queued.length > 0) {
+            this.lines.update((lines) => lines.filter((line) => line.sent));
+            this.publish();
+        }
+        return given ? [given, ...queued] : queued;
+    }
+
     /** The screen has put the words back into the box. */
     clearTextBack(): void {
         this.back.set(undefined);
