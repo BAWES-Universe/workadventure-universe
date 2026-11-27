@@ -1104,13 +1104,23 @@
 
     {#if downloadOpen}
         <div class="menu download-menu" bind:this={downloadMenu} data-testid="artifactDownloadMenu">
-            <button type="button" class="menu-row" data-testid="artifactDownloadMarkdown" on:click={() => download("markdown")}>
+            <button
+                type="button"
+                class="menu-row"
+                data-testid="artifactDownloadMarkdown"
+                on:click={() => download("markdown")}
+            >
                 <span class="menu-text">
                     <b>{$LL.chat.artifacts.downloadDocument()}</b>
                     <small>{$LL.chat.artifacts.downloadDocumentHelp()}</small>
                 </span>
             </button>
-            <button type="button" class="menu-row" data-testid="artifactDownloadSheet" on:click={() => download("spreadsheet")}>
+            <button
+                type="button"
+                class="menu-row"
+                data-testid="artifactDownloadSheet"
+                on:click={() => download("spreadsheet")}
+            >
                 <span class="menu-text">
                     <b>{$LL.chat.artifacts.downloadSheet()}</b>
                     <small>{$LL.chat.artifacts.downloadSheetHelp()}</small>
