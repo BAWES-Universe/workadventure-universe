@@ -483,6 +483,7 @@ export class BotApiService {
         code?: string;
         reason?: string;
         place?: string;
+        retryAt?: string;
     }> {
         const errorText = await response.text();
         let message = `API error: ${response.status}`;
@@ -490,6 +491,7 @@ export class BotApiService {
         let code: string | undefined;
         let reason: string | undefined;
         let place: string | undefined;
+        let retryAt: string | undefined;
 
         try {
             const errorJson = JSON.parse(errorText);
@@ -498,6 +500,8 @@ export class BotApiService {
             // Why a Brick's visit was refused, and in which place (#2005): `lives_in` names the room it lives in
             reason = typeof errorJson.reason === "string" ? errorJson.reason : undefined;
             place = typeof errorJson.place === "string" ? errorJson.place : undefined;
+            // When a person over "New Bricks per hour" can make another (ISO time)
+            retryAt = typeof errorJson.retryAt === "string" ? errorJson.retryAt : undefined;
             // Check if it's a session expiration error
             if (
                 message.toLowerCase().includes("session expired") ||
@@ -508,7 +512,7 @@ export class BotApiService {
         } catch {
             message = errorText || message;
         }
-        return { status: response.status, message, isSessionExpired, code, reason, place };
+        return { status: response.status, message, isSessionExpired, code, reason, place, retryAt };
     }
 
     private refusalError(refusal: {
@@ -517,18 +521,21 @@ export class BotApiService {
         code?: string;
         reason?: string;
         place?: string;
+        retryAt?: string;
     }): Error {
         const error = new Error(refusal.message) as Error & {
             status?: number;
             code?: string;
             reason?: string;
             place?: string;
+            retryAt?: string;
         };
         error.status = refusal.status;
         // What Orbit calls this refusal, for a caller that acts on more than the words (a speech server that lists no voices)
         if (refusal.code !== undefined) error.code = refusal.code;
         if (refusal.reason !== undefined) error.reason = refusal.reason;
         if (refusal.place !== undefined) error.place = refusal.place;
+        if (refusal.retryAt !== undefined) error.retryAt = refusal.retryAt;
         return error;
     }
 
@@ -693,6 +700,89 @@ export class BotApiService {
             // Not kept this time
         } finally {
             if (this.timeZoneGeneration === generation) this.timeZoneSending = false;
+        }
+    }
+
+    /**
+     * Takes back a note a Brick sent to the Universe team (mock "Brick reports inbox") with the key its message carries, within 24 hours.
+     * "taken" also when it was taken back already; "too_late" past 24 hours; "failed" when Orbit could not be asked or did not know it.
+     * Asked with no sign-in: a guest in the chat can take it back too, and the key is the proof.
+     */
+    async takeBackBrickReport(id: string, key: string): Promise<"taken" | "too_late" | "failed"> {
+        const adminUrl = this.adminUrl;
+        if (!adminUrl) return "failed";
+        try {
+            // The answer's body is read within the deadline too: headers that come with a body that never ends still fail in time
+            const data = await this.withDeadline(
+                "Orbit did not answer in time",
+                BRICK_WRITE_TIMEOUT_MS,
+                async (signal) => {
+                    const response = await fetch(`${adminUrl}/api/me/brick-reports/take-back`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "omit",
+                        body: JSON.stringify({ id, key }),
+                        signal,
+                    });
+                    return (await response.json()) as { takenBack?: unknown; reason?: unknown };
+                }
+            );
+            if (data.takenBack === true) return "taken";
+            return data.reason === "too_late" ? "too_late" : "failed";
+        } catch {
+            return "failed";
+        }
+    }
+
+    /**
+     * Sends the person's own words with a note a Brick sent to the Universe team, when they press Send on the exact words the chat
+     * shows. Like Take it back, the key in the chat's message is the proof: no sign-in, so a guest can too. Orbit answers the words it
+     * kept (cleaned the same way as what was shown).
+     */
+    async addBrickReportWords(
+        id: string,
+        key: string,
+        words: string
+    ): Promise<{ outcome: "sent"; words: string } | { outcome: "too_late" | "taken_back" | "failed" }> {
+        const data = await this.brickReportCall<{ added?: unknown; words?: unknown; reason?: unknown }>("words", {
+            id,
+            key,
+            words,
+        });
+        if (data?.added === true && typeof data.words === "string") return { outcome: "sent", words: data.words };
+        if (data?.reason === "too_late" || data?.reason === "taken_back") return { outcome: data.reason };
+        return { outcome: "failed" };
+    }
+
+    /** What became of a note (taken back on another device, words already sent), with its key alone. Null when Orbit could not say. */
+    async brickReportStatus(
+        id: string,
+        key: string
+    ): Promise<{ state: "live" | "taken_back" | "not_found"; words: string } | null> {
+        const data = await this.brickReportCall<{ state?: unknown; words?: unknown }>("status", { id, key });
+        if (data?.state !== "live" && data?.state !== "taken_back" && data?.state !== "not_found") return null;
+        return { state: data.state, words: typeof data.words === "string" ? data.words : "" };
+    }
+
+    /** One call to Orbit's note routes, with the key alone (no sign-in, no cookies). Null when Orbit can't be asked or did not answer. */
+    private async brickReportCall<T>(route: "words" | "status", body: Record<string, string>): Promise<T | null> {
+        const adminUrl = this.adminUrl;
+        if (!adminUrl) return null;
+        try {
+            // The answer's body is read within the deadline too: headers that come with a body that never ends still fail in time
+            return await this.withDeadline("Orbit did not answer in time", BRICK_WRITE_TIMEOUT_MS, async (signal) => {
+                const response = await fetch(`${adminUrl}/api/me/brick-reports/${route}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "omit",
+                    body: JSON.stringify(body),
+                    signal,
+                });
+                if (!response.ok) return null;
+                return (await response.json()) as T;
+            });
+        } catch {
+            return null;
         }
     }
 
@@ -1388,9 +1478,11 @@ export class BotApiService {
 
     /**
      * Makes another Brick for the signed-in person (game #1996): New Brick on their Bricks page. Answers with
-     * `{ brick }`. Throws when Orbit refuses or can't be reached.
+     * `{ brick }`. Throws when Orbit refuses or can't be reached: with `status` 429 and `code` "new_bricks_limit" (and `retryAt`,
+     * when they can make another) when they have made too many new Bricks this hour. A `requestKey` makes a repeat of the same
+     * request, after a dropped connection, give back the first Brick and not a second one.
      */
-    async makeMyBrick(brick: { name: string; characterTextureId?: string }): Promise<unknown> {
+    async makeMyBrick(brick: { name: string; characterTextureId?: string; requestKey?: string }): Promise<unknown> {
         return await this.brickWrite("/api/bricks", { method: "POST", body: JSON.stringify(brick) });
     }
 
@@ -1402,10 +1494,18 @@ export class BotApiService {
         return await this.brickWrite(`/api/bricks/${encodeURIComponent(brickId)}/computer`, {});
     }
 
-    /** One of the owner's calls on a Brick's computer (give, turn off, stop, take over, hand back, fill in details). */
+    /** One of the owner's calls on a Brick's computer (give, turn off, stop, take over, take over anyway, restart first, hand back, fill in details). */
     async brickComputerAction(
         brickId: string,
-        action: "give" | "turn-off" | "stop" | "take-over" | "hand-back" | "fill-details",
+        action:
+            | "give"
+            | "turn-off"
+            | "stop"
+            | "take-over"
+            | "take-over-anyway"
+            | "restart"
+            | "hand-back"
+            | "fill-details",
         /** With "fill-details": what the screen showed Brick is ready to put in, and where. Orbit refuses the tap if Brick named something else since. */
         shown?: { what: string; where: string },
         /** With "stop": this tap's own id, so the same tap sent again (a renewed sign-in resends it) ends the jobs once. */
@@ -1427,6 +1527,9 @@ export class BotApiService {
                   method: "POST",
                   body: JSON.stringify({ what: shown.what, where: shown.where }),
               })
+            : action === "take-over-anyway"
+            ? // The person chose to go on with a program still running (the check before a take over found one): the same take over, said so
+              await this.brickWrite(`${base}/take-over`, { method: "POST", body: JSON.stringify({ anyway: true }) })
             : action === "stop" && confirmedJobIds && confirmedJobIds.length > 0
             ? await this.brickWrite(`${base}/${action}`, {
                   method: "POST",
@@ -1445,13 +1548,21 @@ export class BotApiService {
         brickId: string,
         jobId: string,
         action: "pause" | "resume" | "first" | "cancel",
-        options: { pauseRunning?: boolean; commandId?: string } = {}
+        options: { pauseRunning?: boolean; commandId?: string; expected?: "not_started" } = {}
     ): Promise<unknown> {
         const url = `/api/bricks/${encodeURIComponent(brickId)}/computer/jobs/${encodeURIComponent(jobId)}/${action}`;
+        // A Cancel that goes without a question (the job was shown as never started) says so: Orbit then cancels it only if it still has not
+        // started, and otherwise cancels nothing and answers `{ ok: false, reason: "started" }`
         return action === "first" && options.pauseRunning
             ? await this.brickWrite(url, {
                   method: "POST",
                   body: JSON.stringify({ pauseRunning: true }),
+                  ...commandHeader(options.commandId),
+              })
+            : action === "cancel" && options.expected === "not_started"
+            ? await this.brickWrite(url, {
+                  method: "POST",
+                  body: JSON.stringify({ expected: "not_started" }),
                   ...commandHeader(options.commandId),
               })
             : await this.brickWrite(url, { method: "POST", ...commandHeader(options.commandId) });
@@ -3130,10 +3241,30 @@ export class BotApiService {
 
     /** One server's tools with where each sits, who confirmed it, and the choice under each heading (Orbit #738) */
     async getMcpServerTools(botId: string, serverId: string): Promise<ServerTools> {
+        // `actions=1`: a ready-made App's grant on a Brick comes as the App's own actions (kind "appActions") once Orbit has its list
         const response = await this.fetch(
-            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools`
+            `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(serverId)}/tools?actions=1`
         );
         return readServerTools(await response.json());
+    }
+
+    /** An App action's own choice over its heading's (Right away, Asks first or Off); null follows the heading again. */
+    async setMcpToolSetting(
+        botId: string,
+        serverId: string,
+        toolId: string,
+        setting: Setting | null
+    ): Promise<ServerTools> {
+        // A deadline, so an answer that never ends cannot keep the screen's controls waiting
+        return this.withPermissionsTimeout(async (signal) => {
+            const response = await this.fetch(
+                `/api/bots/${encodeURIComponent(botId)}/mcp-servers/${encodeURIComponent(
+                    serverId
+                )}/tools/${encodeURIComponent(toolId)}`,
+                { method: "PATCH", body: JSON.stringify({ setting }), signal }
+            );
+            return readServerTools(await response.json());
+        });
     }
 
     /** Move one tool under another heading. It follows that heading's choice from then on. */

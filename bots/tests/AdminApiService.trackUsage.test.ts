@@ -61,6 +61,14 @@ describe('tracking AI usage in Orbit', () => {
         expect(sent).not.toHaveProperty('costBasis');
     });
 
+    it('sends a look Universe AI took at an image as one, also marked a greeting so an older Orbit never counts it as a reply (G7)', async () => {
+        await service.trackAIUsage({ botId: 'b1', providerId: 'vision', imageRead: true, userId: 'wa-uuid-sara', isGuest: false, channel: 'dm' });
+        expect(sent).toMatchObject({ imageRead: true, greeting: true, userId: 'wa-uuid-sara' });
+        await service.trackAIUsage({ botId: 'b1', providerId: 'x', tokensUsed: 10 });
+        expect(sent).not.toHaveProperty('imageRead');
+        expect(sent).not.toHaveProperty('greeting');
+    });
+
     it('sends where the reply was given and who it was for (Orbit #491)', async () => {
         await service.trackAIUsage({ botId: 'b1', providerId: 'x', channel: 'dm', userId: 'wa-uuid-sara', isGuest: false });
         expect(sent).toMatchObject({ channel: 'dm', userId: 'wa-uuid-sara', isGuest: false });

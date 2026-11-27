@@ -243,6 +243,28 @@ describe('Create (approve)', () => {
         expect(s.outcomes).toEqual([expect.objectContaining({ state: 'done', title: 'Create issue', result: 'Created WEB-12', person: SARA })]);
     });
 
+    it('keeps data off the card but still tells the bot what came back', async () => {
+        s = setup({ runResult: [{ type: 'text', text: '{"successful":true,"data":{"id":"WEB-12"}}' }] });
+        await s.approvals.propose(input());
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(field(s.sent.at(-1)!.content).answer).toEqual({ option: 'approve' });
+        expect(s.outcomes).toEqual([expect.objectContaining({ state: 'done', result: '{"successful":true,"data":{"id":"WEB-12"}}' })]);
+    });
+
+    it('tells the bot the whole answer of an approved action, not its first 300 characters', async () => {
+        const messages = Array.from({ length: 25 }, (_, i) => ({ id: `m${i}`, subject: `Subject ${i}`, snippet: 'a few plain words '.repeat(15) }));
+        const json = JSON.stringify({ successful: true, data: { messages } });
+        expect(json.length).toBeGreaterThan(5000);
+        s = setup({ runResult: [{ type: 'text', text: json }] });
+        await s.approvals.propose(input());
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(s.outcomes).toHaveLength(1);
+        expect(s.outcomes[0].result).toBe(json);
+        expect(s.outcomes[0].result).toContain('Subject 24');
+    });
+
     it('runs it once however many times it is tapped', async () => {
         await s.approvals.propose(input());
         const first = s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
@@ -358,6 +380,18 @@ describe('Create (approve)', () => {
         // A different call is its own card
         await s.approvals.propose(input({ args: { team: 'IOS', title: 'x' } }));
         expect(s.orbit.actions.size).toBe(2);
+    });
+
+    it('shows a card for each App grant when two grants ask the same action with the same inputs', async () => {
+        const other = { ...ENTRY, serverId: 's2' };
+        await s.approvals.propose(input());
+        await s.approvals.propose(input({ entry: other }));
+        expect(s.orbit.actions.size).toBe(2);
+        expect(s.sent).toHaveLength(2);
+        // At the very same moment too: one question per grant
+        const [a, b] = await Promise.all([s.approvals.propose(input({ args: { team: 'WEB', title: 'y' } })), s.approvals.propose(input({ args: { team: 'WEB', title: 'y' }, entry: other }))]);
+        expect([a.kind, b.kind]).toEqual(['waiting', 'waiting']);
+        expect(s.orbit.actions.size).toBe(4);
     });
 
     it('shows one card for the same call asked twice at the very same moment', async () => {
@@ -749,5 +783,64 @@ describe('answerFor', () => {
         expect(answerFor(closed('stale'))).toEqual({ expired: true });
         expect(answerFor({ status: 'couldntConfirm' } as SavedAction)).toEqual({ option: 'approve', unknown: true });
         expect(answerFor({ status: 'done' } as SavedAction)).toEqual({ option: 'approve' });
+    });
+});
+
+describe("a ready-made App's actions on a Brick (Ask, Do, Ignore)", () => {
+    const GMAIL: ToolServerEntry = { serverId: 'g1', serverUrl: 'https://link.example', authType: 'none', fingerprint: 'fp-batch', serverName: 'Gmail', readyMade: true, orbitUrl: 'https://orbit.example' };
+    const LABEL_ENTRY: ToolServerEntry = { ...GMAIL, title: 'Add label to email', appAction: { slug: 'GMAIL_ADD_LABEL_TO_EMAIL', batchTool: 'COMPOSIO_MULTI_EXECUTE_TOOL' } };
+    const LABEL_ARGS = { message_id: 'm1', label: 'Receipts', note: 'from the shop' };
+    const ASK_LABEL: Extract<GateDecision, { kind: 'ask' }> = { kind: 'ask', heading: 'changesThings', notReviewed: false, policyRevision: 9, fingerprint: 'fp-batch' };
+    const labelInput = (over: Partial<ProposeInput> = {}) => input({ toolName: 'GMAIL_ADD_LABEL_TO_EMAIL', toolTitle: 'Add label to email', entry: LABEL_ENTRY, args: LABEL_ARGS, decision: ASK_LABEL, ...over });
+
+    it('saves one action by its own slug, names the card by it, and links to what the Brick may do with the App', async () => {
+        const t = setup({ entry: LABEL_ENTRY, verdict: ASK_LABEL });
+        await t.approvals.propose(labelInput());
+        expect(t.orbit.actions.get('act_1')).toMatchObject({ toolName: 'GMAIL_ADD_LABEL_TO_EMAIL', connectionRef: 'g1', toolFingerprint: 'fp-batch', arguments: LABEL_ARGS });
+        const card = field(t.sent[0].content);
+        expect(card.title).toBe('Add label to email');
+        expect(card.app).toEqual({ botId: 'b1', serverId: 'g1', name: 'Gmail' });
+    });
+
+    it('checks that action again in its own App before it runs', async () => {
+        const t = setup({ entry: LABEL_ENTRY, verdict: ASK_LABEL });
+        await t.approvals.propose(labelInput());
+        await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(t.find).toHaveBeenCalledWith('b1', 'GMAIL_ADD_LABEL_TO_EMAIL', 'g1');
+        expect(t.decide).toHaveBeenCalledWith(expect.objectContaining({ toolName: 'GMAIL_ADD_LABEL_TO_EMAIL', serverId: 'g1', appName: 'Gmail', args: LABEL_ARGS }));
+        expect(t.run).toHaveBeenCalledWith('b1', LABEL_ENTRY, 'GMAIL_ADD_LABEL_TO_EMAIL', LABEL_ARGS, 'uuid-sara', { callId: 'att_act_1', heading: 'changesThings' });
+    });
+
+    it('runs nothing when the action was turned off since the card was shown', async () => {
+        const t = setup({ entry: LABEL_ENTRY, verdict: ASK_LABEL });
+        await t.approvals.propose(labelInput());
+        t.decide.mockResolvedValue({ kind: 'refuse', why: 'off', line: 'Add label to email is off for Sam in Gmail.' });
+        await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(t.run).not.toHaveBeenCalled();
+        expect(field(t.sent.at(-1)!.content).answer?.result).toBe('Add label to email is off for Sam in Gmail.');
+    });
+
+    it('remembers "allow more" for that action, not for the App’s batch tool', async () => {
+        const t = setup({ entry: LABEL_ENTRY, verdict: ASK_LABEL });
+        await t.approvals.propose(labelInput());
+        await t.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approveAndRemember' }));
+        await settle();
+        expect(t.orbit.grants.map((grant) => grant.toolName)).toEqual(['GMAIL_ADD_LABEL_TO_EMAIL']);
+        expect(await t.approvals.remembered(labelInput({ args: { ...LABEL_ARGS, note: 'another' } }))).toBe(true);
+        expect(await t.approvals.remembered(labelInput({ toolName: 'GMAIL_MOVE_TO_FOLDER' }))).toBe(false);
+        // Sending or deleting is never remembered
+        expect(await t.approvals.remembered(labelInput({ decision: { ...ASK_LABEL, heading: 'deletesOrSends' } }))).toBe(false);
+    });
+
+    it('offers no "allow more" on a card that holds several actions', async () => {
+        const t = setup({ entry: GMAIL });
+        const args = { tools: [{ tool_slug: 'GMAIL_ADD_LABEL_TO_EMAIL', arguments: LABEL_ARGS }, { tool_slug: 'GMAIL_MOVE_TO_FOLDER', arguments: { folder: 'Archive' } }] };
+        await t.approvals.propose(input({ toolName: 'COMPOSIO_MULTI_EXECUTE_TOOL', entry: GMAIL, args, decision: ASK_LABEL, toolTitle: undefined }));
+        const card = field(t.sent[0].content);
+        expect(card.options.map((option) => option.id)).toEqual(['approve', 'decline']);
+        expect(card.title).toBe('Add label to email and move to folder');
+        expect(t.orbit.actions.get('act_1')!.rememberScope).toBeNull();
     });
 });

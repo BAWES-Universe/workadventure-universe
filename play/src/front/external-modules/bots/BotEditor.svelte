@@ -45,6 +45,7 @@
         type BotEditorMode,
     } from "./stores/BotEditorStore";
     import { routeStops } from "./behaviorModel";
+    import { refusalPutsPickBack, restoreBaseline, withoutRefused } from "./visionModel";
     import { newBotRef } from "./mindModel";
     import { aiModelPlan } from "./modelPickerModel";
     import { botDataFromSave } from "./savedBotModel";
@@ -84,6 +85,12 @@
     type SaveKind = "config" | "ai";
     const pendingSaves = new Map<SaveKind, { timeout: ReturnType<typeof setTimeout>; save: () => void }>();
     let lastSavedBotConfig: string | null = null;
+    /**
+     * What Orbit last accepted of each bot's behavior config, by bot, kept whichever bot the page shows now: a save that finishes
+     * after the page left its bot still counts, so a refused one is put back to what Orbit really holds. `lastSavedBotConfig`
+     * is the page's own record, which is reset when a bot is shown.
+     */
+    const acceptedBotConfig = new Map<string, string>();
     let lastSavedAIConfig: string | null = null;
     // Counts the bots shown (back to the list counts too), so a save can tell the page's record above was reset since
     let shownBotCount = 0;
@@ -175,6 +182,8 @@
                 console.log("[BotEditor] Bot changed or first selected, initializing lastSaved values");
             }
             lastSavedBotConfig = JSON.stringify(bot.behaviorConfig);
+            // Only the first time this bot is shown: coming back to it, what Orbit accepted is already known
+            if (bot.id && !acceptedBotConfig.has(bot.id)) acceptedBotConfig.set(bot.id, lastSavedBotConfig);
             lastSavedAIConfig = aiConfigOf(bot);
             lastSavedAi = { ref: bot.aiProviderRef, model: bot.aiModel };
             if (process.env.NODE_ENV === "development" || process.env.ENABLE_BOT_DEBUG === "true") {
@@ -207,6 +216,9 @@
 
             // Only save if config actually changed
             if (currentConfig !== lastSavedBotConfig) {
+                // What is saved for this bot, if its save runs after the page left it
+                const savedConfigOnSchedule = lastSavedBotConfig;
+                const shownBotCountOnScheduleForConfig = shownBotCount;
                 scheduleSave("config", () => {
                     void (async () => {
                         try {
@@ -219,10 +231,48 @@
                                     behaviorConfig: bot.behaviorConfig,
                                 })
                             );
+                            // Orbit holds it now, whichever bot the page shows
+                            acceptedBotConfig.set(bot.id, currentConfig);
                             // Only while the page still shows this bot: the record is the shown bot's
                             if (selectedBot?.id === bot.id) lastSavedBotConfig = currentConfig;
+                            if (refusedSave) {
+                                refusedSave = false;
+                                error = null;
+                            }
                         } catch (e) {
                             console.error("[BotEditor] Failed to auto-save bot:", e);
+
+                            // Orbit refused the save and said why (the Vision pick can't be used): say so, and put the pick back to
+                            // what is really saved, so the refused one isn't sent again with every later save, such as moving the
+                            // bot. Only while the page still shows the refused pick: one made since has its own save coming.
+                            if ((e as Error & { status?: number })?.status === 400) {
+                                error = (e as Error).message;
+                                refusedSave = true;
+                                const currentBot = get(botPreviewsStore).get(bot.id);
+                                // What Orbit last accepted for this bot, even from a save that finished after the page left it
+                                const saved = restoreBaseline(
+                                    acceptedBotConfig.get(bot.id),
+                                    lastSavedBotConfig,
+                                    savedConfigOnSchedule,
+                                    shownBotCount === shownBotCountOnScheduleForConfig
+                                );
+                                // A refusal can only be about the Vision pick when this save carried one that is not what was saved:
+                                // a refusal about anything else (a position, a route) leaves the pick as it is
+                                if (
+                                    currentBot &&
+                                    refusalPutsPickBack(
+                                        bot.behaviorConfig?.vision,
+                                        currentBot.behaviorConfig?.vision,
+                                        saved
+                                    )
+                                ) {
+                                    const reverted = withoutRefused(currentBot, "config", saved);
+                                    // Only when something was really put back: a refusal about something else changes nothing here,
+                                    // so it can't set off a save that is refused again, and again
+                                    if (JSON.stringify(reverted) !== JSON.stringify(currentBot)) upsertBot(reverted);
+                                }
+                                return;
+                            }
 
                             // Check if it's an authentication error - show error for auth issues
                             const isAuthError = (e as Error & { isAuthError?: boolean })?.isAuthError === true;

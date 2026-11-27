@@ -8,23 +8,35 @@
     import PanelHeader from "../../../Components/MapEditor/EditMode/PanelHeader.svelte";
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
-    import { brickComputerAction, brickComputers, followBrickComputer } from "./BrickComputerStore";
-    import { canWatch, holdsComputer, sentenceStart } from "./BrickComputer";
+    import { brickComputerAction, brickComputers, brickTakeOver, followBrickComputer } from "./BrickComputerStore";
+    import { canWatch, holdsComputer, personHasScreen, sentenceStart } from "./BrickComputer";
     import { askToEnd } from "./OpenComputerJobs";
     import type { BrickRef } from "./BrickScreenStore";
     import BrickScreenView from "./BrickScreenView.svelte";
-    import { IconCircleCheck, IconHandFinger, IconId, IconLoader2 } from "@wa-icons";
+    import { IconAlertTriangle, IconCircleCheck, IconHandFinger, IconId, IconLoader2 } from "@wa-icons";
 
     export let brick: BrickRef;
     export let onClose: () => void;
 
     $: view = $brickComputers.get(brick.id);
     $: job = view?.job ?? null;
-    $: inControl = job?.control === "person";
+    // The honest check before a take over: while Orbit asks (a program is still running) or restarts the computer, the person is still watching
+    $: check = view?.check ?? null;
+    $: inControl = personHasScreen(view);
+    // In control with a program still running (the person chose to take over anyway): said in the header and above the buttons until they hand back
+    $: runningHeld = inControl && check?.state === "running";
     $: watching = canWatch(view);
     $: lastStep = job?.waitingFor === "pay" || job?.waitingFor === "submit";
 
     let busy = false;
+    // What the tap that is on its way is: its button says so while it goes ("Getting it ready…"), and a restart shows the screen as restarting at once
+    let acting: "take-over" | "anyway" | "restart" | null = null;
+    // "Not now" on the block: back to watching, the job keeps waiting for the person. The block comes back with the next tap of Take over
+    let notNow = false;
+    $: restarting = check?.state === "restarting" || acting === "restart";
+    $: blocked = check?.state === "blocked" && !restarting;
+    $: if (!blocked) notNow = false;
+    $: showBlock = blocked && !notNow;
     // Set when this screen goes away: what an action of it answers after that is nobody's to close or change
     let gone = false;
     onDestroy(() => {
@@ -49,7 +61,30 @@
     // The computer's own page opens the screen (see BrickScreenView); this page only follows what the job is doing
     onMount(() => followBrickComputer(brick.id));
 
-    function act(action: "stop" | "take-over" | "hand-back" | "fill-details") {
+    // Take over, take over anyway, or restart first: Orbit asks the person when something is still running, which is no failure
+    function takeOverAction(how: "take-over" | "take-over-anyway" | "restart") {
+        if (busy) return;
+        busy = true;
+        acting = how === "take-over" ? "take-over" : how === "restart" ? "restart" : "anyway";
+        notNow = false;
+        const brickAtTap = brick.id;
+        void brickTakeOver(brick.id, how)
+            .then((result) => {
+                if (result === "failed") warningMessageStore.addWarningMessage($LL.chat.brick.computer.failed());
+                else if (result === "not-ready")
+                    warningMessageStore.addWarningMessage($LL.chat.brick.computer.notReady());
+                else if (result === "shared")
+                    warningMessageStore.addWarningMessage($LL.chat.brick.computer.takeOverShared({ name: brick.name }));
+                if (gone || brick.id !== brickAtTap) return;
+            })
+            .catch((error) => console.error(error))
+            .finally(() => {
+                busy = false;
+                acting = null;
+            });
+    }
+
+    function act(action: "stop" | "hand-back" | "fill-details") {
         if (busy) return;
         // Stop ends every job on the computer (asking first when that is several): the screen closes once something has ended
         if (action === "stop") {
@@ -93,7 +128,11 @@
 <div class="bs" data-testid="brickScreen">
     <PanelHeader
         title={$LL.chat.brick.computer.machine({ name: brick.name })}
-        subtitle={inControl
+        subtitle={restarting
+            ? $LL.chat.brick.computer.restartingHead({ name: brick.name })
+            : runningHeld
+            ? $LL.chat.brick.computer.screenInControlRunning()
+            : inControl
             ? $LL.chat.brick.computer.screenInControl({ name: brick.name })
             : $LL.chat.brick.computer.screenWatching()}
         onBack={onClose}
@@ -101,7 +140,12 @@
         canHide={false}
     />
     <div class="bs-screen" class:ctl={inControl}>
-        {#if watching}
+        {#if restarting}
+            <div class="bs-msg" data-testid="brickScreenRestarting">
+                <span class="bs-spin"><IconLoader2 font-size="26" /></span>
+                <span>{$LL.chat.brick.computer.restartingLine({ name: brick.name })}</span>
+            </div>
+        {:else if watching}
             <BrickScreenView
                 brickId={brick.id}
                 title={$LL.chat.brick.computer.machine({ name: brick.name })}
@@ -150,41 +194,116 @@
         </div>
     {/if}
 
-    <div class="bs-actions" class:watch={!inControl}>
-        {#if !inControl && holdsComputer(job)}
-            <div class="bs-now" data-testid="brickScreenNow">
-                <span class="bs-spin"><IconLoader2 font-size="22" /></span>
-                <span class="bs-tx"
-                    ><span class="bs-h">{job?.stepLabel ?? job?.title}</span><span class="bs-l"
-                        >{$LL.chat.brick.computer.screenWatchLine({ name: brick.name })}</span
-                    ></span
-                >
-            </div>
-        {/if}
-        <div class="bs-btns">
-            {#if inControl}
-                <button
-                    type="button"
-                    class={lastStep ? "bs-go" : "bs-quiet"}
-                    disabled={busy}
-                    data-testid="brickScreenHandBack"
-                    on:click={() => act("hand-back")}>{$LL.chat.brick.computer.handBack({ name: brick.name })}</button
-                >
-            {:else if holdsComputer(job)}
-                <PageButton tall disabled={busy} testId="brickScreenStop" on:click={() => act("stop")}
-                    >{$LL.chat.brick.computer.stop()}</PageButton
-                >
-                <button
-                    type="button"
-                    class="bs-take"
-                    disabled={busy}
-                    data-testid="brickScreenTakeOver"
-                    on:click={() => act("take-over")}
-                    ><IconHandFinger font-size="18" />{$LL.chat.brick.computer.takeOver()}</button
-                >
-            {/if}
+    {#if showBlock}
+        <!-- Something the agent left running could not be closed by Orbit: the person is told what it could do, and chooses -->
+        <div class="bs-tray bs-block" data-testid="brickScreenBlock">
+            <span class="bs-ic warn"><IconAlertTriangle font-size="22" /></span>
+            <span class="bs-tx"
+                ><span class="bs-h"
+                    >{check?.restartOffered
+                        ? $LL.chat.brick.computer.runningTitle()
+                        : $LL.chat.brick.computer.runningAgainTitle()}</span
+                ><span class="bs-l"
+                    >{check?.restartOffered
+                        ? $LL.chat.brick.computer.runningLine({ name: brick.name })
+                        : $LL.chat.brick.computer.runningAgainLine()}</span
+                ></span
+            >
         </div>
-    </div>
+        <div class="bs-actions block">
+            <div class="bs-btns" class:col={check?.restartOffered}>
+                {#if check?.restartOffered}
+                    <!-- Restart first is the main choice and sits alone on top; "Not now" and "Take over anyway" share the row under it, as on the screen after a restart -->
+                    <button
+                        type="button"
+                        class="bs-go"
+                        disabled={busy}
+                        data-testid="brickScreenRestart"
+                        on:click={() => takeOverAction("restart")}>{$LL.chat.brick.computer.restartFirst()}</button
+                    >
+                    <div class="bs-btns">
+                        <button
+                            type="button"
+                            class="bs-quiet"
+                            disabled={busy}
+                            data-testid="brickScreenNotNow"
+                            on:click={() => (notNow = true)}>{$LL.chat.brick.computer.notNow()}</button
+                        >
+                        <button
+                            type="button"
+                            class="bs-quiet"
+                            disabled={busy}
+                            data-testid="brickScreenAnyway"
+                            on:click={() => takeOverAction("take-over-anyway")}
+                            >{$LL.chat.brick.computer.takeOverAnyway()}</button
+                        >
+                    </div>
+                {:else}
+                    <button
+                        type="button"
+                        class="bs-quiet"
+                        disabled={busy}
+                        data-testid="brickScreenNotNow"
+                        on:click={() => (notNow = true)}>{$LL.chat.brick.computer.notNow()}</button
+                    >
+                    <button
+                        type="button"
+                        class="bs-quiet"
+                        disabled={busy}
+                        data-testid="brickScreenAnyway"
+                        on:click={() => takeOverAction("take-over-anyway")}
+                        >{$LL.chat.brick.computer.takeOverAnyway()}</button
+                    >
+                {/if}
+            </div>
+        </div>
+    {:else if !restarting}
+        <div class="bs-actions" class:watch={!inControl}>
+            {#if inControl}
+                <p class="bs-note" class:warn={runningHeld} data-testid="brickScreenControlLine">
+                    {runningHeld
+                        ? $LL.chat.brick.computer.screenControlRunningLine({ name: brick.name })
+                        : $LL.chat.brick.computer.screenControlLine({ name: brick.name })}
+                </p>
+            {/if}
+            {#if !inControl && holdsComputer(job)}
+                <div class="bs-now" data-testid="brickScreenNow">
+                    <span class="bs-spin"><IconLoader2 font-size="22" /></span>
+                    <span class="bs-tx"
+                        ><span class="bs-h">{job?.stepLabel ?? job?.title}</span><span class="bs-l"
+                            >{$LL.chat.brick.computer.screenWatchLine({ name: brick.name })}</span
+                        ></span
+                    >
+                </div>
+            {/if}
+            <div class="bs-btns">
+                {#if inControl}
+                    <button
+                        type="button"
+                        class={lastStep ? "bs-go" : "bs-quiet"}
+                        disabled={busy}
+                        data-testid="brickScreenHandBack"
+                        on:click={() => act("hand-back")}
+                        >{$LL.chat.brick.computer.handBack({ name: brick.name })}</button
+                    >
+                {:else if holdsComputer(job)}
+                    <PageButton tall disabled={busy} testId="brickScreenStop" on:click={() => act("stop")}
+                        >{$LL.chat.brick.computer.stop()}</PageButton
+                    >
+                    <button
+                        type="button"
+                        class="bs-take"
+                        disabled={busy}
+                        data-testid="brickScreenTakeOver"
+                        on:click={() => takeOverAction("take-over")}
+                        >{#if acting === "take-over"}{$LL.chat.brick.computer.gettingItReady()}{:else}<IconHandFinger
+                                font-size="18"
+                            />{$LL.chat.brick.computer.takeOver()}{/if}</button
+                    >
+                {/if}
+            </div>
+        </div>
+    {/if}
 </div>
 
 <style>
@@ -243,6 +362,35 @@
     .bs-ic.ok {
         color: #34d399;
     }
+    .bs-ic.warn {
+        color: #fbbf24;
+    }
+    .bs-note {
+        margin: 0;
+        padding: 0 4px;
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: rgba(244, 242, 250, 0.64);
+    }
+    .bs-note.warn {
+        color: #fbbf24;
+    }
+    .bs-msg {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        height: 100%;
+        padding: 24px;
+        text-align: center;
+        font-size: 14px;
+        line-height: 1.45;
+        color: rgba(244, 242, 250, 0.8);
+    }
+    .bs-msg > span:last-child {
+        max-width: 340px;
+    }
     .bs-tx {
         display: flex;
         flex-direction: column;
@@ -269,6 +417,21 @@
     }
     .bs-btns > :global(*) {
         flex: 1;
+    }
+    /* Three choices: the main one alone on top, the two quiet ones side by side under it */
+    .bs-btns.col {
+        flex-direction: column;
+    }
+    /* With big text or a long translation the two quiet buttons wrap onto two lines (Not now above Take over anyway) instead of cutting their words */
+    .bs-btns.col > .bs-btns {
+        flex-wrap: wrap;
+    }
+    .bs-btns.col > .bs-btns > :global(*) {
+        flex: 1 1 140px;
+    }
+    /* In a column "flex: 1" would shrink a button to its words: each keeps its own height */
+    .bs-btns.col > :global(*) {
+        flex: none;
     }
     .bs-now {
         display: flex;
@@ -322,6 +485,13 @@
             width: 440px;
             max-width: 100%;
         }
+        /* The choices under the warning line up with the warning card, not 16 px in from its edge */
+        .bs-actions.block:not(.watch) {
+            align-items: stretch;
+        }
+        .bs-actions.block:not(.watch) .bs-btns {
+            width: 100%;
+        }
     }
     .bs-go,
     .bs-quiet,
@@ -331,10 +501,12 @@
         justify-content: center;
         gap: 8px;
         width: 100%;
-        height: 48px;
+        min-height: 48px;
+        padding: 6px 16px;
         margin: 0;
         border: 0;
         border-radius: 999px;
+        text-align: center;
         font: inherit;
         font-size: 15px;
         font-weight: 700;

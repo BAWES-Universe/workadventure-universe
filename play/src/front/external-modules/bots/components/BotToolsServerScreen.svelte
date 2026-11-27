@@ -6,6 +6,7 @@
     import type { BotData } from "../types";
     import { botToolsStore, chooseSetting, confirmAllTools, loadServerTools } from "../stores/BotToolsStore";
     import {
+        HEADINGS,
         SETTINGS,
         briefNames,
         headingOf,
@@ -29,8 +30,14 @@
     export let onOpenHeading: (heading: Heading | "unsorted") => void;
     /** The server was removed from here: back to the bot page */
     export let onGone: () => void;
+    /**
+     * Opened from Apps for one of the person's Bricks (Ask, Do, Ignore): a ready-made App's actions, sorted by Universe, show
+     * with the App's own words and no server buttons. A bot's own server, or an App whose list was not read yet, shows as before.
+     */
+    export let appMode = false;
 
     $: text = $LL.mapEditor.edit.bots.page.tools;
+    $: words = $LL.chat.brick.apps.control;
     $: botName = bot.name || "Bot";
     $: held = $botToolsStore && $botToolsStore.botId === bot.id ? $botToolsStore : undefined;
     $: server = held?.servers?.find((one) => one.id === serverId);
@@ -44,7 +51,11 @@
     // What the banner is about: every tool of an old server, else the ones still waiting. With only one, it is named.
     $: checking = unchecked ? tools : tools.filter((tool) => tool.state !== "confirmed");
     $: onlyTool = checking.length === 1 ? toolLabel(checking[0]) : undefined;
-    $: headings = usedHeadings(tools);
+    // An App shows all four headings, so a person sees where nothing goes; a bot's own server shows only the ones in use
+    $: headings = app ? appHeadings(tools) : usedHeadings(tools);
+    $: app = appMode && data?.kind === "appActions";
+    // From Apps, the server buttons wait for the list: they never flash up over a ready-made App's actions
+    $: showEditor = !appMode || loadFailed || (data !== undefined && data.kind !== "appActions");
 
     // Read when the page opens: another person may have moved or confirmed a tool since the list was last loaded
     let loadFailed = false;
@@ -93,20 +104,38 @@
     function choiceLabel(setting: Setting): string {
         return text.choices[setting]();
     }
-    /** The first names, which may be cut short, and "+N more", which never is */
+    /** The first names, which may be cut short, and "+N more", which never is. An App shows two, never cut. */
     function namesOf(under: ServerTool[]): { names: string; more: string } {
-        const { names, more } = briefNames(under);
+        const { names, more } = briefNames(under, app ? 2 : 3);
         return { names: names.join(", "), more: more > 0 ? text.moreNames({ count: more }) : "" };
+    }
+    function hintOf(heading: Heading | "unsorted"): string {
+        return app && heading !== "looksUp" && heading !== "unsorted"
+            ? words.hints[heading]()
+            : text.headings[heading].hint();
+    }
+    function appHeadings(all: readonly ServerTool[]): Array<Heading | "unsorted"> {
+        return toolsUnder(all, "unsorted").length > 0 ? [...HEADINGS, "unsorted"] : [...HEADINGS];
+    }
+    function effectOf(setting: Setting): string {
+        return app ? words.effects[setting]() : text.effects[setting]();
+    }
+    function countOf(count: number): string {
+        return app ? words.count({ count }) : text.count({ count });
     }
     function whereLine(tool: ServerTool): string {
         const heading = headingOf(tool);
         if (!heading || !data) return text.notSorted();
-        return text.searchWhere({ heading: headingTitle(heading), choice: choiceLabel(data.settings[heading]) });
+        // An App action's own choice wins over its heading's, as on its own controls
+        const choice = (app ? tool.setting : undefined) ?? data.settings[heading];
+        return text.searchWhere({ heading: headingTitle(heading), choice: choiceLabel(choice) });
     }
 </script>
 
 <div class="ts-screen" data-testid="bot-tools-server">
-    <BotMcpServersEditor botId={bot.id} {botName} onlyServerId={serverId} onRemoved={onGone} />
+    {#if showEditor}
+        <BotMcpServersEditor botId={bot.id} {botName} onlyServerId={serverId} onRemoved={onGone} />
+    {/if}
 
     {#if !server}
         <!-- The server list is still loading, or the server is gone -->
@@ -118,9 +147,9 @@
             </p>
         {/if}
     {:else if tools.length === 0}
-        <PageNote>{text.notSortedYet({ server: serverName })}</PageNote>
+        <PageNote>{app ? words.noneYet({ app: serverName }) : text.notSortedYet({ server: serverName })}</PageNote>
     {:else}
-        {#if needsConfirm}
+        {#if needsConfirm && !app}
             <section class="ts-check" data-testid="bot-tools-confirm">
                 <b
                     >{onlyTool
@@ -140,18 +169,29 @@
             </section>
         {/if}
         {#if problem}<p class="ts-fail" role="alert">{problem}</p>{/if}
-        <p class="ts-line">
-            {text.sorted({ server: serverName, tools: text.count({ count: tools.length }), bot: botName })}
+        <p class="ts-line" data-testid="bot-tools-top">
+            {app
+                ? words.top({ brick: botName, app: serverName })
+                : text.sorted({ server: serverName, tools: text.count({ count: tools.length }), bot: botName })}
         </p>
         {#if data.truncated}
             <!-- Never a silent cut: Orbit keeps the first tools only, and says how many the server has when it knows -->
             <p class="ts-cut" data-testid="bot-tools-cut">
-                <b
-                    >{data.totalSeen
-                        ? text.cutOf({ shown: tools.length, total: data.totalSeen })
-                        : text.cutFirst({ shown: tools.length })}</b
-                >
-                <span>{text.cutWhy({ shown: tools.length, bot: botName })}</span>
+                {#if app}
+                    <b
+                        >{data.totalSeen
+                            ? words.cutOf({ shown: tools.length, total: data.totalSeen, app: serverName })
+                            : words.cutFirst({ shown: tools.length, app: serverName })}</b
+                    >
+                    <span>{words.cutWhy()}</span>
+                {:else}
+                    <b
+                        >{data.totalSeen
+                            ? text.cutOf({ shown: tools.length, total: data.totalSeen })
+                            : text.cutFirst({ shown: tools.length })}</b
+                    >
+                    <span>{text.cutWhy({ shown: tools.length, bot: botName })}</span>
+                {/if}
             </p>
         {/if}
         <label class="ts-search">
@@ -159,15 +199,23 @@
             <input
                 type="search"
                 data-testid="bot-tools-search"
-                placeholder={text.search({ count: tools.length, server: serverName })}
-                aria-label={text.search({ count: tools.length, server: serverName })}
+                placeholder={app
+                    ? words.search({ count: data.totalSeen ?? tools.length, app: serverName })
+                    : text.search({ count: tools.length, server: serverName })}
+                aria-label={app
+                    ? words.search({ count: data.totalSeen ?? tools.length, app: serverName })
+                    : text.search({ count: tools.length, server: serverName })}
                 bind:value={query}
             />
         </label>
         {#if query.trim()}
             <p class="ts-line" data-testid="bot-tools-search-count">
                 {found.length === 0
-                    ? text.searchNone()
+                    ? app
+                        ? words.searchNone()
+                        : text.searchNone()
+                    : app
+                    ? words.searchMatches({ found: found.length, count: tools.length })
                     : text.searchMatches({ found: found.length, count: tools.length })}
             </p>
             {#if found.length > 0}
@@ -193,40 +241,47 @@
                 {@const checking = toCheck(under)}
                 <section class="ts-card" data-testid="bot-tools-heading-{heading}">
                     <b class="ts-title">{headingTitle(heading)}</b>
-                    <span class="ts-hint">{text.headings[heading].hint()}</span>
-                    {#if heading !== "unsorted"}
-                        <PageSegment
-                            label={headingTitle(heading)}
-                            value={data.settings[heading]}
-                            options={SETTINGS.map((setting) => ({
-                                value: setting,
-                                label: choiceLabel(setting),
-                                testId: `bot-tools-choice-${heading}-${setting}`,
-                            }))}
-                            onPick={(value) => choose(heading, value)}
-                        />
-                        <span class="ts-effect">{text.effects[data.settings[heading]]()}</span>
+                    <span class="ts-hint">{hintOf(heading)}</span>
+                    {#if app && under.length === 0}
+                        <!-- An App heading with nothing in it: no choice, no arrow -->
+                        <span class="ts-none" data-testid="bot-tools-empty-{heading}"
+                            >{words.nothingHere({ app: serverName })}</span
+                        >
+                    {:else}
+                        {#if heading !== "unsorted"}
+                            <PageSegment
+                                label={headingTitle(heading)}
+                                value={data.settings[heading]}
+                                options={SETTINGS.map((setting) => ({
+                                    value: setting,
+                                    label: choiceLabel(setting),
+                                    testId: `bot-tools-choice-${heading}-${setting}`,
+                                }))}
+                                onPick={(value) => choose(heading, value)}
+                            />
+                            <span class="ts-effect">{effectOf(data.settings[heading])}</span>
+                        {/if}
+                        <button
+                            type="button"
+                            class="ts-row"
+                            data-testid="bot-tools-open-{heading}"
+                            on:click={() => onOpenHeading(heading)}
+                        >
+                            <span class="ts-rowtx">
+                                <span class="ts-count"
+                                    >{countOf(under.length)}{#if checking > 0}<span class="ts-warn">
+                                            {text.toCheck({ count: checking })}</span
+                                        >{/if}</span
+                                >
+                                <span class="ts-namesrow"
+                                    ><span class="ts-names" class:whole={app}>{namesOf(under).names}</span
+                                    >{#if namesOf(under).more}<span class="ts-more">{namesOf(under).more}</span
+                                        >{/if}</span
+                                >
+                            </span>
+                            <span class="ts-chev"><IconChevronDown font-size="18" /></span>
+                        </button>
                     {/if}
-                    <button
-                        type="button"
-                        class="ts-row"
-                        data-testid="bot-tools-open-{heading}"
-                        on:click={() => onOpenHeading(heading)}
-                    >
-                        <span class="ts-rowtx">
-                            <span class="ts-count"
-                                >{text.count({ count: under.length })}{#if checking > 0}<span class="ts-warn">
-                                        {text.toCheck({ count: checking })}</span
-                                    >{/if}</span
-                            >
-                            <span class="ts-namesrow"
-                                ><span class="ts-names">{namesOf(under).names}</span>{#if namesOf(under).more}<span
-                                        class="ts-more">{namesOf(under).more}</span
-                                    >{/if}</span
-                            >
-                        </span>
-                        <span class="ts-chev"><IconChevronDown font-size="18" /></span>
-                    </button>
                 </section>
             {/each}
         {/if}
@@ -323,6 +378,12 @@
         line-height: 1.35;
         color: rgba(244, 242, 250, 0.64);
     }
+    .ts-none {
+        padding: 2px 0 12px;
+        font-size: 13px;
+        line-height: 1.4;
+        color: rgba(244, 242, 250, 0.72);
+    }
     .ts-effect {
         padding: 0 6px;
         font-size: 12.5px;
@@ -384,6 +445,11 @@
         min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+    /* An App's two names are never cut: the row wraps instead */
+    .ts-names.whole {
+        overflow: visible;
+        white-space: normal;
     }
     .ts-more {
         flex: none;

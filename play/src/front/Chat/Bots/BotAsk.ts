@@ -84,11 +84,22 @@ export interface BotAsk {
     checkAt?: { label: string; url: string };
     /** Only the person who asked sees this card: it came to them alone in nearby chat (#1658), not in a direct message. */
     private?: boolean;
+    /**
+     * A ready-made App's action (game "Ask, Do, Ignore" for Bricks): the Brick, its grant of the App and the App's name, for the
+     * link to what the Brick may do with it. Shown only on the viewer's own Brick, while the card waits.
+     */
+    app?: BotAskApp;
     /** When the card closes, on THIS device's clock. */
     expiresAt: number;
     /** How long a card waits, for "No answer in 10 min". */
     waitMinutes: number;
     answer?: BotAskAnswer;
+}
+
+export interface BotAskApp {
+    botId: string;
+    serverId: string;
+    name: string;
 }
 
 const TITLE_MAX = 200;
@@ -183,6 +194,17 @@ function parseCheckAt(value: unknown): BotAsk["checkAt"] {
     }
 }
 
+const ID = /^[\w-]{1,64}$/;
+
+function parseApp(value: unknown): BotAskApp | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const o = value as Record<string, unknown>;
+    const botId = clip(o.botId, 64);
+    const serverId = clip(o.serverId, 64);
+    const name = clip(o.name, 120);
+    return botId && serverId && name && ID.test(botId) && ID.test(serverId) ? { botId, serverId, name } : undefined;
+}
+
 /**
  * The card a bot's notice carries, or undefined when it has none, is not from a bot or is not one we understand.
  * `receivedAt` is when this device got the notice: the bot server's clock can differ from ours, so the card's expiry
@@ -239,6 +261,7 @@ function parseAskField(field: unknown, receivedAt: number): BotAsk | undefined {
         everyTime: everyTime || undefined,
         notReviewed: o.notReviewed === true || undefined,
         checkAt: parseCheckAt(o.checkAt),
+        app: isQuestion ? undefined : parseApp(o.app),
         expiresAt: receivedAt + (o.expiresAt - o.now),
         waitMinutes,
         answer: parseAnswer(o.answer),
@@ -344,4 +367,28 @@ export function chatAsks<M extends MessageWithAsk>(messages: Readable<readonly M
         },
         [] as Array<AskedMessage<M>>
     );
+}
+
+/**
+ * An answer that is data reads as code and is never drawn: JSON that starts with `{` or a list (`[1, 2]`, `[{...}]`,
+ * `["a"]`, `[]`), also inside a code fence. A bracketed word before plain text ("[Gmail] Message sent") is a sentence and
+ * stays. Cards already in people's chats may carry one from before the bot server stopped sending them (game #2131).
+ */
+export function looksLikeData(text: string): boolean {
+    let body = text.trim();
+    const fence = /^```[\w-]*\s*/.exec(body);
+    if (fence)
+        body = body
+            .slice(fence[0].length)
+            .replace(/\s*```\s*$/, "")
+            .trim();
+    if (body.startsWith("{")) return true;
+    if (!body.startsWith("[")) return false;
+    try {
+        JSON.parse(body);
+        return true;
+    } catch {
+        // Not whole JSON (cut short, or a fence after it): a list still starts with `[{`, `[[`, `["`, `[]` or a value and a comma, while "[1] emails found" or "[2024-05-01] Sent" is a sentence
+        return /^\[\s*(?:[[{"\]]|-?\d+(?:\.\d+)?\s*,|(?:true|false|null)\s*,)/.test(body);
+    }
 }

@@ -60,12 +60,21 @@ export interface McpServerConfig {
     readyMade?: boolean;
     /** Where Orbit is, set when `readyMade`. Never sent anywhere else. */
     orbitUrl?: string;
+    /**
+     * Set by Orbit on a ready-made App when this Brick also has the person's own copy of the same App, switched on (their own link or
+     * key): the id of that own grant. The person's own copy is the one used, so this ready-made App is not offered at all (own Apps first).
+     */
+    ownCopyServerId?: string | null;
     /** When Orbit last saw this server's sign-in refused, or the server not answer (#1819); null when not */
     signInLostAt?: string | null;
     noAnswerAt?: string | null;
     /** The jobs its owner lets other people ask this Brick for, with the inputs people may fill in and what may come back (#2006). Only an App on a person's connection has any. */
     shared?: { jobs: SharedJob[] };
 }
+
+/** A ready-made App whose person also has their own copy of it on this Brick (Orbit says which): only their own copy is offered. */
+export const hasOwnCopy = (server: Pick<McpServerConfig, 'readyMade' | 'ownCopyServerId'>): boolean =>
+    server.readyMade === true && typeof server.ownCopyServerId === 'string' && server.ownCopyServerId.trim() !== '';
 
 /** One job an owner shared: the tool, the names of the inputs people may fill in, and the names of what may come back (null: the whole answer). */
 export interface SharedJob {
@@ -146,6 +155,21 @@ export interface ToolServerEntry {
     sharedJob?: { inputs: string[] };
     /** Another App's job of the same name that its owner shared, when this entry (the one the owner is offered) is not shared: it is what someone else is offered instead (#2006). */
     sharedAlt?: { tool: McpToolDefinition; entry: ToolServerEntry };
+    /**
+     * One action of a ready-made App, on a card of its own (game "Ask, Do, Ignore" for Bricks): the entry is its App's batch tool's,
+     * and it runs as a batch of one through `batchTool`.
+     */
+    appAction?: { slug: string; batchTool: string };
+    /**
+     * The same link tool on the Brick's other ready-made Apps (game "Ask, Do, Ignore" for Bricks): every App's link has the same tool
+     * names, so the model is offered the first one, and each action of a batch is sent through the App it belongs to.
+     */
+    otherApps?: ToolServerEntry[];
+    /**
+     * On a ready-made App's entry: the names of this Brick's other ready-made Apps that were left out because the person has their own
+     * copy of them (own Apps first). An action named after one of them is never sent through this App's link: their own copy is used.
+     */
+    ownCopyApps?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -956,7 +980,9 @@ export class MCPConnector {
 
         // Query each enabled server and collect tools
         const allTools: McpToolDefinition[] = [];
-        const enabledServers = servers.filter((s) => s.enabled);
+        // A ready-made App the person also has their own copy of is left out: their own copy is the one used, never the one Universe pays for
+        const enabledServers = servers.filter((s) => s.enabled && !hasOwnCopy(s));
+        const ownCopyApps = [...new Set(servers.filter((s) => s.enabled && hasOwnCopy(s)).map((s) => s.name).filter((name) => typeof name === 'string' && name.trim() !== ''))];
 
         // Track seen tool names across all servers to avoid duplicates
         const seenToolNames = new Set<string>();
@@ -973,6 +999,7 @@ export class MCPConnector {
                 serverName: server.name,
                 ...(server.connectionId ? { connectionId: server.connectionId } : {}),
                 ...(server.readyMade === true && server.orbitUrl ? { readyMade: true, orbitUrl: server.orbitUrl } : {}),
+                ...(server.readyMade === true && ownCopyApps.length > 0 ? { ownCopyApps } : {}),
                 ...(raw ? { fingerprint: fingerprintTool(raw, server) } : {}),
                 ...(raw?.inputSchema !== undefined ? { inputSchema: raw.inputSchema } : {}),
                 ...(title ? { title } : {}),
@@ -988,11 +1015,35 @@ export class MCPConnector {
                 toolServerMap.set(tool.function.name, entryFor(tool, server, title, raw));
                 return;
             }
-            // The name is taken by another App. The owner keeps the first, as always; but a job another App's owner shared under this name is kept
-            // aside, so someone else asking is still offered it and does not lose it to an App that shares nothing (#2006)
             const first = toolServerMap.get(tool.function.name);
+            // Own Apps first: a tool of an App that is not ready-made (the person's own, paid by nobody here) takes its name from a ready-made App's
+            // tool, whichever answered first, so the model is never offered the one Universe pays for in its place. The ready-made Apps are kept
+            // beside it, exactly as when the own App answered first, so each one's own actions still go through it
+            if (first?.readyMade && server.readyMade !== true) {
+                const at = allTools.findIndex((one) => one.function.name === tool.function.name);
+                if (at >= 0) allTools[at] = tool;
+                const { otherApps: before = [], ...previous } = first;
+                toolServerMap.set(tool.function.name, { ...entryFor(tool, server, title, raw), otherApps: [previous, ...before] });
+                return;
+            }
+            // The name is taken by another App. The owner keeps the first, as always; but a job another App's owner shared under this name is kept
+            // aside, so someone else asking is still offered it and does not lose it to an App that shares nothing (#2006).
+            // Each ready-made App is kept beside the first, whichever server answered first (they answer in no fixed order): its actions
+            // still go through it
+            if (first && server.readyMade === true && server.orbitUrl && first.serverId !== server.id && !first.otherApps?.some((other) => other.serverId === server.id)) {
+                (first.otherApps ??= []).push(entryFor(tool, server, title, raw));
+            }
             const shared = server.connectionId ? entryFor(tool, server, title, raw) : undefined;
             if (first && !first.sharedJob && !first.sharedAlt && shared?.sharedJob) first.sharedAlt = { tool, entry: shared };
+        }
+
+        // Each server's tools are held here as they are read and added in the order the servers are listed (oldest first), once every server has
+        // answered. Servers answer in no fixed order: adding as they came made the App a shared tool name belonged to depend on who was quicker
+        const staged = new Map<string, Array<Parameters<typeof addUniqueTool>>>();
+        function stageTool(...args: Parameters<typeof addUniqueTool>) {
+            const list = staged.get(args[1].id) ?? [];
+            list.push(args);
+            staged.set(args[1].id, list);
         }
 
         // Process all servers concurrently with a concurrency cap
@@ -1014,7 +1065,7 @@ export class MCPConnector {
                 MCPConnector.health.ok(botId, server.id);
                 const rawByName = new Map(cached.raw.map((tool) => [tool.name, tool]));
                 for (const tool of cached.tools) {
-                    addUniqueTool(tool, server, cached.titles[tool.function.name], rawByName.get(tool.function.name));
+                    stageTool(tool, server, cached.titles[tool.function.name], rawByName.get(tool.function.name));
                 }
                 return;
             }
@@ -1031,7 +1082,7 @@ export class MCPConnector {
                 if (MCPConnector.health.isStale(botId, server.id, credentials)) {
                     // Newer credentials failed while this read was on its way: this reply has the list it read, but neither
                     // the mark nor the cache is touched by it
-                    for (const toolDef of toolDefs) addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
+                    for (const toolDef of toolDefs) stageTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
                     return;
                 }
                 // It answers: any mark it had is gone, and Orbit is told
@@ -1056,11 +1107,11 @@ export class MCPConnector {
                     if (!ok && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
                 });
                 for (const toolDef of toolDefs) {
-                    addUniqueTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
+                    stageTool(toolDef, server, titles[toolDef.function.name], rawByName.get(toolDef.function.name));
                 }
                 void MCPConnector.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, options.suggest, read.cut).then((outcome) => {
                     // Orbit did not get the list: forget it here too, so the next read tries to save it again (not in an hour)
-                    if (outcome.result === 'skipped' && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
+                    if (outcome.result === 'skipped' && !outcome.ownedByOrbit && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
                 });
             } else {
                 console.warn(
@@ -1085,12 +1136,14 @@ export class MCPConnector {
                 );
             }
         }
+        // The oldest App holds a name every App has (Orbit lists them oldest first), whoever answered first
+        for (const server of enabledServers) for (const added of staged.get(server.id) ?? []) addUniqueTool(...added);
 
         const enabledIds = new Set(enabledServers.map((server) => server.id));
         return this.withKeyApps(keyApps, { tools: allTools, toolServerMap, issues: MCPConnector.health.issuesFor(botId, enabledIds) });
     }
 
-    /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner. */
+    /** Adds the Apps with a key (#2044) that this Brick has: their operations as tools, by name, behind the same gate. A name already taken keeps its first owner, unless that is a ready-made App (own Apps first). */
     private static async withKeyApps<T extends { tools: McpToolDefinition[]; toolServerMap: Map<string, ToolServerEntry> }>(
         keyApps: Promise<KeyApp[]>,
         found: T
@@ -1099,9 +1152,18 @@ export class MCPConnector {
         for (const tool of keyed.tools) {
             const name = tool.function.name;
             const entry = keyed.entries.get(name);
-            if (!entry || found.toolServerMap.has(name)) continue;
+            if (!entry) continue;
+            const taken = found.toolServerMap.get(name);
+            // Own Apps first: an App with the person's own key takes the name from a ready-made App's tool; any other App keeps it
+            if (taken && !taken.readyMade) continue;
+            const at = taken ? found.tools.findIndex((one) => one.function.name === name) : -1;
+            if (at >= 0) found.tools.splice(at, 1);
             found.tools.push(tool);
-            found.toolServerMap.set(name, entry);
+            if (taken) {
+                // The ready-made Apps it takes the name from are kept beside it, as for an own App's tool, so their own actions still go through them
+                const { otherApps: before = [], ...previous } = taken;
+                found.toolServerMap.set(name, { ...entry, otherApps: [previous, ...before] });
+            } else found.toolServerMap.set(name, entry);
         }
         return found;
     }
@@ -1155,7 +1217,7 @@ export class MCPConnector {
         cut?: ToolListCut | null
     ): Promise<SyncResult> {
         return syncCatalog({ orbit, botId, serverId: server.id, server, raw, cut, ask }).then((outcome) => {
-            if (outcome.result === 'skipped') console.warn(`[MCPConnector] Tool list of ${server.name} (${server.id}) not saved: ${outcome.reason}`);
+            if (outcome.result === 'skipped' && !outcome.ownedByOrbit) console.warn(`[MCPConnector] Tool list of ${server.name} (${server.id}) not saved: ${outcome.reason}`);
             else if (outcome.result === 'saved' && outcome.saved.changed.length > 0) {
                 console.log(`[MCPConnector] ${outcome.saved.changed.length} tool(s) of ${server.name} changed and wait to be confirmed again`);
             }
@@ -1208,7 +1270,7 @@ export class MCPConnector {
         });
         const saved = await this.saveListToOrbit(botId, server, raw, { adminApiUrl, adminApiToken }, suggest, read.cut);
         // Orbit did not get it: the next read tries to save it again
-        if (saved.result === 'skipped' && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
+        if (saved.result === 'skipped' && !saved.ownedByOrbit && toolListCache.get(cacheKey) === entry) toolListCache.delete(cacheKey);
         return { read: true, tools: raw.length, saved };
     }
 
@@ -1299,7 +1361,9 @@ export class MCPConnector {
         }
 
         if (response.error) {
-            const errMsg = response.error.message || JSON.stringify(response.error);
+            // Its data beside the message can tell that some of the work ran: it stays in the error, as for a tool that failed
+            const errData = response.error.data;
+            const errMsg = [response.error.message || JSON.stringify(response.error), errData === undefined || errData === null ? '' : typeof errData === 'string' ? errData : JSON.stringify(errData)].filter((part) => part !== '').join(' ');
             // The server's words can quote what the tool was given (an email, a file): the log keeps the outcome only
             console.warn(`[MCPConnector] Tool ${toolName} returned an error`);
             return { error: `Tool error: ${errMsg}`, outcome: 'failed' satisfies ToolCallOutcome };
@@ -1313,8 +1377,12 @@ export class MCPConnector {
                 .map((item) => item.text)
                 .join(' ')
                 .trim();
+            // Its data beside the words can tell that some of the work ran: it stays in the error, so nothing takes the call for one that never ran
+            const structured = response.result.structuredContent;
+            const data = structured === undefined || structured === null ? '' : typeof structured === 'string' ? structured : JSON.stringify(structured);
+            const reason = [why, data].filter((part) => part !== '').join(' ');
             console.warn(`[MCPConnector] Tool ${toolName} failed`);
-            return { error: `Tool error: ${why || `${toolName} failed`}`, outcome: 'failed' satisfies ToolCallOutcome };
+            return { error: `Tool error: ${reason || `${toolName} failed`}`, outcome: 'failed' satisfies ToolCallOutcome };
         }
 
         if (response.result && Array.isArray(response.result.content)) {

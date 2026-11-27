@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import { get } from "svelte/store";
     import LL from "../../../../i18n/i18n-svelte";
     import PageButton from "../../../external-modules/bots/components/page/PageButton.svelte";
     import PageNote from "../../../external-modules/bots/components/page/PageNote.svelte";
@@ -11,7 +12,7 @@
     import AppRow from "./AppRow.svelte";
     import AppSection from "./AppSection.svelte";
     import AppsShell from "./AppsShell.svelte";
-    import { appPageStart, takeAppPageStart } from "./AppLink";
+    import { appBrickStart, appPageStart, takeAppBrickStart, takeAppPageStart, type AppBrickTarget } from "./AppLink";
     import { appsSearchStart } from "./AppsSearch";
     import { loadMyApps, myAppsFailed, myAppsSettled, myAppsStore } from "./AppsStore";
     import { connectApp } from "./ConnectApp";
@@ -73,6 +74,44 @@
         openAppId = $appPageStart;
         takeAppPageStart();
     }
+    // "What {brick} may do with {app}" on a card: once the person's Apps are read, the App that Brick uses opens on its screen
+    let startBrick: AppBrickTarget | undefined;
+    // The card request being looked up: it waits for its own read, so it is not started twice
+    let brickLookup: AppBrickTarget | undefined;
+
+    async function openBrickTarget(wanted: AppBrickTarget) {
+        brickLookup = wanted;
+        // The list held may be from before an App was connected on another device: it is looked through only after a read
+        // that started after the request
+        await loadMyApps(true).catch((error) => console.error(error));
+        // A newer card was tapped while this read was out: that one decides
+        if (get(appBrickStart) !== wanted) return;
+        const list = get(myAppsStore);
+        brickLookup = undefined;
+        // No list could be read: the request waits for the next one
+        if (list === undefined) return;
+        const found = list.find((one) =>
+            one.bricks.some((brick) => brick.botId === wanted.botId && brick.serverId === wanted.serverId)
+        );
+        takeAppBrickStart();
+        if (found) {
+            openUniverseId = undefined;
+            startBrick = wanted;
+            openAppId = found.id;
+        }
+    }
+
+    function lookUpBrickTarget() {
+        const wanted = get(appBrickStart);
+        if (wanted !== undefined && wanted !== brickLookup)
+            openBrickTarget(wanted).catch((error) => console.error(error));
+    }
+
+    // A card's request, and a list that arrives while one waits
+    onMount(() => {
+        const stops = [appBrickStart.subscribe(lookUpBrickTarget), myAppsStore.subscribe(lookUpBrickTarget)];
+        return () => stops.forEach((stop) => stop());
+    });
     $: mine = apps ?? [];
     $: connectedApps = mine.filter(isConnectedApp);
     $: another = connectable ? toConnectAnother(connectable, mine) : [];
@@ -185,7 +224,15 @@
 </script>
 
 {#if openAppId}
-    <AppPage appId={openAppId} onBack={() => (openAppId = undefined)} />
+    <!-- A new App is a new page: it reads that App and takes its Brick screen request -->
+    {#key openAppId}
+        <AppPage
+            appId={openAppId}
+            {startBrick}
+            onStartBrickTaken={() => (startBrick = undefined)}
+            onBack={() => (openAppId = undefined)}
+        />
+    {/key}
 {:else if openUniverse}
     <TeamAppsPage universe={openUniverse} onBack={() => (openUniverseId = undefined)} />
 {:else}

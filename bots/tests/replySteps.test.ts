@@ -124,6 +124,73 @@ describe("a reply's room for tool results", () => {
         expect(room.size()).toBeLessThanOrEqual(before - 50);
     });
 
+    it('for a run, keeps all the steps together within the room: a step that fits alone is cut to what the kept ones leave', () => {
+        // A chat reply keeps its reading (only a single step past the room is cut); a run's rounds share the room
+        const chat = new StepRoom(1000);
+        const run = new StepRoom(1000, true);
+        for (const room of [chat, run]) {
+            // What the model said in round one cannot be set aside, so it stays and takes room
+            room.add({ ...step(1, 'a'.repeat(400)), content: 'x'.repeat(500) });
+            room.add(step(2, 'b'.repeat(800)));
+        }
+        expect(chat.steps[1]!.results[0]!.content).toBe('b'.repeat(800));
+        expect(chat.size()).toBeGreaterThan(1000);
+        expect(run.steps[1]!.results[0]!.content).toContain('Only the first');
+        // The note a cut adds is counted too: the kept steps and the newest one, notes and all, are within the room
+        expect(run.size()).toBeLessThanOrEqual(1000);
+        expect(run.steps[1]!.results[0]!.content.length).toBeGreaterThan(100);
+    });
+
+    it('for a run, leaves a step that fits beside the kept ones as it is', () => {
+        const room = new StepRoom(1000, true);
+        room.add(step(1, 'a'.repeat(200)));
+        room.add(step(2, 'b'.repeat(200)));
+        expect(room.steps[1]!.results[0]!.content).toBe('b'.repeat(200));
+    });
+
+    it('for a run, keeps the total within the room across several results even when nothing is left for their text (only the notes)', () => {
+        const room = new StepRoom(1000, true);
+        const results = [9, 9, 9, 9, 1000].map((length, n) => ({ id: `c${n}`, name: 's', content: 'r'.repeat(length) }));
+        const note = (whole: number) => `\n[Only the first 0 of ${whole.toLocaleString('en-US')} characters fit in this reply's room for tool results ("Room for tool results in one reply").]`.length;
+        // What the model said takes what the room has left once the five notes are counted: no text of any result fits
+        const calls = results.map((result) => ({ id: result.id, name: 's', arguments: '{}' }));
+        const said = 1000 - calls.length * 3 - results.reduce((total, result) => total + note(result.content.length), 0);
+        room.add({ content: 'x'.repeat(said), calls, results });
+        expect(room.size()).toBeLessThanOrEqual(1000);
+        for (const result of room.steps[0]!.results) expect(result.content.startsWith('\n[Only the first 0 of')).toBe(true);
+    });
+
+    it('for a run, cuts a result that came with its own cut note at its text, and says how long it was before the first cut', () => {
+        const first = `${'t'.repeat(600)}\n[Only the first 600 of 5,000 characters fit in this reply's room for tool results ("Room for tool results in one reply").]`;
+        const room = new StepRoom(500, true);
+        room.add({ ...step(1, first), content: 'x'.repeat(100) });
+        const [result] = room.steps[0]!.results;
+        expect(room.size()).toBeLessThanOrEqual(500);
+        // The note is the one note, at the end, about the whole text; the first note is not cut into
+        expect(result!.content.match(/Only the first/g)).toHaveLength(1);
+        expect(result!.content).toMatch(/^t+\n\[Only the first \d+ of 5,000 characters fit/);
+        expect(result!.content).not.toContain('600 of');
+    });
+
+    it('for a run, leaves out the oldest steps whole when what the model said in them leaves no room, never a call apart from its result', () => {
+        const room = new StepRoom(1000, true);
+        const said = (round: number) => ({ ...step(round, 'r'.repeat(100)), content: String(round).repeat(350) });
+        room.add(said(1));
+        room.add(said(2));
+        room.add(said(3));
+        // Each step is about 500 characters with what it said, so only the last two can be kept beside each other with their answers set aside
+        expect(room.size()).toBeLessThanOrEqual(1000);
+        expect(room.steps.map((one) => one.content[0])).toEqual(['2', '3']);
+        for (const kept of room.steps) expect(kept.calls.map((call) => call.id)).toEqual(kept.results.map((result) => result.id));
+        // Nothing of the newest step is cut when only what it says is left of the room
+        const full = new StepRoom(500, true);
+        full.add({ ...step(1, 'a'.repeat(50)), content: 'x'.repeat(300) });
+        full.add({ ...step(2, 'b'.repeat(300)), content: 'y'.repeat(300) });
+        expect(full.steps).toHaveLength(1);
+        expect(full.steps[0]!.content).toBe('y'.repeat(300));
+        expect(full.steps[0]!.results[0]!.content).toMatch(/^b+\n\[Only the first \d+ of 300 characters fit/);
+    });
+
     it('keeps as much of one step larger than the room as fits, and says so', () => {
         // What it said and called takes 31 of the room
         const room = new StepRoom(1031);

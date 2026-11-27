@@ -28,6 +28,14 @@ export interface ArtifactVersionInfo {
     urlHasMedia?: boolean;
 }
 
+/** The version the owner published: people who open the artifact only by its link see this one. */
+export interface ArtifactPublished {
+    version: number;
+    at: string;
+    /** Told to its owner only: false when that version is gone, so Share offers to publish again. */
+    available?: boolean;
+}
+
 export interface OpenedArtifact {
     artifact: {
         id: string;
@@ -40,6 +48,8 @@ export interface OpenedArtifact {
         /** The kind of chat it was made in; a copy has none. */
         chatKind: string | null;
         expiresAt: string | null;
+        /** What the owner published (game #2115): the version, when, and for its owner whether it is still there. */
+        published?: ArtifactPublished | null;
     };
     version: ArtifactVersionInfo;
     /** `inChat`: in the chat it was made in right now, as the game's server vouched. */
@@ -110,9 +120,12 @@ export function fetchArtifact(id: string, chat: ArtifactChat | undefined, versio
     return post<OpenedArtifact>(`${encodeURIComponent(id)}/open`, { chat, version });
 }
 
-/** The artifacts made in this chat that this person may open, newest change first, from `offset` on. */
-export function fetchChatArtifacts(chat: ArtifactChat, offset = 0): Promise<ChatArtifactPage> {
-    return post<ChatArtifactPage>("in-chat", { chat, offset });
+/**
+ * The artifacts made in this chat that this person may open, newest change first, from `offset` on. In a direct chat
+ * with a bot (`botId`) it also holds what that bot made for this person in other chats, such as nearby chat.
+ */
+export function fetchChatArtifacts(chat: ArtifactChat, offset = 0, botId?: string): Promise<ChatArtifactPage> {
+    return post<ChatArtifactPage>("in-chat", { chat, offset, ...(botId ? { botId } : {}) });
 }
 
 /** Every artifact this person owns, from every chat and bot, newest change first, from `offset` on (game #1609). */
@@ -138,8 +151,11 @@ export function restoreArtifactVersion(
     return post<OpenedArtifact>(`${encodeURIComponent(id)}/restore`, { chat, number });
 }
 
-/** Who can open it: just its owner, people in the chat it was made in, or anyone with the link. */
-export type ArtifactOpenScope = "me" | "chat" | "link";
+/**
+ * Who can open it: just its owner, people in the chat it was made in, anyone with the link, or anyone with the link and only
+ * the version the owner published (game #2115).
+ */
+export type ArtifactOpenScope = "me" | "chat" | "link" | "public";
 export type ArtifactChangeScope = "owner" | "openers";
 
 /** The owner says who can open it and who can ask for changes; the answer is the artifact as it now is. */
@@ -150,6 +166,20 @@ export async function shareArtifact(
 ): Promise<OpenedArtifact["artifact"]> {
     return (
         await post<{ artifact: OpenedArtifact["artifact"] }>(`${encodeURIComponent(id)}/share`, { chat, ...sharing })
+    ).artifact;
+}
+
+/**
+ * The owner publishes a version (game #2115): the one they were looking at. From then on people who open it only by its
+ * link see it, until the owner publishes another. The answer is the artifact as it now is.
+ */
+export async function publishArtifact(
+    id: string,
+    version: number,
+    chat: ArtifactChat | undefined
+): Promise<OpenedArtifact["artifact"]> {
+    return (
+        await post<{ artifact: OpenedArtifact["artifact"] }>(`${encodeURIComponent(id)}/publish`, { chat, version })
     ).artifact;
 }
 
@@ -213,6 +243,8 @@ export interface ArtifactPayRequest {
     check?: boolean;
     /** Restore purchase: this buyer's verified paid order for the page's offer */
     restore?: boolean;
+    /** With a start: the version on screen, so terms set on a newer version are never charged on it */
+    shownVersion?: number;
     /** What a guest's window keeps for them (Orbit stores only its hash), and the code of a receipt link they opened */
     recoveryCode?: string;
     receiptCode?: string;

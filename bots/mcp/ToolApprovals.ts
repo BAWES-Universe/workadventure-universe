@@ -16,9 +16,11 @@
  * The card and where it sits are kept in this process; after a restart the saved action still takes its tap, and the card
  * is shown again as a new notice instead of being edited.
  */
-import { askEdit, askNotice, argumentLines, buildAsk, cardTitle, outcomeOf, rememberOffer, resultLine, type AskAnswer, type AskDecision, type AskField, type CardFacts, type ParsedTap } from './ApprovalCard';
+import { isMailTool } from '../server/BrickAppAnswer';
+import { askEdit, askNotice, buildAsk, cardTitle, cardWords, outcomeOf, rememberOffer, resultLine, resultText, type AskAnswer, type AskDecision, type AskField, type CardFacts, type ParsedTap } from './ApprovalCard';
 import { acceptLine, fallbackLine, nameForLine, WORDS_SYSTEM, wordsPrompt, type Moment } from './NearbyWords';
 import type { GateCall, GateDecision, ToolGate } from './ToolGate';
+import { isBatchTool, toolErrorMayHaveRun } from './AppActions';
 import type { ToolServerEntry } from './MCPConnector';
 import type { ToolHeading } from './ToolCatalog';
 import { DEFAULT_CARD_SETTINGS, OrbitActionsUnavailable, type CardSettings, type OrbitActions, type SavedAction } from './OrbitActions';
@@ -59,7 +61,8 @@ export interface CardSurface {
 
 /** Finding and running the tool a saved action names, the way a reply does. */
 export interface ToolRunner {
-    find(botId: string, toolName: string): Promise<ToolServerEntry | null>;
+    /** `serverId`: the server the saved action was made for, so a ready-made App's action on its own card is found in that App. */
+    find(botId: string, toolName: string, serverId?: string): Promise<ToolServerEntry | null>;
     /** `use` says which attempt this is and what heading the saved action was under, for the check an App on a connection gets (#2001). */
     run(botId: string, entry: ToolServerEntry, toolName: string, args: Record<string, unknown>, playerUuid: string, use: { heading: ToolHeading; callId: string }): Promise<unknown>;
 }
@@ -242,7 +245,8 @@ export class ToolApprovals {
     /** A call the gate says needs an OK: a remembered approval that covers it, or a card. Never throws. */
     async propose(input: ProposeInput): Promise<Proposed> {
         // The same call asked for twice at the same moment (a model repeating itself in one round) is one question
-        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly, input.batch ?? null, input.task?.itemId ?? null]);
+        // The App's grant is part of it: two Apps (or two grants) with the same action and inputs are two questions
+        const key = JSON.stringify([input.botId, input.roomId, input.person.uuid, input.entry.serverId, input.toolName, input.args, input.decision.fingerprint, input.decision.heading, input.decision.notReviewed, !!input.cardOnly, input.batch ?? null, input.task?.itemId ?? null]);
         const running = this.proposing.get(key);
         if (running) return running;
         const run = this.proposeNow(input).finally(() => {
@@ -250,6 +254,31 @@ export class ToolApprovals {
         });
         this.proposing.set(key, run);
         return run;
+    }
+
+    /**
+     * Whether an "allow more" this person gave in this chat covers this call now, without showing any card. For a ready-made App's
+     * batch that holds several actions that ask first: each is looked up on its own. Never throws: not knowing is a no.
+     */
+    async remembered(input: Pick<ProposeInput, 'botId' | 'roomId' | 'person' | 'toolName' | 'entry' | 'args' | 'decision'>): Promise<boolean> {
+        const { decision } = input;
+        if (decision.notReviewed || decision.heading === 'deletesOrSends') return false;
+        try {
+            const nearby = input.person.playerId !== undefined;
+            const grant = await this.deps.orbit.findGrant(input.botId, {
+                requesterKey: input.person.uuid,
+                conversationKey: conversationKeyOf(input.roomId, nearby),
+                connectionRef: input.entry.serverId,
+                toolName: input.toolName,
+                heading: decision.heading,
+                toolFingerprint: decision.fingerprint,
+                policyRevision: decision.policyRevision,
+                arguments: input.args,
+            });
+            return !!grant;
+        } catch {
+            return false;
+        }
     }
 
     private async proposeNow(input: ProposeInput): Promise<Proposed> {
@@ -271,7 +300,7 @@ export class ToolApprovals {
         try {
             // The same call asked for again while its card still waits (a turn asked again, or the model repeating itself)
             // is that card: no second card, so one tap can never run it twice
-            if (this.findWaiting(botId, roomId, person.uuid, toolName, args, decision, base.conversationKey)) {
+            if (this.findWaiting(botId, roomId, person.uuid, entry.serverId, toolName, args, decision, base.conversationKey)) {
                 return { kind: 'waiting', result: task ? ALREADY_ASKED_TASK_RESULT : nearby ? WAITING_NEARBY_RESULT : WAITING_RESULT };
             }
             // Making more than the limit is asked every time: nothing allowed before covers it. A goal's step asks every time too.
@@ -298,15 +327,19 @@ export class ToolApprovals {
                     reviewMinutes: wait,
                 });
             }
+            // A batch call of the App link ("run these tools") is named by what its tools do. The card before making more than the
+            // limit keeps its own title and buttons.
+            const said = cardWords(toolName, words ? words.title : input.toolTitle, args, entry.inputSchema, entry.serverName);
             const facts: CardFacts = {
                 action,
-                title: cardTitle(toolName, words ? words.title : input.toolTitle),
+                title: words ? cardTitle(toolName, words.title) : said.title,
                 ...(entry.serverName ? { actsAs: entry.serverName } : {}),
-                lines: [...(words?.lines ?? []), ...argumentLines(args, entry.inputSchema)],
+                lines: [...(words?.lines ?? []), ...said.lines],
                 offer,
                 notReviewed: decision.notReviewed,
                 waitMinutes: wait,
-                ...(words ? { buttons: { approve: words.approve, decline: words.decline } } : {}),
+                ...(words ? { buttons: { approve: words.approve, decline: words.decline } } : said.buttons ? { buttons: said.buttons } : {}),
+                ...appOf(entry, botId),
             };
             const card: Card = { botId, roomId, person, facts, waiting: true, nearby, ...(input.batch ? { batch: input.batch, lineTitle: cardTitle(toolName, input.toolTitle) } : {}) };
             if (nearby) {
@@ -429,6 +462,7 @@ export class ToolApprovals {
         botId: string,
         roomId: string,
         requesterKey: string,
+        serverId: string,
         toolName: string,
         args: Record<string, unknown>,
         decision: Extract<GateDecision, { kind: 'ask' }>,
@@ -440,6 +474,8 @@ export class ToolApprovals {
             if (!card.waiting || card.closing || card.botId !== botId || card.roomId !== roomId || card.person.uuid !== requesterKey) continue;
             // The same chat room holds the chat's cards and each goal's own: only the same conversation's card is the same card
             if (action.conversationKey !== conversationKey) continue;
+            // Another App's (or grant's) card is not this one, even for the same action
+            if (action.connectionRef && action.connectionRef !== serverId) continue;
             if (action.toolName !== toolName || action.toolFingerprint !== decision.fingerprint || action.heading !== decision.heading || card.facts.notReviewed !== decision.notReviewed) continue;
             if (!(Date.parse(action.reviewExpiresAt) > this.now())) continue;
             if (JSON.stringify(action.arguments) === wanted) return card;
@@ -488,24 +524,27 @@ export class ToolApprovals {
             if (!theirs) return null;
         }
         const wait = (await this.deps.orbit.cardSettings(botId)).cardWaitMinutes;
-        const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
+        const entry = await this.deps.tools.find(botId, action.toolName, action.connectionRef ?? undefined).catch(() => null);
         // Whether the tool was never checked is not saved with the action: ask the gate again for a card that still waits,
         // so its warning survives a restart. Whatever it can't tell, the card shows without the warning (as before).
         const notReviewed =
             action.status === 'waiting' && entry && entry.fingerprint === action.toolFingerprint
                 ? await this.deps.gate
-                      .decide(gateCall(botId, action.toolName, entry, person))
+                      .decide(gateCall(botId, action.toolName, entry, person, action.arguments))
                       .then((verdict) => verdict.kind === 'ask' && verdict.notReviewed)
                       .catch(() => false)
                 : false;
+        const said = cardWords(action.toolName, entry?.title, action.arguments, entry?.inputSchema, entry?.serverName);
         const facts: CardFacts = {
             action,
-            title: cardTitle(action.toolName, entry?.title),
+            title: said.title,
             ...(entry?.serverName ? { actsAs: entry.serverName } : {}),
-            lines: argumentLines(action.arguments, entry?.inputSchema),
+            lines: said.lines,
+            ...(said.buttons ? { buttons: said.buttons } : {}),
             offer: action.rememberScope ? { scope: action.rememberScope, phrase: '' } : null,
             notReviewed,
             waitMinutes: wait,
+            ...(entry ? appOf(entry, botId) : {}),
         };
         const card: Card = { botId, roomId, person, facts, waiting: action.status === 'waiting', nearby };
         this.keep(id, card);
@@ -622,9 +661,9 @@ export class ToolApprovals {
         const { botId, roomId, person } = card;
         const action = await this.deps.orbit.read(botId, id);
         if (!action || action.requesterKey !== person.uuid || action.status !== 'closed' || action.closedReason === 'declined') return;
-        const entry = await this.deps.tools.find(botId, action.toolName);
+        const entry = await this.deps.tools.find(botId, action.toolName, action.connectionRef ?? undefined);
         const stale = !entry || entry.fingerprint !== action.toolFingerprint;
-        const checked = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person));
+        const checked = stale ? null : await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person, action.arguments));
         // A card before making more than the limit comes from a tool that runs right away: it asks again as it did
         // A goal's card for a step that makes, sends or deletes asks again too: its run never does those by itself
         const taskCard = !!taskItemOf(action.conversationKey);
@@ -693,8 +732,8 @@ export class ToolApprovals {
             };
 
             // The checks that count are the ones right before the call: the tool, the person and the settings as they are now
-            const entry = await this.deps.tools.find(botId, action.toolName).catch(() => null);
-            const verdict = entry && entry.fingerprint === action.toolFingerprint ? await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person)) : null;
+            const entry = await this.deps.tools.find(botId, action.toolName, action.connectionRef ?? undefined).catch(() => null);
+            const verdict = entry && entry.fingerprint === action.toolFingerprint ? await this.deps.gate.decide(gateCall(botId, action.toolName, entry, person, action.arguments)) : null;
             if (!entry || !verdict) return void (await finish('notSent', { result: 'The tool changed since, so nothing was done.' }, 'failed'));
             if (verdict.kind === 'refuse') return void (await finish('notSent', { result: verdict.line }, 'failed'));
             // A card before making more than the limit comes from a tool that runs right away, so its verdict is a run
@@ -709,7 +748,9 @@ export class ToolApprovals {
             // The request this tap belongs to, taken before the tool runs: a person who writes again meanwhile starts a new one
             const requestEpoch = this.made.epochOf(this.countKey(botId, roomId, person));
             const result = await this.deps.tools.run(botId, entry, action.toolName, action.arguments, person.uuid, { heading: action.heading, callId: claim.attemptId });
-            const outcome = outcomeOf(result);
+            // A batch of actions whose tool answered with its own error may have run some of them: not sure, never "nothing was done"
+            // (a single action of an App is run through that batch tool underneath: its card names the action, its entry the batch tool)
+            const outcome = (isBatchTool(action.toolName) || entry.appAction !== undefined) && toolErrorMayHaveRun(result) ? 'uncertain' : outcomeOf(result);
             // What this tap let be made counts in the request, so a later step doesn't ask again for the same ones. A call that
             // proved it made nothing counts for nothing.
             if (madeNew && (outcome === 'succeeded' || outcome === 'uncertain')) {
@@ -717,8 +758,9 @@ export class ToolApprovals {
                 if (quantity.known) this.made.add(this.countKey(botId, roomId, person), quantity.count, requestEpoch);
             }
             if (outcome === 'succeeded') {
+                // The card shows words only; the bot is still told whatever came back (as data), so it can say it in its own words
                 const line = resultLine(result);
-                return void (await finish('succeeded', line ? { result: line } : {}, 'done', line));
+                return void (await finish('succeeded', line ? { result: line } : {}, 'done', resultText(result, isMailTool(action.toolName, entry.serverName))));
             }
             if (outcome === 'uncertain') return void (await finish('uncertain', { unknown: true }, 'unknown'));
             const why = errorLine(result);
@@ -1051,8 +1093,12 @@ function errorLine(result: unknown): string {
     return typeof text === 'string' && text ? text.slice(0, 300) : 'It did not work, so nothing was done.';
 }
 
+/** A ready-made App's card links to what the Brick may do with that App (game "Ask, Do, Ignore" for Bricks). */
+const appOf = (entry: ToolServerEntry, botId: string): { app?: { botId: string; serverId: string; name: string } } =>
+    entry.readyMade && entry.serverName ? { app: { botId, serverId: entry.serverId, name: entry.serverName } } : {};
+
 /** The gate's question for a saved call: the same person, in a direct message, with the tool as it is now. */
-function gateCall(botId: string, toolName: string, entry: ToolServerEntry, person: Asker): GateCall {
+function gateCall(botId: string, toolName: string, entry: ToolServerEntry, person: Asker, args?: Record<string, unknown>): GateCall {
     return {
         botId,
         toolName,
@@ -1061,6 +1107,9 @@ function gateCall(botId: string, toolName: string, entry: ToolServerEntry, perso
         ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {}),
         person: { signedIn: true, identifier: person.uuid },
         voice: false,
+        // A card that holds several actions of a ready-made App is judged again by each of them (game "Ask, Do, Ignore" for Bricks)
+        ...(args !== undefined ? { args } : {}),
+        ...(entry.readyMade && entry.serverName ? { appName: entry.serverName } : {}),
     };
 }
 

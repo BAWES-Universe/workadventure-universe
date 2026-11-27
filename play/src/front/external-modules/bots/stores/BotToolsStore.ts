@@ -116,6 +116,36 @@ export async function chooseSetting(botId: string, serverId: string, heading: He
     }
 }
 
+/** Change one App action's own choice in what is held, leaving everything else as it is */
+function withToolSetting(botId: string, serverId: string, toolId: string, value: Setting | null): void {
+    const held = forBot(botId);
+    const one = held.tools[serverId];
+    if (!one) return;
+    const tools = one.tools.map((tool) => (tool.id === toolId ? { ...tool, setting: value } : tool));
+    put(botId, { ...held, tools: { ...held.tools, [serverId]: { ...one, tools } } });
+}
+
+/**
+ * Give one App action its own choice (Right away, Asks first or Off), or null to follow its heading again (Ask, Do, Ignore for
+ * Bricks). Shown at once; put back if Orbit says no.
+ */
+export async function chooseToolSetting(
+    botId: string,
+    serverId: string,
+    toolId: string,
+    value: Setting | null
+): Promise<void> {
+    current = botId;
+    const before = forBot(botId).tools[serverId]?.tools.find((tool) => tool.id === toolId);
+    withToolSetting(botId, serverId, toolId, value);
+    try {
+        take(botId, await botApiService.setMcpToolSetting(botId, serverId, toolId, value));
+    } catch (error) {
+        if (before) withToolSetting(botId, serverId, toolId, before.setting);
+        throw error;
+    }
+}
+
 /** Who is allowed more right now, read fresh each time the page opens (it changes as people chat) */
 export function loadAllowedMore(botId: string): Promise<AllowedMore[]> {
     return botApiService.getAllowedMore(botId);

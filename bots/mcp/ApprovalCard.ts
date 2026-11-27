@@ -9,6 +9,8 @@
  */
 import type { RememberScope, SavedAction } from './OrbitActions';
 import type { ToolHeading } from './ToolCatalog';
+import { fitAppAnswer, RUN_ANSWER_MAX } from '../server/BrickAppAnswer';
+import { batchCalls, batchExtras, describeBatch, plainLabel, plainList, plainWords, readsAsWords, withoutProvider } from './AppBatch';
 
 export const ASK_KEY = 'universe.ask';
 /** The event a tap sends to the room. */
@@ -44,6 +46,12 @@ export interface AskField {
     everyTime?: boolean;
     notReviewed?: boolean;
     checkAt?: { label: string; url: string };
+    /**
+     * A ready-made App's action on the person's own Brick (game "Ask, Do, Ignore" for Bricks): the card links to what the Brick may do
+     * with that App. `botId` is the Brick, `serverId` its grant of the App, `name` the App's name. The game shows the link only on
+     * the viewer's own Brick.
+     */
+    app?: { botId: string; serverId: string; name: string };
     /** When the card closes and the time it was written, both on this server's clock: the game counts from when it got it. */
     expiresAt: number;
     now: number;
@@ -66,39 +74,86 @@ export function tidyName(name: string): string {
     return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Use a tool';
 }
 
-/** The action in the tool's own words: its title when it gave one, else its name tidied. */
+/** The action in the tool's own words: its title when it gave one, else its name tidied. The provider's name never shows in it. */
 export function cardTitle(toolName: string, toolTitle?: string): string {
-    return clip((toolTitle?.trim() || tidyName(toolName)).replace(/\s+/g, ' '), TITLE_MAX);
+    const words = withoutProvider((toolTitle?.trim() || tidyName(toolName)).replace(/\s+/g, ' '));
+    return clip(words || tidyName(''), TITLE_MAX);
 }
 
 /* ------------------------------------ lines ------------------------------------ */
 
 const isPlain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
-function valueText(value: unknown): string {
-    if (typeof value === 'string') return value;
+/** A value as it will run, in plain words: a label in capitals reads as a word ("INBOX" is "Inbox"), a list of words joins with ", ". */
+function valueText(key: string, value: unknown): string {
+    if (typeof value === 'string') return readsAsWords(key) ? plainWords(value) : value;
     if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    return JSON.stringify(value) ?? '';
+    return plainList(value, key) ?? JSON.stringify(value) ?? '';
 }
 
 /** The arguments in the order the tool names its inputs, then any others, each as a labelled line, exactly as they will run. */
-export function argumentLines(args: Record<string, unknown>, inputSchema?: unknown): AskLine[] {
+function allArgumentLines(args: Record<string, unknown>, inputSchema?: unknown): AskLine[] {
     const declared = isPlain(inputSchema) && isPlain(inputSchema.properties) ? Object.keys(inputSchema.properties) : [];
     const keys = [...declared.filter((key) => key in args), ...Object.keys(args).filter((key) => !declared.includes(key))];
     const lines: AskLine[] = [];
     for (const key of keys) {
         const value = args[key];
         if (value === undefined || value === null) continue;
-        const text = valueText(value).trim();
+        const text = valueText(key, value).trim();
         if (!text) continue;
-        lines.push({ label: clip(tidyName(key), LABEL_MAX), text: clip(text, TEXT_MAX) });
-    }
-    if (lines.length > LINES_MAX) {
-        const more = lines.length - (LINES_MAX - 1);
-        lines.length = LINES_MAX - 1;
-        lines.push({ text: `…and ${more} more details` });
+        lines.push({ label: clip(plainLabel(tidyName(key)), LABEL_MAX), text: clip(text, TEXT_MAX) });
     }
     return lines;
+}
+
+/** The arguments as lines, at most what the game shows. */
+export function argumentLines(args: Record<string, unknown>, inputSchema?: unknown): AskLine[] {
+    return capLines(allArgumentLines(args, inputSchema));
+}
+
+/** At most the lines the game shows, the last one saying how many more there are. */
+function capLines(lines: AskLine[]): AskLine[] {
+    if (lines.length <= LINES_MAX) return lines;
+    const more = lines.length - (LINES_MAX - 1);
+    return [...lines.slice(0, LINES_MAX - 1), { text: `…and ${more} more details` }];
+}
+
+/** A tool's arguments for one action of a batch, on one line: "Query newer_than:7d · Max results 25", or that it needs none. */
+function inlineArguments(args: Record<string, unknown>): string {
+    const parts = allArgumentLines(args)
+        .map((line) => (line.label ? `${line.label} ${line.text}` : line.text))
+        .filter(Boolean);
+    return parts.length ? clip(parts.join(' · '), TEXT_MAX) : 'Nothing to fill in';
+}
+
+/** What a card says about a tool call: its title, its lines, and its buttons' words when they are not the title's. */
+export interface CardWords {
+    title: string;
+    lines: AskLine[];
+    buttons?: ButtonWords;
+}
+
+/**
+ * A call as its card shows it. A batch call (the App link's "run these tools") is named by what its tools do: one action
+ * shows that action's inputs as lines, several show one line each ("Fetch emails": its inputs), then any input of the batch
+ * itself that changes what runs. Everything else is the tool's own title and inputs. `appName` is the App's name in Orbit,
+ * which is dropped from the front of each action ("GMAIL_FETCH_EMAILS" with "Gmail" is "Fetch emails").
+ */
+export function cardWords(toolName: string, toolTitle: string | undefined, args: Record<string, unknown>, inputSchema?: unknown, appName?: string): CardWords {
+    const batch = describeBatch(args, appName);
+    if (!batch) return { title: cardTitle(toolName, toolTitle), lines: argumentLines(args, inputSchema) };
+    const title = clip(batch.title, TITLE_MAX);
+    // Every line before the one cap, so the count of hidden details is the true one
+    const own = allArgumentLines(batchExtras(args), inputSchema);
+    if (batch.calls.length === 1) {
+        return { title, lines: capLines([...allArgumentLines(batch.calls[0].args), ...own]) };
+    }
+    const actions = batch.calls.map((call, index) => ({ label: clip(batch.names[index], LABEL_MAX), text: inlineArguments(call.args) }));
+    return {
+        title,
+        lines: capLines([...actions, ...own]),
+        buttons: { approve: batch.calls.length === 2 ? 'Allow both' : 'Allow all', decline: "Don't do it" },
+    };
 }
 
 /* ------------------------------ what "allow more" keeps ------------------------------ */
@@ -121,6 +176,8 @@ export interface RememberOffer {
  */
 export function rememberOffer(args: Record<string, unknown>, heading: ToolHeading, notReviewed: boolean): RememberOffer | null {
     if (heading === 'deletesOrSends' || notReviewed) return null;
+    // A batch of an App's actions has no fixed place to stay on: "allow more" is per action, on a card that holds one alone
+    if (batchCalls(args)) return null;
     const fixed: Record<string, unknown> = {};
     const varies: string[] = [];
     const places: string[] = [];
@@ -176,6 +233,8 @@ export interface CardFacts {
     checkAt?: { label: string; url: string };
     /** Its own button words, for the card before a bot makes more than its limit (#1662). */
     buttons?: ButtonWords;
+    /** A ready-made App's action: the card links to what the Brick may do with the App. */
+    app?: { botId: string; serverId: string; name: string };
 }
 
 /** The `universe.ask` field for an action as it stands. `answer` is set once the card has ended. */
@@ -193,6 +252,7 @@ export function buildAsk(facts: CardFacts, now: number, answer?: AskAnswer): Ask
         ...(everyTime ? { everyTime: true } : {}),
         ...(facts.notReviewed ? { notReviewed: true } : {}),
         ...(facts.checkAt ? { checkAt: facts.checkAt } : {}),
+        ...(facts.app ? { app: { botId: facts.app.botId, serverId: facts.app.serverId, name: clip(facts.app.name, 120) } } : {}),
         // A number the game can count from, whatever Orbit sent: a card without a usable end would be dropped there
         expiresAt: Number.isFinite(Date.parse(facts.action.reviewExpiresAt)) ? Date.parse(facts.action.reviewExpiresAt) : now,
         now,
@@ -248,13 +308,69 @@ export function outcomeOf(result: unknown): 'succeeded' | 'failed' | 'notSent' |
     return 'succeeded';
 }
 
-/** What the tool gave back, on one short line for the card: its first text, or nothing. */
+/** Data inside a code fence as the data alone, so it is read as data like the same data without one. Text without a fence as it is, trimmed. */
+function withoutFence(text: string): string {
+    const body = text.trim();
+    const fence = /^```[\w-]*\s*/.exec(body);
+    return fence ? body.slice(fence[0].length).replace(/\s*```\s*$/, '').trim() : body;
+}
+
+/**
+ * Whether text is data that reads as code: JSON that starts with `{` or a list (`[1, 2]`, `[{...}]`, `["a"]`, `[]`), also
+ * inside a code fence. A bracketed word before plain text ("[Gmail] Message sent") is a sentence, not data.
+ */
+export function looksLikeData(text: string): boolean {
+    let body = text.trim();
+    const fence = /^```[\w-]*\s*/.exec(body);
+    if (fence) body = body.slice(fence[0].length).replace(/\s*```\s*$/, '').trim();
+    if (body.startsWith('{')) return true;
+    if (!body.startsWith('[')) return false;
+    try {
+        JSON.parse(body);
+        return true;
+    } catch {
+        // Not whole JSON (cut short, or a fence after it): a list still starts with `[{`, `[[`, `["`, `[]` or a value and a comma, while "[1] emails found" or "[2024-05-01] Sent" is a sentence
+        return /^\[\s*(?:[[{"\]]|-?\d+(?:\.\d+)?\s*,|(?:true|false|null)\s*,)/.test(body);
+    }
+}
+
+/**
+ * What a tool gave back, as the bot is told it after the person approved the action: the whole answer, made to fit the room a chat
+ * reply has (the same limit a goal's run reads an App's answer in, game #2130), never cut at a fixed few hundred characters. A plain
+ * answer is one line; an answer that is data is read as data, so what nobody reads (an encoded body, raw HTML, a mail's routing
+ * headers when `mail`) is taken out, whole items go before half of one, and a cut always says so. It is data for the bot, never an
+ * instruction. Nothing when the tool gave back no text and no data.
+ */
+export function resultText(result: unknown, mail = false, max: number = RUN_ANSWER_MAX): string | undefined {
+    const items = Array.isArray(result) ? result : [result];
+    const texts: string[] = [];
+    for (const item of items) {
+        const text = typeof item === 'string' ? item : isPlain(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : undefined;
+        if (!text?.trim()) continue;
+        texts.push(looksLikeData(text) ? withoutFence(text) : text.replace(/\s+/g, ' ').trim());
+    }
+    try {
+        if (texts.length > 0) return fitAppAnswer(texts.length === 1 ? texts[0] : texts, max, mail);
+        // An answer that is data and not a list of content blocks (a block has a `type`: an image or a file is not read as words)
+        if (isPlain(result) && typeof result.type !== 'string') return fitAppAnswer(result, max, mail);
+    } catch {
+        // An answer that cannot be written as text: the bot is told nothing came back in words
+    }
+    return undefined;
+}
+
+/**
+ * What the tool gave back, on one short line for the card: its first text in words, or nothing. An answer that is data
+ * is never a line on the card: it reads as code, and the bot says what came back in its own words (it is still told what
+ * came back, see `resultText`).
+ */
 export function resultLine(result: unknown): string | undefined {
     const items = Array.isArray(result) ? result : [result];
     for (const item of items) {
         const text = typeof item === 'string' ? item : isPlain(item) && item.type === 'text' && typeof item.text === 'string' ? item.text : undefined;
         const line = text?.replace(/\s+/g, ' ').trim();
-        if (line) return clip(line, RESULT_MAX);
+        if (!line || looksLikeData(line)) continue;
+        return clip(line, RESULT_MAX);
     }
     return undefined;
 }

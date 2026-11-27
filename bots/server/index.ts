@@ -187,7 +187,7 @@ const approvals = new ToolApprovals({
     questions,
     gate: aiService.gate,
     tools: {
-        find: (botId, toolName) => aiService.findToolEntry(botId, toolName),
+        find: (botId, toolName, serverId) => aiService.findToolEntry(botId, toolName, serverId),
         run: async (botId, entry, toolName, args, playerUuid, use) => {
             const config = botManager.getBot(botId)?.getFullConfig() ?? (await dmReplies?.getBotConfig(botId).catch(() => null));
             return aiService.runApprovedTool(botId, entry, toolName, args, playerUuid, config?.toolTimeoutSeconds, use);

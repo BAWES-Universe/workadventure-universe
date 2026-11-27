@@ -80,6 +80,8 @@ export function sayItem(item: MemoryItem, ll: TranslationFunctions, locale?: str
             text =
                 item.label === "current_state"
                     ? m.feeling({ value })
+                    : item.label?.startsWith("dislike_")
+                    ? m.dislikes({ value })
                     : item.label
                     ? `${readableLabel(item.label)}: ${value}`
                     : value;

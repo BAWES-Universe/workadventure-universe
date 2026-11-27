@@ -25,6 +25,7 @@ import {
 
 const server = (revision: number, settings: Partial<ServerTools["settings"]> = {}): ServerTools => ({
     serverId: "s1",
+    kind: "tools",
     state: "confirmed",
     policyRevision: revision,
     settings: {

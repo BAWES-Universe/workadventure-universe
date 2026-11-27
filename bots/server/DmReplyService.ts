@@ -19,12 +19,15 @@ import { ReplySteps, type StepsField } from '../ai/ToolSteps';
 import type { ReplyLimitReached } from '../ai/types';
 import type { ToolSignInCard, ToolSignInDelivery } from '../mcp/ToolSignInCard';
 import type { ParsedFile } from '../services/FileParser';
+import { cutWithNote } from './BrickAppAnswer';
 import { withoutNoteIds, type ChatUpload } from '../services/ChatFiles';
 import { chatFileKeeper, sentMediaJob } from '../services/ChatFileKeeper';
 import type { BotConfiguration } from './AdminApiService';
+import { BrickLimitReached } from '../ai/BrickLimit';
 import { BRICK_CHAT_LINK } from '../ai/BrickTools';
 import { withJobLines } from '../ai/JobStatusLine';
-import type { AppOfferNote, BrickNote, BrickOfferNote } from '../ai/BrickTools';
+import type { AppOfferNote, BrickNote, BrickOfferNote, ReportSentNote } from '../ai/BrickTools';
+import { reportSentText } from '../ai/ReportTools';
 import type { BotManager } from './BotManager';
 
 /** Label stored with direct messages in memory and analytics, where bubble messages store their space name. */
@@ -44,7 +47,7 @@ function brickFacts(name: string): string {
     return [
         'About you (this stays true whatever else is written here):',
         `- Your name is ${name}. You are a Brick. People also say "bot": to you the two words mean the same thing, you answer to both and you never correct anyone for using either.`,
-        '- You belong to the person you are talking with, and you live in their chats, not in a room on the map.',
+        '- You belong to the person you are talking with, and you live in their chats. Where you are right now is said in your rules below.',
         '- Speak of yourself as "I". You are neither a "he" nor a "she".',
         '- Only offer what you can do in this chat today, with what you have. When they ask what you can do, give three or four short, concrete ideas you can really carry out right now. When they ask for something you cannot do yet, say so in one plain sentence and offer the closest thing you can do today.',
     ].join('\n');
@@ -83,6 +86,8 @@ export const brickMadeText = (name: string, id?: string, made = true): string =>
 };
 export const BRICK_NOT_MADE_TEXT = "I couldn't make it just now. Ask me again in a moment.";
 /** A direct message after this long counts as a new conversation, like walking up to the bot again. */
+/** How much of a line the system wrote in the person's turn (an approved action's answer) the history keeps. */
+const NOTE_HISTORY_MAX = 1500;
 const NEW_CONVERSATION_AFTER_MS = 30 * 60 * 1000;
 const CONFIG_CACHE_MS = 60 * 1000;
 /** Orbit gets this long to send a bot's settings before the lookup counts as failed (the person hears "couldn't answer"). */
@@ -169,6 +174,12 @@ export interface DmReply {
     /** What this turn did about Bricks (#1996): Bricks it made go with the text, a suggestion goes out as a card after it. */
     bricks?: BrickNote[];
     /**
+     * For a reply with notes to the Universe team: tells Orbit, once, that the message carrying their receipts (and Take it back) went out.
+     * Call it only once Matrix took that message. A note never confirmed is withdrawn by Orbit after 15 minutes, so none stays that the
+     * chat cannot see or take back. Never throws.
+     */
+    reportsDelivered?: () => Promise<void>;
+    /**
      * Orbit refused to carry a job on and a new job is a sensible next step (GPT's sixth answer, finding 6): a card with one "Start a new job" button goes out after the text, for
      * the job of this title. Nothing was started; the tap is an ordinary new start.
      */
@@ -180,6 +191,10 @@ export interface DmReply {
     claimOffer?: () => Promise<string | null>;
     /** The same for an App offer's card (game #2001). */
     claimApp?: () => Promise<string | null>;
+    /** The card claimed by `claimOffer` never reached the person: Orbit takes the claim back, so a card nobody saw does not close the topic. Never throws. */
+    releaseOffer?: () => Promise<void>;
+    /** The same for an App offer's card (one the person asked for by name was never claimed, so there is nothing to take back). */
+    releaseApp?: () => Promise<void>;
     /** A tool's sign-in expired and this person manages the bot (#1819): the Reconnect card to send after the reply. */
     toolSignIn?: ToolSignInCard;
     /** Says how the Reconnect card's send went (see AIStreamChunk.toolSignInDelivery) */
@@ -443,7 +458,7 @@ export class DmReplyService extends BaseBehavior {
         try {
             // A Brick is known before it is asked about someone: the first direct message after a restart can be this line, and
             // a Brick not yet known would reach Orbit with no asker, bypassing who it is for
-            this.aiService.noteBrick?.(config.botId, config.brick);
+            this.aiService.noteBrick?.(config.botId, config.brick, config.name);
             // With the bot id, so a bot on Universe AI or on a lent key reaches its key the way its replies do
             const line = await this.aiService.quickGenerate(config.aiProviderRef, instructions, text.slice(0, 500), config.botId, undefined, asker);
             return parseEmotionsFromResponse(line).cleanedResponse.trim().slice(0, 300);
@@ -473,7 +488,7 @@ export class DmReplyService extends BaseBehavior {
         // A Brick its owner deleted answers nobody while it waits for Undo (#1996)
         if (config.brick?.deleted) return null;
         // A person's own first Brick can make Bricks and suggest one (#1996)
-        this.aiService.noteBrick?.(botId, config.brick);
+        this.aiService.noteBrick?.(botId, config.brick, config.name);
         const chatInstructions = instructionsFor(config);
         const playerId = this.playerIdFor(person.matrixUserId);
         const memory = this.conversationMemory;
@@ -522,6 +537,8 @@ export class DmReplyService extends BaseBehavior {
                 // Remembered in plain words: the link is for the game, not something to repeat later
                 return { text: brickMadeText(brick.name, brick.id, made), media: [], keep: keepAs(brickMadeText(brick.name, undefined, made)), bricks: [{ kind: 'made', id: brick.id, name: brick.name, line: brick.description, look: brick.characterTextureId, made }] };
             } catch (error) {
+                // Over "New Bricks per hour": the same kind line Orbit gave, with the time they can make another
+                if (error instanceof BrickLimitReached) return { text: error.line, media: [], keep: keepAs(error.line) };
                 console.warn(`[DmReplyService] Bot ${botId} could not make the Brick it suggested:`, error instanceof Error ? error.message : error);
                 return { text: BRICK_NOT_MADE_TEXT, media: [], keep: keepAs(BRICK_NOT_MADE_TEXT) };
             }
@@ -570,7 +587,9 @@ export class DmReplyService extends BaseBehavior {
                   personRef: person.uuid,
               })
             : null;
-        const original = noted?.line ?? text;
+        // A line the system wrote (an approved action's answer can be tens of thousands of characters) is read whole in this reply, but the history
+        // keeps only its start: it is read again in every later reply, and the bot's own answer already says what mattered
+        const original = hooks.note ? cutWithNote(noted?.line ?? text, NOTE_HISTORY_MAX) : (noted?.line ?? text);
 
         const lastMet = memory.getMemory(botId, playerId)?.relationship?.lastMet ?? 0;
         if (Date.now() - lastMet > NEW_CONVERSATION_AFTER_MS) {
@@ -815,6 +834,9 @@ export class DmReplyService extends BaseBehavior {
         // its chat one tap away instead of a "couldn't answer" note
         const madeOne = bricks.find((note) => note.kind === 'made');
         if (!replyText.trim() && madeOne?.kind === 'made') replyText = brickMadeText(madeOne.name, madeOne.id, madeOne.made);
+        // A note sent to the Universe team with no words around it: the fixed line, so the chat still shows what was sent and Take it back under it
+        const reports = bricks.filter((note): note is ReportSentNote => note.kind === 'report');
+        if (!replyText.trim() && reports.length > 0) replyText = reportSentText(reports);
         // A reply that names a computer job but has no words of its own (the model made only a card or a file) says so in one fixed sentence: the job is confirmed to Orbit only once the person
         // received an event that tells them of it, so there is always one
         // Every job this reply names has its fixed status line APPENDED to the reply's own words, built from what Orbit really said of it (started, waiting and not started yet, still going, done,
@@ -825,6 +847,9 @@ export class DmReplyService extends BaseBehavior {
         if (!replyText.trim()) bricks = bricks.filter((note) => note.kind !== 'offer' && note.kind !== 'app');
         const claimOffer = this.offerClaim(bricks, botId, person.uuid);
         const claimApp = this.appClaim(bricks, botId, person.uuid);
+        const releaseOffer = this.offerRelease(bricks, botId, person.uuid);
+        const releaseApp = this.appRelease(bricks, botId, person.uuid);
+        const reportsDelivered = this.reportReceipts(bricks, botId);
         // Someone already standing in the bot's room gets no card asking them to come visit it
         const roomLink = this.isInBotRoom(botId, person.uuid)
             ? undefined
@@ -853,8 +878,30 @@ export class DmReplyService extends BaseBehavior {
             ...(newJob && replyText.trim() ? { newJob } : {}),
             ...(claimOffer ? { claimOffer } : {}),
             ...(claimApp ? { claimApp } : {}),
+            ...(releaseOffer ? { releaseOffer } : {}),
+            ...(releaseApp ? { releaseApp } : {}),
+            ...(reportsDelivered ? { reportsDelivered } : {}),
             ...(toolSignIn ? { toolSignIn, ...(toolSignInDelivery ? { toolSignInDelivery } : {}) } : {}),
         };
+    }
+
+    /**
+     * Tells Orbit that the receipts of this reply's notes to the Universe team reached the chat (mock "Brick reports inbox"): once, asked a
+     * second time if the first try is lost. Without it Orbit withdraws them after 15 minutes; the chat reading a note proves it as well.
+     */
+    private reportReceipts(bricks: BrickNote[], botId: string): (() => Promise<void>) | undefined {
+        const ids = bricks.filter((note): note is ReportSentNote => note.kind === 'report').map((note) => note.id);
+        const admin = this.adminApiService;
+        if (ids.length === 0 || !admin) return undefined;
+        let told: Promise<void> | undefined;
+        return () =>
+            (told ??= admin
+                .confirmBrickReports(botId, ids)
+                .catch(() => admin.confirmBrickReports(botId, ids))
+                .then(
+                    () => undefined,
+                    (error) => console.warn('[DmReplyService] Could not confirm note receipts to Orbit:', error instanceof Error ? error.message : error)
+                ));
     }
 
     /**
@@ -897,6 +944,22 @@ export class DmReplyService extends BaseBehavior {
                     console.warn('[DmReplyService] Could not ask Orbit about an App offer:', error instanceof Error ? error.message : error);
                     return null;
                 }));
+    }
+
+    /** Takes back the claim for this reply's suggestion once its card was not delivered (see `releaseOffer`). Never throws. */
+    private offerRelease(bricks: BrickNote[], botId: string, userId: string): (() => Promise<void>) | undefined {
+        const offer = bricks.find((note): note is BrickOfferNote => note.kind === 'offer');
+        const admin = this.adminApiService;
+        if (!offer || !admin) return undefined;
+        return async () => void (await admin.releaseBrickOffer(botId, userId, offer.topic));
+    }
+
+    /** The same for an App offer. One the person asked for by name was never claimed, so it has nothing to take back. */
+    private appRelease(bricks: BrickNote[], botId: string, userId: string): (() => Promise<void>) | undefined {
+        const offer = bricks.find((note): note is AppOfferNote => note.kind === 'app');
+        const admin = this.adminApiService;
+        if (!offer || offer.asked || !admin) return undefined;
+        return async () => void (await admin.releaseBrickOffer(botId, userId, offer.topic));
     }
 
     /**

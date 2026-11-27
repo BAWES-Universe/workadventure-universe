@@ -163,8 +163,8 @@ describe("A Brick's own way of talking", () => {
             expect(text).toContain(`Your name is ${name}.`);
             // "Bot" and "Brick" are the same word to it
             expect(text).toContain('People also say "bot": to you the two words mean the same thing');
-            // It lives in its owner's chats
-            expect(text).toContain('you live in their chats, not in a room on the map');
+            // It lives in its owner's chats, and where it is right now is said in its rules
+            expect(text).toContain('you live in their chats. Where you are right now is said in your rules below');
             // No gender
             expect(text).toContain('neither a "he" nor a "she"');
             // Only what works today
@@ -178,7 +178,7 @@ describe("A Brick's own way of talking", () => {
     });
 });
 
-describe('The rules of a direct message with a bot that has no room', () => {
+describe("The rules of a direct message with a bot that has no room (a guest's Brick; a person's own Brick has brickRules.ts)", () => {
     const now = new Date('2026-11-11T12:00:00Z');
     const brick = buildSystemPrompt({ chatInstructions: 'You are Brick.', channel: 'dm', noRoom: true, now });
     const roomBot = buildSystemPrompt({ chatInstructions: 'You are Brick.', channel: 'dm', now });

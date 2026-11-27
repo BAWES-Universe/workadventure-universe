@@ -27,3 +27,25 @@ export function takeAppPageStart(): void {
 export function requestAppPage(appId: string): void {
     wanted.set(appId);
 }
+
+/** One of the person's Bricks and its grant of an App: where "What {brick} may do with {app}" on a card goes. */
+export interface AppBrickTarget {
+    botId: string;
+    serverId: string;
+}
+
+const wantedBrick = writable<AppBrickTarget | undefined>(undefined);
+/**
+ * The Brick's screen of an App that the Apps page should open (game "Ask, Do, Ignore" for Bricks): the link on a card of an
+ * App action. The Apps page finds the App that Brick uses it through, opens its page and the Brick's screen on it, then
+ * clears this. A Brick the person's own Apps do not list (an App of a universe) leaves the Apps page open, nothing else.
+ */
+export const appBrickStart: Readable<AppBrickTarget | undefined> = { subscribe: wantedBrick.subscribe };
+
+export function takeAppBrickStart(): void {
+    wantedBrick.set(undefined);
+}
+
+export function requestAppBrick(target: AppBrickTarget): void {
+    wantedBrick.set(target);
+}

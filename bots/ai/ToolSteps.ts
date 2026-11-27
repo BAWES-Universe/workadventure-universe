@@ -5,11 +5,13 @@
  */
 import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 import { MAKE_BRICK_TOOL } from './BrickTools';
+import { REPORT_TOOL } from './ReportTools';
 import { FORGET_MEMORY_TOOL } from './MemoryTools';
 import { COMPUTER_TOOL } from './ComputerTools';
 import { COMPUTER_JOBS_TOOL } from './ComputerControlTools';
 import { CHANGE_TASK_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL } from './BrickTasks';
 import { instantSlugOf, isInstantTool } from './InstantTools';
+import { actionName, batchExtras, describeBatch, plainLabel, plainWords, readsAsWords, withoutProvider } from '../mcp/AppBatch';
 
 /** What a step is about, for the working emoji beside the bot's Woka (#1667): reading ("📖"), searching ("🔎") or writing ("✍️"). */
 export type StepKind = 'read' | 'search' | 'write';
@@ -31,6 +33,8 @@ export interface ToolStep {
     group: string;
     /** What the call is about; the game shows it as the working emoji. */
     kind?: StepKind;
+    /** A batch call named by what its tools do. A call announced before its arguments were complete is not, and is renamed once they are. */
+    byActions?: boolean;
 }
 
 /** One labelled line of what a step sent or got back, for a step opened in a direct message (#2061). */
@@ -117,6 +121,8 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
         const name = shown(args.name);
         return { doing: name ? `Making ${name}` : 'Making a Brick', done: name ? `Made ${name}` : 'Made a Brick', detail: asDetail(shown(args.line)), group: `make_brick:${name ?? ''}`, kind: 'write' };
     },
+    // A note to the Universe team (mock "Brick reports inbox"): "Sent to the Universe team", with its title under it
+    [REPORT_TOOL]: () => ({ doing: 'Sending to the Universe team', done: 'Sent to the Universe team', group: 'send_to_universe_team', kind: 'write' }),
     // Forgetting something about the person (game #2003): "Forgot", with their own words under it
     [FORGET_MEMORY_TOOL]: (args) => ({ doing: 'Forgetting', done: 'Forgot', detail: shown(args.about), group: 'forget_memory', kind: 'write' }),
     // A job on the Brick's own computer (game #2000)
@@ -165,11 +171,25 @@ export function showsAsStep(name: string, fromToolServer: boolean): boolean {
  * ("generate_music" reads "Generate music"), after "Using" and "Used" so it never reads as an order. The words stay
  * the tool server's: "Used Generate music 6 times".
  */
-export function describeStep(call: { id: string; name: string; arguments?: unknown }, title?: string): ToolStep {
+export function describeStep(call: { id: string; name: string; arguments?: unknown }, title?: string, appName?: string): ToolStep {
     const args = parseArgs(call.arguments);
     const own = OWN_STEPS[call.name];
     if (own && !title) return { id: call.id, ...own(args) };
-    const words = oneLine(title, TITLE_MAX) ?? tidyName(instantSlugOf(call.name));
+    // A batch call ("run these tools") is named by what its tools do, once its arguments are complete (game #2131)
+    const batch = describeBatch(args, appName);
+    if (batch) {
+        const kinds = batch.calls.map((inner) => kindOf(actionName(inner.slug, appName)));
+        return {
+            id: call.id,
+            doing: `Using ${batch.title}`,
+            done: `Used ${batch.title}`,
+            group: `tool:${call.name}`,
+            kind: kinds.includes('write') ? 'write' : kinds.includes('search') ? 'search' : 'read',
+            byActions: true,
+        };
+    }
+    // The provider's name never shows in a tool's title
+    const words = withoutProvider(oneLine(title, TITLE_MAX) ?? tidyName(instantSlugOf(call.name))) || NO_NAME;
     const named = words !== NO_NAME;
     return {
         id: call.id,
@@ -191,10 +211,17 @@ export function kindOf(words: string): StepKind {
         .toLowerCase()
         .split(/[^a-z]+/)
         .filter(Boolean);
-    if (parts.some((part) => /^(search|find|lookup|query|queries)/.test(part))) return 'search';
-    if (parts.some((part) => /^(read|fetch|open|scrape|browse|load)/.test(part))) return 'read';
+    // The first word that is a known verb says what the tool does: "create list" makes something, "list labels" reads
+    for (const part of parts) {
+        if (/^(search|find|lookup|query|queries)/.test(part)) return 'search';
+        if (/^(read|fetch|open|scrape|browse|load)/.test(part) || part === 'list' || part === 'get') return 'read';
+        if (WRITE_VERBS.test(part)) return 'write';
+    }
     return 'write';
 }
+
+/** Verbs that make or change something. Only used to stop a later "list" or "get" noun from turning a write into a read. */
+const WRITE_VERBS = /^(create|add|send|update|delete|remove|post|write|insert|set|make|generate|upload|reply|forward|move|archive|edit|modify|patch|put|share|invite|schedule|book|cancel|draft|publish|rename|copy|save|import|export|trigger|run|start|stop|merge|close|reopen|assign|label|tag|mark|trash|restore|clear|reset|submit|approve|reject|accept|decline)$/;
 
 /** "generate_music" and "generateMusic" read "Generate music". */
 export function tidyName(name: string): string {
@@ -217,6 +244,9 @@ export function resultOf(id: string, result: unknown): ToolStepResult {
         if (Array.isArray(r.forgotten) && r.forgotten.length === 0 && !r.error) {
             return { id, ok: false, noChange: true, done: 'Forgot nothing yet', note: r.unclear === true ? 'Asked which one. Nothing forgotten yet' : 'Nothing was forgotten' };
         }
+        // A note to the Universe team that did not go (the day's limit, Orbit away, enough for one reply): never "Sent" (mock "Brick reports inbox")
+        if (r.sent === false && r.uncertain === true) return { id, ok: false, unknown: true, note: 'Not confirmed' };
+        if (r.sent === false && !r.error) return { id, ok: false, note: 'Not sent' };
         if (r.error || r.success === false || r.isError === true) {
             const why = typeof r.error === 'string' ? r.error : typeof r.message === 'string' ? r.message : undefined;
             // A tool server call that may have run is not a failure; a cancelled turn stays as it was
@@ -251,6 +281,10 @@ export class ReplySteps {
             // fills in what it is about
             const begun = this.steps.find((s) => s.id === step.id && s.state === 'running');
             if (begun) {
+                // A batch call announced before its tools were known has the provider's title: it takes its real name now
+                if (step.byActions && !begun.byActions) {
+                    Object.assign(begun, { doing: step.doing, done: step.done, kind: step.kind, byActions: true });
+                }
                 if (!begun.detail && step.detail) {
                     begun.detail = step.detail;
                     if (this.steps.some((s) => s !== begun && s.group === begun.group && s.detail === begun.detail)) begun.again = true;
@@ -420,10 +454,10 @@ const LINES_MAX = 6;
 const LINE_TEXT_MAX = 160;
 
 /** One argument or result as a plain line: words, numbers and short lists, never a block of JSON. */
-function plainValue(value: unknown): string | undefined {
+function plainValue(value: unknown, key?: string): string | undefined {
     if (typeof value === 'number' || typeof value === 'boolean') return String(value);
     if (Array.isArray(value)) {
-        const parts = value.map((item) => (typeof item === 'string' || typeof item === 'number' ? plainValue(item) : undefined));
+        const parts = value.map((item) => (typeof item === 'string' || typeof item === 'number' ? plainValue(item, key) : undefined));
         return parts.length > 0 && parts.every((part) => part !== undefined) ? oneLine(parts.join(', '), LINE_TEXT_MAX) : undefined;
     }
     if (typeof value !== 'string') return undefined;
@@ -431,7 +465,8 @@ function plainValue(value: unknown): string | undefined {
     if (/^\s*[[{]/.test(value)) return undefined;
     const bare = bareLinks(value);
     if (TOKEN_LIKE.test(bare)) return undefined;
-    return oneLine(bare, LINE_TEXT_MAX);
+    // A label in capitals reads as a word ("INBOX" is "Inbox"); anything else ("USD", a code, an answer) stays as it ran
+    return oneLine(key !== undefined && readsAsWords(key) ? plainWords(bare) : bare, LINE_TEXT_MAX);
 }
 
 /** What a tool's answer says when it is plain text; an answer that is data (JSON) says nothing here. */
@@ -452,13 +487,29 @@ function plainAnswer(result: unknown): string | undefined {
  * whose reply it is reads this, so an address stays; a key, token or password never does, and data (JSON) is never shown.
  * What the tool answered is left out unless `resultIsSafeToShow` says its answer is an explicit safe summary.
  */
-export function stepDetails(rawArgs: unknown, result?: unknown, resultIsSafeToShow = false): StepLine[] | undefined {
+export function stepDetails(rawArgs: unknown, result?: unknown, resultIsSafeToShow = false, appName?: string): StepLine[] | undefined {
     const lines: StepLine[] = [];
-    for (const [key, value] of Object.entries(parseArgs(rawArgs))) {
+    const args = parseArgs(rawArgs);
+    const batch = describeBatch(args, appName);
+    // A batch call shows what each of its tools was asked; the model's own notes on it are never shown
+    const shownArgs = batch ? batchExtras(args) : args;
+    if (batch) {
+        batch.calls.forEach((inner, index) => {
+            if (lines.length >= LINES_MAX) return;
+            const parts: string[] = [];
+            for (const [key, value] of Object.entries(inner.args)) {
+                if (SECRET_KEY.test(key)) continue;
+                const text = plainValue(value, key);
+                if (text) parts.push(`${plainLabel(tidyName(key))} ${text}`);
+            }
+            lines.push({ label: batch.names[index], text: parts.length ? oneLine(parts.join(' · '), LINE_TEXT_MAX) ?? 'Nothing to fill in' : 'Nothing to fill in' });
+        });
+    }
+    for (const [key, value] of Object.entries(shownArgs)) {
         if (lines.length >= LINES_MAX) break;
         if (SECRET_KEY.test(key)) continue;
-        const text = plainValue(value);
-        if (text) lines.push({ label: tidyName(key), text });
+        const text = plainValue(value, key);
+        if (text) lines.push({ label: plainLabel(tidyName(key)), text });
     }
     // A tool server's answer is its own words and can carry a password or a code in plain text, so it is shown only for a tool
     // whose answer is known to be a safe summary (none of the tool servers' tools are, for now)

@@ -6,7 +6,8 @@ export type PayAction =
     | { kind: "check"; label: string; style: "primary" | "secondary" }
     | { kind: "restore"; label: string; style: "primary" | "secondary" }
     | { kind: "copy"; label: string; style: "primary" | "secondary"; disabled?: boolean }
-    | { kind: "resume"; label: string; url: string; style: "primary" | "secondary" };
+    | { kind: "resume"; label: string; url: string; style: "primary" | "secondary" }
+    | { kind: "latest"; label: string; style: "primary" | "secondary" };
 
 export interface PayView {
     title: string;
@@ -117,6 +118,19 @@ export function describePayLine(
         return line.canCheck
             ? { title: LL.payNotHeard(), sub: LL.payNotHeardSub(), actions: [check, ...restoreToo], closable: false }
             : { title: LL.payUnavailable(), sub: null, actions: restoreToo, closable: false };
+    }
+    // The owner set the payment on a version this person is not shown yet: said plainly, without telling them a newer version exists
+    if (line.problem === "not_published") {
+        return { title: LL.payUnavailable(), sub: LL.payNotTakingSub(), actions: restoreToo, closable: false };
+    }
+    // The version on screen is older than the one the payment was set on: one tap opens the latest this person is shown
+    if (line.problem === "page_changed") {
+        return {
+            title: LL.payPageChanged(),
+            sub: LL.payPageChangedSub(),
+            actions: [{ kind: "latest", label: LL.backToLatest(), style: "primary" }, ...restoreToo],
+            closable: false,
+        };
     }
     if (line.problem === "limit") {
         // An answer that may have made an order (an uncertain refusal) can be checked

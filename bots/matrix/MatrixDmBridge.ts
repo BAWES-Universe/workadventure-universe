@@ -3,7 +3,7 @@ import axios from 'axios';
 import * as Sentry from '@sentry/node';
 import { randomUUID } from 'node:crypto';
 import type { MatrixAppServiceClient } from './MatrixAppServiceClient';
-import type { EventHooks, MatrixEvent, MatrixEventHandler } from './MatrixAppServiceRouter';
+import type { EventHooks, MatrixEvent, MatrixEventHandler, NoticeDelivery, NoticeOutcome } from './MatrixAppServiceRouter';
 import { BOT_LOCALPART_PREFIX, botIdFromMatrixId, botMatrixId, type MatrixAppServiceConfig } from './MatrixConfig';
 import type { BotConfiguration } from '../server/AdminApiService';
 import { STARTER_IDEAS, type DmAttachment, type DmPerson, type DmReply, type DmReplyHooks, type OfferedBrick } from '../server/DmReplyService';
@@ -108,6 +108,11 @@ export function newJobOfferOf(value: unknown): { title: string } | null {
  * A Brick's offer to connect an App (game #2001), on its own message after the answer: `{ topic, app, name, state,
  * connectionId, ask, asked, other }`. The game shows it as a card ("Connect your calendar?"); the sign-in happens in the game.
  */
+/**
+ * On the words of a Brick's answer: the notes that answer sent to the Universe team (mock "Brick reports inbox"). The game shows "Sent to the
+ * Universe team" under the answer, with what was sent and Take it back. Each carries the key that takes it back, so anyone in the chat can.
+ */
+export const BRICK_REPORTS_KEY = 'universe.brick_reports';
 export const APP_OFFER_KEY = 'universe.app_offer';
 /**
  * The event the game sends once the person connected an App from that card and the Brick may use it: `{ app, name }`. The
@@ -262,8 +267,14 @@ const NOTE_REPEAT_MS = 10 * 60 * 1000;
 const RESTING_LINE_REPEAT_MS = 6 * 60 * 60 * 1000;
 /** Most chats whose last note time is remembered; the oldest are dropped first. */
 const NOTE_TIMES_MAX = 5000;
+/** The field a notice from the outbox carries (its transaction id), so a send whose answer was lost is found in the room before it is sent again (GPT's eighth note G). */
+export const NOTICE_TXN_KEY = 'universe.notice_txn';
+/** How many of a room's latest messages are read to find a notice already sent. */
+const NOTICE_LOOK_BACK = 50;
 /** A message left with a resting bot is answered when it is back within this long; older ones are dropped. */
 const WAITING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/** The version of what a kept waiting message carries about its time: 2 = an event with no time of its own is marked (`universe_no_ts`); a record without it was kept before that. */
+const WAITING_TS_VERSION = 2;
 /**
  * How long a lookup of the room's bot that cannot be answered strictly (a tap, a person or the bot leaving) waits for a store that is
  * reconnecting, asking again every ROOM_LOOKUP_POLL_MS, before it counts the room as unknown. Before the shared store started to say that it
@@ -563,14 +574,10 @@ export class MatrixDmBridge implements MatrixEventHandler {
                     sender: event.sender,
                     // Made from the original event's id: the same event handled again (another server, a second try) is the same continuation, never a new one
                     event_id: `$app-${createHash('sha256').update(event.event_id).digest('hex').slice(0, 32)}`,
-                    // The original event's own time when it has one; never this try's clock, which another try would give differently (CodeRabbit on 68379005): without one the
-                    // time the inbox kept with the event is the moment of consent. Put on the continuation itself (CodeRabbit on ea88b4c1, finding 6), so a Brick that rests keeps
-                    // that time with the message it remembers, and answers it later with the same moment of consent
-                    ...(typeof event.origin_server_ts === 'number'
-                        ? { origin_server_ts: event.origin_server_ts }
-                        : typeof tracked?.arrived === 'number'
-                          ? { origin_server_ts: tracked.arrived }
-                          : {}),
+                    // The original event's own time when it has one; never this try's clock, which another try would give differently (CodeRabbit on 68379005). An event with no time of its own
+                    // has none here either: no clock stands in for the moment of consent (GPT's eighth note, A2), so nothing paid for is started from it. Put on the continuation itself
+                    // (CodeRabbit on ea88b4c1, finding 6), so a Brick that rests keeps that time with the message it remembers
+                    ...(typeof event.origin_server_ts === 'number' ? { origin_server_ts: event.origin_server_ts } : {}),
                     content: { msgtype: 'm.text', body: note },
                 };
                 // Said by the bridge, outside the message's own content: a person's message can hold any content at all
@@ -2101,9 +2108,9 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const reply = await this.deps.reply(botId, person, text, attachments, {
                 roomId: event.room_id,
                 ...(event.event_id ? { eventId: event.event_id } : {}),
-                // The moment of consent a start key carries (GPT's seventh note A2): the event's own time, else the time the durable inbox kept with it. Never the clock of this try: a
-                // retry or another server taking the event over would give the same event a different key (and a second job)
-                ...(typeof event.origin_server_ts === 'number' ? { eventTs: event.origin_server_ts } : hooks?.arrived !== undefined ? { eventTs: hooks.arrived } : {}),
+                // The moment of consent a start key carries (GPT's seventh and eighth notes, A2): the event's own time, and nothing else. An event with no time of its own, or one kept for a
+                // resting Brick that had none (`universe_no_ts`), has none: no clock (this try's, the inbox's arrival) may stand in for it, so a redelivery can never gain new spending permission
+                ...(typeof event.origin_server_ts === 'number' && event.unsigned?.universe_no_ts !== true ? { eventTs: event.origin_server_ts } : {}),
                 pointedArtifactIds,
                 // A starter tapped under a Brick's hello (#1995); a message that waited for a resting Brick is answered as typed
                 ...(content[STARTER_KEY] === STARTER_IDEAS && !catchUp ? { starter: STARTER_IDEAS } : {}),
@@ -2192,20 +2199,29 @@ export class MatrixDmBridge implements MatrixEventHandler {
             }
             // The id Matrix gave the event that carries the words of the reply (none when the send was suppressed, or gave none)
             let wordsEvent: string | undefined;
+            // The notes this reply sent to the Universe team ride on its words, whichever card the words carry too
+            const reports = reply.bricks?.flatMap((note) => (note.kind === 'report' ? [{ id: note.id, key: note.key, kind: note.noteKind, area: note.area, title: note.title, failure: note.failure, retried: note.retried, ...(note.wordsDraft ? { wordsDraft: note.wordsDraft } : {}), sentAt: note.sentAt }] : [])) ?? [];
+            // Checked right before the words go (no wait between): a third person who joined while the reply was made must never get a note's
+            // take-back key or the person's draft words. Then the notes go without them and are not confirmed, so Orbit withdraws them
+            const reportsHere = reports.length > 0 && this.stillTheirs(event.room_id, botUserId, person.matrixUserId) ? reports : [];
+            const reportField = reportsHere.length > 0 ? { [BRICK_REPORTS_KEY]: reportsHere } : {};
             if (reply.roomLink && reply.text) {
                 // A reply that names the bot's room carries it, so the game shows a card to go there.
                 wordsEvent = await out.sendMessage(botUserId, event.room_id, {
                     msgtype: 'm.text',
                     body: reply.text,
                     [ROOM_LINK_KEY]: reply.roomLink,
+                    ...reportField,
                 });
             } else if (reply.text && reply.ideas) {
                 // A Brick's fixed "what I can do": the game shows its ideas to tap with it (#1995)
-                wordsEvent = await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_IDEAS_KEY]: true });
+                wordsEvent = await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_IDEAS_KEY]: true, ...reportField });
             } else if (reply.text && reply.bricks?.some((note) => note.kind === 'made')) {
                 // The Bricks this reply made: the game shows a line for each, one tap from its chat (#1996)
-                const made = reply.bricks.filter((note) => note.kind === 'made').map(({ id, name, line, look, made: isNew }) => ({ id, name, line, look, made: isNew }));
-                wordsEvent = await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_MADE_KEY]: made });
+                const made = reply.bricks.flatMap((note) => (note.kind === 'made' ? [{ id: note.id, name: note.name, line: note.line, look: note.look, made: note.made }] : []));
+                wordsEvent = await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, [BRICK_MADE_KEY]: made, ...reportField });
+            } else if (reply.text && reportsHere.length > 0) {
+                wordsEvent = await out.sendMessage(botUserId, event.room_id, { msgtype: 'm.text', body: reply.text, ...reportField });
             } else if (reply.text) {
                 wordsEvent = await out.sendText(botUserId, event.room_id, reply.text);
             }
@@ -2216,20 +2232,32 @@ export class MatrixDmBridge implements MatrixEventHandler {
             // The proof that the person was answered (GPT's seventh note G2): the link from this event to the reply Matrix took, kept on the durable entry. A server that takes the event over
             // after paid work began closes it quietly only with this link; without it (the answer never got out, or the link was not kept) the person is told once that it was not answered
             if (wordsEvent) await hooks?.answered?.(wordsEvent);
+            // The receipts of this reply's notes to the Universe team rode on that event: Orbit is told once, so it keeps them (a note whose
+            // receipt never got out, the send suppressed or failed, is withdrawn by Orbit after 15 minutes, like Take it back)
+            if (wordsEvent && reportsHere.length > 0) void reply.reportsDelivered?.();
             // The gentle offer, after the answer and never in the middle of it (#1996). Orbit is asked now, right before
             // the card goes out: once per person and topic on every device, so a second device racing it sends none.
             const offer = reply.text ? reply.bricks?.find((note) => note.kind === 'offer') : undefined;
             const topic = offer && offer.kind === 'offer' && reply.claimOffer ? await reply.claimOffer() : null;
             if (offer && offer.kind === 'offer' && topic) {
                 const { ask, name, line, instructions } = offer;
-                const content = { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions } };
-                // Orbit counted it as shown when it allowed it, so a send that fails once is tried again before it is lost.
-                // Both tries are one message to Matrix: a first try that arrived but whose answer was lost is not sent twice.
                 const txnId = randomUUID();
+                // The card carries its transaction id, so a card that got through while its answer was lost can be found in the room (Sentry on 3eed7eeb6)
+                const content = { msgtype: 'm.text', body: ask, [BRICK_OFFER_KEY]: { topic, ask, name, line, instructions }, [NOTICE_TXN_KEY]: txnId };
+                // Orbit counted it as shown when it allowed it, so a send that fails once is tried again; one that fails twice gives the claim back (releaseOffer) only when the card is not in the room.
+                // Both tries are one message to Matrix: a first try that arrived but whose answer was lost is not sent twice.
                 await out
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
-                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error));
+                    .catch(async (error) => {
+                        console.warn(`[MatrixDmBridge] Could not send a Brick suggestion from bot ${botId}:`, error?.message ?? error);
+                        // Two answers that never came (timeouts, a 5xx) do not say the card was NOT delivered: the claim is given back only when the room was read and the card is not in it.
+                        // A room that cannot be read keeps the claim (a topic that stays spent is better than a second card for the same suggestion)
+                        const there = await this.noticeInRoom(botUserId, event.room_id, txnId);
+                        if (there !== undefined) return;
+                        // The card never reached the person: Orbit takes the claim back, so the topic is not spent on a card nobody saw
+                        await reply.releaseOffer?.().catch(() => undefined);
+                    });
             }
             // The button to start a job afresh that Orbit would not carry on (finding 6), after the answer like the one above. The words are already under the answer, so the card
             // carries only its title: the game draws the button from that
@@ -2247,12 +2275,20 @@ export class MatrixDmBridge implements MatrixEventHandler {
             const appTopic = appOffer && appOffer.kind === 'app' && reply.claimApp ? await reply.claimApp() : null;
             if (appOffer && appOffer.kind === 'app' && appTopic) {
                 const { app, name, connectKind, state, connectionId, ask, asked, other } = appOffer;
-                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, connectKind, state, connectionId, ask, asked, other } };
                 const txnId = randomUUID();
+                // The card carries its transaction id, so a card that got through while its answer was lost can be found in the room (Sentry on 21de3f046)
+                const content = { msgtype: 'm.text', body: ask || name, [APP_OFFER_KEY]: { topic: appTopic, app, name, connectKind, state, connectionId, ask, asked, other }, [NOTICE_TXN_KEY]: txnId };
                 await out
                     .sendMessage(botUserId, event.room_id, content, txnId)
                     .catch(() => out.sendMessage(botUserId, event.room_id, content, txnId))
-                    .catch((error) => console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error));
+                    .catch(async (error) => {
+                        console.warn(`[MatrixDmBridge] Could not send an App offer from bot ${botId}:`, error?.message ?? error);
+                        // The same as the Brick suggestion: two answers that never came do not say the card was NOT delivered. The claim goes back only when the room was read and the card is not in it
+                        const there = await this.noticeInRoom(botUserId, event.room_id, txnId);
+                        if (there !== undefined) return;
+                        // The card never reached the person, so Orbit takes the claim back
+                        await reply.releaseApp?.().catch(() => undefined);
+                    });
             }
             // Once the Brick carried on after an App was connected, what it may do with it (fixed words)
             const justConnected = reply.text ? connectedApp : null;
@@ -2442,29 +2478,82 @@ export class MatrixDmBridge implements MatrixEventHandler {
      * person and the chat can be resolved, the person gets the same "couldn't answer" line as for any failed answer, never silence. The one exception is work that had begun whose answer is
      * PROVED (`answered`: the link from the event to the reply Matrix took): it is only reported. Anything unsure counts as not answered, so the person gets the line.
      */
-    async onGaveUp(event: MatrixEvent, why: ClosedWhy): Promise<void> {
-        try {
-            Sentry.captureMessage('A Matrix event will not be handled again', { level: 'warning', tags: { area: 'matrix-inbox', why } });
-        } catch {
-            /* a report is never in the way */
+    async onGaveUp(event: MatrixEvent, why: ClosedWhy, delivery?: NoticeDelivery): Promise<NoticeOutcome | void> {
+        const outcome = await this.tellGaveUp(event, why, delivery);
+        // Without the outbox the note is sent once, as before, and nothing is answered
+        return delivery ? outcome : undefined;
+    }
+
+    private async tellGaveUp(event: MatrixEvent, why: ClosedWhy, delivery?: NoticeDelivery): Promise<NoticeOutcome> {
+        // Reported once: a notice the outbox sends again is not a new event given up on
+        if (!delivery?.again) {
+            try {
+                Sentry.captureMessage('A Matrix event will not be handled again', { level: 'warning', tags: { area: 'matrix-inbox', why } });
+            } catch {
+                /* a report is never in the way */
+            }
         }
         // Work had begun and the person's answer is PROVED (the link to the reply was kept): reported, and nothing more is said to them
-        if (why === 'answered') return;
+        if (why === 'answered') return 'nothing';
         // Every other way the person is told, never left in silence:
         // - an event that ran out of tries, waited more than a day or whose entry lapsed was not answered and nothing paid for ran: "Couldn't answer, send it again" (sending it again is the
         //   fresh consent; nothing of it runs again by itself);
         // - one whose server went away after paid work had BEGUN has no proved answer (an unsure look counts as none), and a resent message would be a second paid turn: the person is asked to
         //   look first ("not sure it answered"), never told to send it again. It is never run again by itself either
-        if (event.type !== 'm.room.message' || botIdFromMatrixId(this.config.domain, event.sender)) return;
+        // With `delivery` the notice is kept in the outbox until Matrix gives it an event id (GPT's eighth note G): every send uses the one transaction id, and a send whose answer was lost
+        // is found in the room before it is sent again. Nothing paid for runs to send it (a fixed note, never a model turn)
+        if (event.type !== 'm.room.message' || botIdFromMatrixId(this.config.domain, event.sender)) return 'nothing';
         try {
             const botId = await this.botForRoom(event.room_id, true);
-            if (!botId || this.purgedBots.has(botId)) return;
-            const config = await this.deps.getBotConfig(botId).catch(() => null);
+            if (!botId || this.purgedBots.has(botId)) return 'nothing';
+            // Read fresh (a copy kept up to a minute may not know the owner deleted the Brick). A notice that is kept for a retry is NOT sent when the deletion cannot be checked: it is tried again
+            // after the back-off (CodeRabbit on the round 10 head); a note sent once, with no outbox, goes on as before
+            const config = await (delivery ? this.deps.getBotConfig(botId, true) : this.deps.getBotConfig(botId, true).catch(() => null));
+            // A Brick its owner deleted (Undo can still give it back) says nothing, as in `handleMessage`: a notice kept for a retry is not sent after that (CodeRabbit on the round 9 head)
+            if (config?.brick?.deleted) return 'nothing';
             const language = detectLanguage(String(event.content?.body ?? ''));
             // `lost`: the entry's state lapsed, so whether paid work began is not known: the careful line
-            await this.sendNote(botId, event.room_id, why === 'paid' || why === 'lost' ? 'unsure' : 'trouble', language, config);
+            const state: BotNoteState = why === 'paid' || why === 'lost' ? 'unsure' : 'trouble';
+            if (!delivery) {
+                await this.sendNote(botId, event.room_id, state, language, config);
+                return 'nothing';
+            }
+            const botUserId = this.botUserId(botId);
+            // An earlier send may have got into the room with its answer lost: the same note is not sent twice, and its event id is the receipt
+            if (delivery.again) {
+                const found = await this.noticeInRoom(botUserId, event.room_id, delivery.txnId);
+                if (found) return { eventId: found };
+                // The room could not be read (most often while the homeserver restarts, which is when it forgets the transaction id): not sent blind, it is tried again after the back-off
+                if (found === null) return 'failed';
+            }
+            const content = { ...statusNoteContent(state, language, await this.botName(botId, config)), [NOTICE_TXN_KEY]: delivery.txnId };
+            const sent = await this.say(botId, () => this.client.sendMessage(botUserId, event.room_id, content, delivery.txnId));
+            // The Brick is being deleted: it says nothing more. A clear of ANOTHER room of it only holds sends for now: the notice stays kept and goes out after the clear (CodeRabbit round 4)
+            if (sent === undefined && this.purgedBots.has(botId)) return 'nothing';
+            if (sent === undefined && this.saysNothing(botId)) return 'failed';
+            if (typeof sent === 'string' && sent.length > 0) return { eventId: sent };
+            console.warn(`[MatrixDmBridge] A ${state} note in ${event.room_id} got no event id from Matrix; it is sent again`);
+            return 'failed';
         } catch (error: any) {
-            console.warn(`[MatrixDmBridge] Could not tell the person in ${event.room_id} that their message was not answered:`, error?.message ?? error);
+            console.warn(`[MatrixDmBridge] Could not tell the person in ${event.room_id} that their message was not answered${delivery ? '; it is sent again later' : ''}:`, error?.message ?? error);
+            return 'failed';
+        }
+    }
+
+    /**
+     * The event id of a notice this Brick already sent under `txnId`, when it is among the Brick's own latest messages of the room; `undefined` when it is not there, `null` when the room could
+     * not be read (the caller does not send then: a send that cannot first be checked may be a second note).
+     */
+    private async noticeInRoom(botUserId: string, roomId: string, txnId: string): Promise<string | null | undefined> {
+        // A client that cannot read rooms at all: the send goes out under the same transaction id, as the homeserver remembers it
+        if (typeof this.client.getRecentMessages !== 'function') return undefined;
+        try {
+            // Only this Brick's messages count toward the look-back (Opus on 341f2ecd, F2)
+            const latest = await this.client.getRecentMessages(botUserId, roomId, NOTICE_LOOK_BACK, { types: ['m.room.message'], senders: [botUserId] });
+            const found = (latest ?? []).find((one) => one?.sender === botUserId && one?.content?.[NOTICE_TXN_KEY] === txnId);
+            return typeof found?.event_id === 'string' ? found.event_id : undefined;
+        } catch {
+            return null;
         }
     }
 
@@ -2567,11 +2656,19 @@ export class MatrixDmBridge implements MatrixEventHandler {
             event_id: event.event_id,
             room_id: event.room_id,
             sender: event.sender,
-            // The event's own time, else the time the inbox kept with it (CodeRabbit on ea88b4c1, finding 6): this try's clock only for an event that has neither
+            // The event's own time, else the time the inbox kept with it, for the order and the age of what is kept (CodeRabbit on ea88b4c1, finding 6). It is NOT a moment of consent: an event
+            // that had no time of its own is marked (`universe_no_ts`), and answered later without one
             origin_server_ts: event.origin_server_ts ?? arrived ?? Date.now(),
             type: 'm.room.message',
             content: kept,
-            ...(attempts > 0 || connected ? { unsigned: { ...(attempts > 0 ? { universe_attempts: attempts } : {}), ...(connected ? { universe_connected_app: connected } : {}) } } : {}),
+            // `universe_ts_v` says this record was written by code that marks an event with no time of its own. A record without it was kept before that (its `origin_server_ts` may be an
+            // arrival time), so `readWaiting` reads it as having no time of its own (CodeRabbit round 3)
+            unsigned: {
+                universe_ts_v: WAITING_TS_VERSION,
+                ...(attempts > 0 ? { universe_attempts: attempts } : {}),
+                ...(connected ? { universe_connected_app: connected } : {}),
+                ...(typeof event.origin_server_ts !== 'number' || event.unsigned?.universe_no_ts === true ? { universe_no_ts: true } : {}),
+            },
         });
         if (this.deps.waiting?.hasSharedStore()) {
             try {
@@ -2666,6 +2763,8 @@ export class MatrixDmBridge implements MatrixEventHandler {
                 continue;
             }
             if (Date.now() - (event.origin_server_ts ?? 0) >= WAITING_MAX_AGE_MS) continue;
+            // A record kept before the version mark existed may carry an arrival time as its time: it is answered, but never as the moment of a consent
+            if (event.unsigned?.universe_ts_v !== WAITING_TS_VERSION) event.unsigned = { ...event.unsigned, universe_no_ts: true };
             // Written by this bridge when it kept the message; never read from a live event
             const connected = connectedAppOf(event.unsigned?.universe_connected_app);
             if (connected) this.connectedNotes.set(event, connected);

@@ -3,7 +3,7 @@
     import LL from "../../../i18n/i18n-svelte";
     import WokaImage from "../../Components/Woka/WokaImage.svelte";
     import { botWokaCatalogStore, ensureBotWokaCatalog } from "../../external-modules/bots/stores/BotWokaCatalogStore";
-    import { BRICK_LOOKS, brickPictureUrl, isBrickLook, type BrickLook } from "./Brick";
+    import { BRICK_LOOKS, brickPictureUrl, isBrickLook, wokasToWear, type BrickLook } from "./Brick";
     import { wokaTextureUrl } from "./BrickLookPicture";
     import { lookColour } from "./NewBrick";
     import { IconCheck, IconChevronLeft } from "@wa-icons";
@@ -26,7 +26,7 @@
     let busy = false;
     /** The last tap was not saved: say so, the picker stays open so a tap can be tried again */
     let failed = false;
-    $: wokas = ($botWokaCatalogStore?.woka?.collections ?? []).flatMap((collection) => collection.textures);
+    $: wokas = wokasToWear($botWokaCatalogStore);
 
     function pick(next: string) {
         if (busy) return;

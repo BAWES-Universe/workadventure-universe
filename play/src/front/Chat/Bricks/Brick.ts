@@ -1,6 +1,7 @@
 import type { BotData, BotUser } from "../../external-modules/bots/types";
 import { botIdFromChatId } from "../Bots/BotChatStatus";
 import { NAME_MAX } from "../../external-modules/bots/roomBricksModel";
+import type { WokaData, WokaTexture } from "../../Components/Woka/WokaTypes";
 
 /**
  * A person's own Brick (game #1995): a bot that lives in its owner's chats instead of a room on the map. Everyone who is
@@ -173,6 +174,52 @@ export function brickChatId(brickId: string, myChatId: string | null | undefined
     return botIdFromChatId(chatId) === brickId ? chatId : undefined;
 }
 
+/**
+ * The Bricks whose hello the person never saw: each counts as one unread message, in the Brick's row, on the Chats tab
+ * and on the chat button. "Never opened" is what the chat server says, not what this device has right now: the account's
+ * list of direct chats (shared by every device, and kept after a chat is cleared or left) names the Bricks whose chat was
+ * made once. Nothing counts before the chats are online and the Bricks are listed (no "1" that flashes on page load), and
+ * a Brick whose chat is opening right now never counts (it is being read).
+ */
+export interface UnopenedBricksFacts {
+    /** The person's Bricks by chat address; undefined until Orbit listed them. */
+    bricks: ReadonlyMap<string, BrickCard> | undefined;
+    /** The people the account lists a direct chat with (the chat server's `m.direct`); undefined until the chats are loaded. */
+    partners: ReadonlySet<string> | undefined;
+    /** The chat connection is online. */
+    online: boolean;
+    /** The Bricks whose chat is being opened right now. */
+    opening: ReadonlySet<string>;
+    /** The Bricks whose chat this device showed (before the chat server's list says so). */
+    openedHere: ReadonlySet<string>;
+}
+
+export function unopenedBrickIds(facts: UnopenedBricksFacts): ReadonlySet<string> {
+    const { bricks, partners, online, opening, openedHere } = facts;
+    const ids = new Set<string>();
+    if (!online || !bricks || !partners) return ids;
+    for (const [chatId, brick] of bricks) {
+        if (partners.has(chatId) || opening.has(brick.id) || openedHere.has(brick.id)) continue;
+        ids.add(brick.id);
+    }
+    return ids;
+}
+
+/**
+ * The person's own Brick a chat is with: the one other member of the chat is the address of one of their Bricks
+ * (`@bot_<id>` on their own server, from their Brick list). A chat with anyone else, or with more people, is not. The
+ * chat is named and pictured as that Brick from the first moment, whatever type or name the chat server gives it.
+ */
+export function ownBrickInChat(
+    memberIds: readonly string[],
+    myChatId: string | null | undefined,
+    bricksByChatId: ReadonlyMap<string, BrickCard>
+): BrickCard | undefined {
+    const others = memberIds.filter((id) => id !== myChatId);
+    if (others.length !== 1) return undefined;
+    return bricksByChatId.get(others[0]);
+}
+
 /** The Brick looks (#1996), in the order New Brick offers them. Orbit keeps the id; the game draws it. */
 export const BRICK_LOOKS = [
     "brick-orange",
@@ -193,6 +240,16 @@ export const DEFAULT_BRICK_LOOK: BrickLook = "brick-orange";
 
 export function isBrickLook(look: string | null | undefined): look is BrickLook {
     return typeof look === "string" && (BRICK_LOOKS as readonly string[]).includes(look);
+}
+
+/**
+ * The WOKAs a Brick can wear, for the WOKAs tab of New Brick and of a Brick's look picker. The twelve Brick colours are in
+ * the same list (the map draws them), and the Bricks tab already shows them, so they are not WOKAs.
+ */
+export function wokasToWear(catalog: WokaData | null | undefined): WokaTexture[] {
+    return (catalog?.woka?.collections ?? [])
+        .flatMap((collection) => collection.textures)
+        .filter((texture) => !isBrickLook(texture.id));
 }
 
 /**
@@ -497,6 +554,11 @@ export interface OpenBrickChatSteps<Room> {
     openRoom: (roomId: string) => Promise<Room | undefined>;
     /** Says the chats are still loading, so the person tries again. */
     sayStillLoading: () => void;
+    /**
+     * Opens the chat screen at once, as the Brick's own (its name, picture and hello), while the chat itself is made or
+     * waited for behind it. Called when this device has no chat with the Brick yet; the chat then takes its place.
+     */
+    showPending?: () => void;
     sleep: (ms: number) => Promise<void>;
     now: () => number;
 }
@@ -530,6 +592,8 @@ export async function openBrickChatWith<Room>(
     if (!myChatId || !ownGuess) return undefined;
     if (steps.hasChatWith(ownGuess)) return steps.openChatWith(ownGuess);
 
+    // This device has no chat with the Brick: the screen opens now, and the chat takes its place when it is there
+    steps.showPending?.();
     const told = makeIt.get(brickId);
     if (told && told.until > steps.now()) return steps.openChatWith(told.botChatId);
 

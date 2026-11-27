@@ -34,6 +34,7 @@ const game = vi.hoisted(() => ({
     addMyApp: vi.fn<(app: unknown) => Promise<unknown>>(),
     getMyAppThings: vi.fn<(id: string) => Promise<unknown>>(),
     getBotMcpServers: vi.fn<(botId: string) => Promise<unknown>>(),
+    getMcpServerTools: vi.fn<(botId: string, serverId: string) => Promise<unknown>>(),
     saveGitHubKey: vi.fn<(key: string) => Promise<unknown>>(),
     dropGitHubKey: vi.fn<() => Promise<unknown>>(),
     getAppShare: vi.fn<(id: string, botId: string) => Promise<unknown>>(),
@@ -72,7 +73,7 @@ vi.mock("../../../../external-modules/bots/services/BotApiService", () => ({
         getMyAppThings: game.getMyAppThings,
         getBotMcpServers: game.getBotMcpServers,
         // What the Brick's own screens ask for once opened: these tests only check that they open
-        getMcpServerTools: () => new Promise(() => {}),
+        getMcpServerTools: game.getMcpServerTools,
         saveGitHubKey: game.saveGitHubKey,
         dropGitHubKey: game.dropGitHubKey,
         getAppShare: game.getAppShare,
@@ -112,12 +113,14 @@ vi.mock("../Reconnect", () => ({
     signInInPopup: vi.fn(() => Promise.resolve("done")),
 }));
 
+import { get } from "svelte/store";
 import { reconnectApp } from "../Reconnect";
 import { loadLocale } from "../../../../../i18n/i18n-util.sync";
 import { setLocale } from "../../../../../i18n/i18n-svelte";
 import AddManagerSheet from "../AddManagerSheet.svelte";
 import AppPage from "../AppPage.svelte";
 import AppsPage from "../AppsPage.svelte";
+import { appBrickStart, requestAppBrick, requestAppPage, takeAppBrickStart } from "../AppLink";
 import { forgetMyApps } from "../AppsStore";
 import GitHubWaitingSheet from "../GitHubWaitingSheet.svelte";
 import LendSheet from "../LendSheet.svelte";
@@ -289,6 +292,7 @@ describe("the Apps pages (#2001)", () => {
         game.getAppsABotCouldUse.mockResolvedValue({ apps: [] });
         game.letBotUseApp.mockResolvedValue({});
         game.getBotMcpServers.mockResolvedValue([]);
+        game.getMcpServerTools.mockReturnValue(new Promise(() => {}));
         game.getAppShare.mockResolvedValue(shareView());
         game.startAppShare.mockResolvedValue(sharedView());
         game.changeAppShare.mockResolvedValue(sharedView());
@@ -934,6 +938,109 @@ describe("the Apps pages (#2001)", () => {
             expect(words(byId("appShareLoadFailed"))).toBe("Couldn't read who can ask for this.");
             await click("appShareTryAgain");
             expect(byId("appShareOff")).not.toBeNull();
+        });
+    });
+
+    describe("a ready-made App's actions on a Brick (Ask, Do, Ignore)", () => {
+        const action = (id: string, name: string, title: string, heading: string, setting: string | null = null) => ({
+            id,
+            name,
+            title,
+            description: null,
+            suggestedHeading: heading,
+            suggestionSource: "builtIn",
+            heading,
+            state: "confirmed",
+            confirmedBy: null,
+            movedBy: null,
+            setting,
+        });
+        beforeEach(() => {
+            takeAppBrickStart();
+            game.getMyApp.mockResolvedValue(appPage({ app: gmail, canLendTo: [], canLetUse: [] }));
+            game.getBotMcpServers.mockResolvedValue([
+                { id: "s1", name: "Gmail", serverUrl: "https://orbit.example/link", authType: "none", enabled: true },
+            ]);
+            game.getMcpServerTools.mockResolvedValue({
+                serverId: "s1",
+                kind: "appActions",
+                state: "confirmed",
+                policyRevision: 3,
+                settings: {
+                    looksUp: "rightAway",
+                    makesNew: "rightAway",
+                    changesThings: "asksFirst",
+                    deletesOrSends: "asksFirst",
+                },
+                tools: [
+                    action("a1", "GMAIL_FETCH_EMAILS", "Fetch emails", "looksUp"),
+                    action("a2", "GMAIL_SEND_EMAIL", "Send email", "deletesOrSends"),
+                ],
+                truncated: false,
+                totalSeen: null,
+            });
+        });
+
+        it("titles the Brick's screen with the App and the Brick, and a heading's screen with the heading", async () => {
+            page = new AppPage({ target, props: { appId: "gmail", onBack: () => {} } });
+            await settle();
+            await click("appRowGo");
+            const screen = byId("appBrickScreen");
+            expect(words(screen)).toContain("Gmail for Brick");
+            expect(screen?.querySelector('[data-testid="edit-panel-back"]')?.getAttribute("aria-label")).toBe("Gmail");
+            expect(byId("bot-tools-server-head")).toBeNull();
+            await click("bot-tools-open-deletesOrSends");
+            expect(words(byId("appBrickScreen"))).toContain("Deletes or sends out");
+            // Back goes to "{app} for {brick}"
+            const back = byId("appBrickScreen")?.querySelector('[data-testid="edit-panel-back"]');
+            expect(back?.getAttribute("aria-label")).toBe("Gmail for Brick");
+            expect(words(byId("appBrickScreen"))).toContain("Tap one to set it on its own.");
+        });
+
+        it("opens the Brick's screen of the App from a card's link", async () => {
+            requestAppBrick({ botId: "b1", serverId: "s1" });
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            await settle();
+            expect(game.getMyApp).toHaveBeenCalledWith("gmail");
+            expect(byId("appBrickScreen")).not.toBeNull();
+            expect(words(byId("appBrickScreen"))).toContain("Gmail for Brick");
+            expect(get(appBrickStart)).toBeUndefined();
+        });
+
+        it("looks for the card's Brick in a list read after the tap, not in one read before an App was connected elsewhere", async () => {
+            game.getMyApps.mockResolvedValueOnce({ apps: [tavily({ bricks: [] })], bricks: [] });
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsPage")).not.toBeNull();
+            requestAppBrick({ botId: "b1", serverId: "s1" });
+            await settle();
+            await settle();
+            expect(game.getMyApps).toHaveBeenCalledTimes(2);
+            expect(game.getMyApp).toHaveBeenCalledWith("gmail");
+            expect(byId("appBrickScreen")).not.toBeNull();
+            expect(get(appBrickStart)).toBeUndefined();
+        });
+
+        it("reads the card's App afresh when the page already shows another App", async () => {
+            requestAppPage("tavily");
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(game.getMyApp).toHaveBeenLastCalledWith("tavily");
+            requestAppBrick({ botId: "b1", serverId: "s1" });
+            await settle();
+            await settle();
+            expect(game.getMyApp).toHaveBeenLastCalledWith("gmail");
+            expect(byId("appBrickScreen")).not.toBeNull();
+        });
+
+        it("leaves the Apps page open when the card's Brick does not use one of the person's own Apps", async () => {
+            requestAppBrick({ botId: "b9", serverId: "s9" });
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsPage")).not.toBeNull();
+            expect(byId("appBrickScreen")).toBeNull();
+            expect(get(appBrickStart)).toBeUndefined();
         });
     });
 

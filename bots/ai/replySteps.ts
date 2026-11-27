@@ -187,7 +187,7 @@ function argumentsAside(args: string, longer: number): string {
 }
 
 /** Text up to `max` characters, never ending in half an emoji. */
-function clipped(text: string, max: number): string {
+export function clipped(text: string, max: number): string {
     if (text.length <= max) return text;
     const end = /[\uD800-\uDBFF]/.test(text[max - 1] ?? '') ? max - 1 : max;
     return text.slice(0, Math.max(0, end));
@@ -195,9 +195,18 @@ function clipped(text: string, max: number): string {
 
 type StepResult = ReplyStep['results'][number];
 
+const CUT_NOTE_END = /\n\[Only the first [\d,]+ of ([\d,]+) characters fit in this reply's room for tool results \("Room for tool results in one reply"\)\.\]$/;
+
+/** A text a cut was already made in (by whoever gave it to the room): what was kept and how long the text was before it was cut. Null when it has no cut note. */
+function alreadyCut(text: string): { whole: string; length: number } | null {
+    const found = CUT_NOTE_END.exec(text);
+    if (!found) return null;
+    return { whole: text.slice(0, found.index), length: Number(found[1].replace(/,/g, '')) };
+}
+
 const asideLine = (name: string, whole: number) =>
     `[${name}: ${whole.toLocaleString('en-US')} characters, set aside to make room. Call it again if you need it.]`;
-const cutNote = (kept: number, whole: number) =>
+export const cutNote = (kept: number, whole: number) =>
     `\n[Only the first ${kept.toLocaleString('en-US')} of ${whole.toLocaleString('en-US')} characters fit in this reply's room for tool results ("Room for tool results in one reply").]`;
 
 /**
@@ -208,11 +217,20 @@ const cutNote = (kept: number, whole: number) =>
 export class StepRoom {
     readonly steps: ReplyStep[] = [];
     /** Each cut result's whole text and how much of it is kept, so cutting again cuts the text and not its note. */
-    private readonly cut = new WeakMap<StepResult, { whole: string; kept: number }>();
+    private readonly cut = new WeakMap<StepResult, { whole: string; kept: number; length: number }>();
     private readonly setAsideResults = new WeakSet<StepResult>();
     private readonly setAsideCalls = new WeakSet<ToolCall>();
 
-    constructor(private readonly room: number) {}
+    /**
+     * `total`: the room is for all the steps together, as a run's rounds are (a chat reply keeps its own reading: only a single step larger than
+     * the room is cut). What the older steps hold is set aside to lines first; when what the model said and called in them still leaves no room
+     * for the newest step, the oldest steps are left out whole, a call never apart from its result; then the newest step's results are cut to
+     * what is left, with the note. What the model said and its reasoning are never cut.
+     */
+    constructor(
+        private readonly room: number,
+        private readonly total = false
+    ) {}
 
     /** A text in a call's arguments is long, and can be set aside, past a twentieth of the room. */
     private get longText(): number {
@@ -225,9 +243,16 @@ export class StepRoom {
 
     add(step: ReplyStep): void {
         if (this.size() + sizeOf(step) > this.room) this.setAside(this.steps);
-        // A step larger than the room on its own: its long arguments go first, then its results get what the rest leaves
-        if (sizeOf(step) > this.room) this.setAsideArguments(step);
-        if (sizeOf(step) > this.room) this.fit(step, Math.max(0, this.room - (sizeOf(step) - resultsSizeOf(step))));
+        // A step larger than the room on its own (or, for all the steps together, than what the kept ones leave): its long arguments go first,
+        // then its results get what the rest leaves
+        if (this.total) {
+            // What the newest step says and calls is never cut: older steps go, whole and oldest first, until it fits beside what is kept
+            while (this.steps.length > 0 && this.size() + sizeOf(step) - resultsSizeOf(step) > this.room) this.steps.shift();
+        }
+        const left = this.total ? this.room - this.size() : this.room;
+        if (sizeOf(step) > left) this.setAsideArguments(step);
+        // The notes of the cuts are part of what is kept, so for all the steps together they are counted before the room is shared out
+        if (sizeOf(step) > left) this.fit(step, Math.max(0, left - (sizeOf(step) - resultsSizeOf(step)) - (this.total ? this.notesOf(step) : 0)), this.total);
         this.steps.push(step);
     }
 
@@ -255,10 +280,15 @@ export class StepRoom {
         return this.size() < before;
     }
 
+    /** How long a result's text was before any cut, in the room or before it came here. */
+    private wholeLength(result: StepResult): number {
+        return this.cut.get(result)?.length ?? alreadyCut(result.content)?.length ?? result.content.length;
+    }
+
     /** The most characters the notes of this step's results take once they are cut. */
     private notesOf(step: ReplyStep): number {
         return step.results.reduce((total, result) => {
-            const whole = this.cut.get(result)?.whole.length ?? result.content.length;
+            const whole = this.wholeLength(result);
             return total + cutNote(whole, whole).length;
         }, 0);
     }
@@ -283,7 +313,7 @@ export class StepRoom {
             if (this.setAsideArguments(step)) changed = true;
             for (const result of step.results) {
                 if (this.setAsideResults.has(result)) continue;
-                const whole = this.cut.get(result)?.whole.length ?? result.content.length;
+                const whole = this.wholeLength(result);
                 const line = asideLine(result.name, whole);
                 // A result shorter than its line stays as it is: setting it aside would take more room
                 if (line.length >= result.content.length) continue;
@@ -295,20 +325,27 @@ export class StepRoom {
         return changed;
     }
 
-    private fit(step: ReplyStep, room: number): boolean {
+    /** What a result not yet cut here is: all of its text, or, when it came with a cut note, the text before the note (cutting it again cuts that text, not the note). */
+    private firstCut(result: StepResult): { whole: string; kept: number; length: number } {
+        const before = alreadyCut(result.content);
+        return before ? { whole: before.whole, kept: before.whole.length, length: before.length } : { whole: result.content, kept: result.content.length, length: result.content.length };
+    }
+
+    /** `empty`: a result may be left with none of its text, only the note (when the room has nothing left); else each keeps at least a character. */
+    private fit(step: ReplyStep, room: number, empty = false): boolean {
         // Shortest first, so the room a short result leaves goes to the longer ones
         const cuts = step.results
-            .map((result) => ({ result, cut: this.cut.get(result) ?? { whole: result.content, kept: result.content.length } }))
+            .map((result) => ({ result, cut: this.cut.get(result) ?? this.firstCut(result) }))
             .sort((a, b) => a.cut.kept - b.cut.kept);
         let left = room;
         let changed = false;
         cuts.forEach(({ result, cut }, i) => {
-            const each = Math.max(1, Math.floor(left / (cuts.length - i)));
+            const each = empty ? Math.floor(left / (cuts.length - i)) : Math.max(1, Math.floor(left / (cuts.length - i)));
             left = Math.max(0, left - Math.min(cut.kept, each));
             if (cut.kept <= each) return;
             const kept = clipped(cut.whole, each);
-            result.content = `${kept}${cutNote(kept.length, cut.whole.length)}`;
-            this.cut.set(result, { whole: cut.whole, kept: kept.length });
+            result.content = `${kept}${cutNote(kept.length, cut.length)}`;
+            this.cut.set(result, { whole: cut.whole, kept: kept.length, length: cut.length });
             changed = true;
         });
         return changed;

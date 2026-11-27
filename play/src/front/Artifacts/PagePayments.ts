@@ -27,7 +27,19 @@ import type { ArtifactChat, ArtifactPay, ArtifactPayRequest } from "./ArtifactAp
 /** The id a page gives its request: short and plain, so it can only be echoed back and never carry anything else. */
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-export type PayProblem = "unavailable" | "limit" | "not_paid" | "cant_confirm" | "still_checking" | "none";
+/**
+ * `not_published`: the owner set the page's payment on a version newer than the one this person is shown; nothing was made (the page hears `unavailable`).
+ * `page_changed`: the version on screen is older than the one the payment was set on; nothing was made, and opening it again shows the latest.
+ */
+export type PayProblem =
+    | "unavailable"
+    | "not_published"
+    | "page_changed"
+    | "limit"
+    | "not_paid"
+    | "cant_confirm"
+    | "still_checking"
+    | "none";
 
 /** What the window says under the page while a payment is on its way. */
 export interface PayLine {
@@ -148,6 +160,12 @@ export interface PagePaymentsOptions {
     storage?: Pick<Storage, "getItem" | "setItem"> | null;
     /** Random plain characters of a length (for wishes and recovery codes). */
     randomId?: (length: number) => string;
+    /**
+     * The version of the page that asked, taken at the tap: Orbit never charges terms set on a newer version than the one on screen. Given
+     * the opening that page belongs to (the one on show when its document first spoke), so a page still showing while another version
+     * comes in says its own version, and a page that has just come in says its own before its pictures have finished loading.
+     */
+    shownVersion?: (opening: number) => number | undefined;
 }
 
 export interface PagePayments {
@@ -314,6 +332,8 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     // The session each request came with (the id its document gave itself when its scripts started), and the session of the document that spoke
     // last: a result is told only while the document that asked is still the one that spoke last (no other document has spoken since)
     const sessions = new Map<string, string>();
+    // The opening on show when each document first spoke: the page a document belongs to, whatever has been opened since
+    const sessionOpenings = new Map<string, number>();
     let speaker = "";
     const SESSIONS_MAX = 32;
     const remember = (request: string, session: string) => {
@@ -526,17 +546,26 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
     const gotNoAnswer = (error: unknown) => !(error instanceof ArtifactRequestError) || error.status === 0;
 
     /** A start that got no answer at all is sent again with the same wish; an answer, whatever it says, is final. */
-    const startWithTries = async (intentId: string, signal: AbortSignal, attempt = 1): Promise<ArtifactPay> => {
+    const startWithTries = async (
+        intentId: string,
+        signal: AbortSignal,
+        shownVersion: number | undefined,
+        attempt = 1
+    ): Promise<ArtifactPay> => {
         try {
             // The answer of a start that was dropped says nothing about who the buyer is
-            return await ask({ start: true, intentId }, signal, () => !signal.aborted);
+            return await ask(
+                { start: true, intentId, ...(shownVersion ? { shownVersion } : {}) },
+                signal,
+                () => !signal.aborted
+            );
         } catch (error) {
             if (!gotNoAnswer(error) || signal.aborted || destroyed || attempt >= START_TRIES) {
                 throw error;
             }
             await waitFor(TRY_AGAIN_MS);
             if (signal.aborted || destroyed) throw error;
-            return startWithTries(intentId, signal, attempt + 1);
+            return startWithTries(intentId, signal, shownVersion, attempt + 1);
         }
     };
 
@@ -553,6 +582,10 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         const asker = sessions.get(request);
         activeSession = asker;
         target = { intentId, request, from, session: asker };
+        // The version of the page that asked, at the tap: every try of this start says the same one
+        const version = options.shownVersion?.((asker !== undefined ? sessionOpenings.get(asker) : undefined) ?? from);
+        const shownVersion =
+            typeof version === "number" && Number.isSafeInteger(version) && version > 0 ? version : undefined;
         // Opened now, in the same moment as the page's tap, so a blocked pop-up is the only thing left that can go wrong
         let popup: Window | null = null;
         try {
@@ -576,7 +609,7 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 },
             };
             startInFlight = mine;
-            const started = startWithTries(intentId, abort.signal);
+            const started = startWithTries(intentId, abort.signal, shownVersion);
             const slow = new Promise<"slow">((resolve) => {
                 slowTimer = setTimeout(() => resolve("slow"), START_FOR_MS);
             });
@@ -634,8 +667,19 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
                 // No answer ever came (not even after the same wish was sent again): an order may or may not have been made, and the wish can be asked about
                 // Orbit says "unsure" when it refused a start that may still have made an order: Check payment stays; without it the refusal is clear
                 const lost = gotNoAnswer(error) || (error instanceof ArtifactRequestError && error.unsure);
+                // Orbit refused because the payment was set on a version this person is not shown yet: definite, nothing was made, and the line says so
+                // The version on screen is older than the one the payment was set on: the same, and opening it again shows the latest
+                const code = error instanceof ArtifactRequestError ? error.code : undefined;
+                const refusal: PayProblem = limit
+                    ? "limit"
+                    : !lost && (code === "not_published" || code === "page_changed")
+                    ? code
+                    : "unavailable";
                 end(
-                    { problem: limit ? "limit" : "unavailable", ...(lost ? { canCheck: true } : {}) },
+                    {
+                        problem: refusal,
+                        ...(lost ? { canCheck: true } : {}),
+                    },
                     limit ? "limit" : "unavailable",
                     request,
                     from,
@@ -779,6 +823,11 @@ export function pagePayments(options: PagePaymentsOptions): PagePayments {
         const session = data.session;
         const askedBefore = activeSession;
         speaker = session;
+        if (!sessionOpenings.has(session)) {
+            sessionOpenings.set(session, opening());
+            if (sessionOpenings.size > SESSIONS_MAX)
+                sessionOpenings.delete(sessionOpenings.keys().next().value as string);
+        }
         if (busy) {
             // The same tap heard twice, in the same opening, is the same request. Anything else while a payment is on its way (or its start
             // is still waiting for an answer, however long it takes) is told so under its own id, and the one on its way keeps its own:

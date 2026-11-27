@@ -21,6 +21,7 @@ import {
     brickComputerAction,
     brickComputerOf,
     brickComputers,
+    brickTakeOver,
     dismissComputerNotice,
     followBrickComputer,
     loadBrickComputer,
@@ -135,6 +136,66 @@ describe("the Bricks' computers store (#2000)", () => {
         expect(await brickComputerAction(BRICK, "fill-details")).toBe(false);
         expect(game.getBrickComputer).toHaveBeenCalledTimes(1);
         warn.mockRestore();
+    });
+
+    describe("the honest check before a take over", () => {
+        const refused = (reason: string) => Object.assign(new Error("refused"), { status: 409, reason });
+        const waitingForYou = { ...runningJob, status: "waiting", control: "person" };
+
+        it("takes over, takes over anyway and restarts through the calls Orbit knows, and reads the computer again each time", async () => {
+            game.brickComputerAction.mockResolvedValue({ job: waitingForYou });
+            game.getBrickComputer.mockResolvedValue(computer({ machine: "working", job: waitingForYou }));
+            expect(await brickTakeOver(BRICK, "take-over")).toBe("ok");
+            expect(await brickTakeOver(BRICK, "take-over-anyway")).toBe("ok");
+            expect(await brickTakeOver(BRICK, "restart")).toBe("ok");
+            expect(game.brickComputerAction.mock.calls.map((call) => call[1])).toEqual([
+                "take-over",
+                "take-over-anyway",
+                "restart",
+            ]);
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(3);
+        });
+
+        it("a program still running is the check asking, not a failure: the page is read again and shows the question", async () => {
+            game.brickComputerAction.mockRejectedValue(refused("still_running"));
+            game.getBrickComputer.mockResolvedValue(
+                computer({ machine: "working", job: waitingForYou, check: { state: "blocked", restartOffered: true } })
+            );
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            expect(await brickTakeOver(BRICK, "take-over")).toBe("still-running");
+            expect(brickComputerOf(BRICK)?.check).toEqual({ state: "blocked", restartOffered: true });
+            warn.mockRestore();
+        });
+
+        it("a computer that could not be made ready is told apart from any other failure", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.getBrickComputer.mockResolvedValue(computer());
+            game.brickComputerAction.mockRejectedValue(refused("not_secured"));
+            expect(await brickTakeOver(BRICK, "take-over")).toBe("not-ready");
+            game.brickComputerAction.mockRejectedValue(refused("not_offered"));
+            expect(await brickTakeOver(BRICK, "restart")).toBe("failed");
+            game.brickComputerAction.mockRejectedValue(new Error("Orbit did not answer in time"));
+            expect(await brickTakeOver(BRICK, "take-over")).toBe("failed");
+            game.brickComputerAction.mockResolvedValue({ nothing: "useful" });
+            expect(await brickTakeOver(BRICK, "take-over")).toBe("failed");
+            warn.mockRestore();
+        });
+
+        it("a computer with more than one job on it (Orbit's 409 shared) gets its own result, not the generic failure, and the page is read again", async () => {
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            game.getBrickComputer.mockResolvedValue(computer());
+            game.getBrickComputer.mockClear();
+            game.brickComputerAction.mockRejectedValue(refused("shared"));
+            expect(await brickTakeOver(BRICK, "take-over")).toBe("shared");
+            expect(await brickTakeOver(BRICK, "take-over-anyway")).toBe("shared");
+            expect(game.getBrickComputer).toHaveBeenCalledTimes(2);
+            // only a 409 says it: the same word with another status is still a failure
+            game.brickComputerAction.mockRejectedValue(
+                Object.assign(new Error("refused"), { status: 400, reason: "shared" })
+            );
+            expect(await brickTakeOver(BRICK, "take-over")).toBe("failed");
+            warn.mockRestore();
+        });
     });
 
     it("follows quickly while a job runs, slowly when idle, and stops when asked", async () => {

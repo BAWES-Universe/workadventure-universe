@@ -12,9 +12,11 @@ import { SOMEONE_UNKNOWN } from '../memory/Heard';
 import type { WokaList } from '../matrix/wokaPicture';
 import type { VoiceActiveAnswer, VoiceCredentialsAnswer, VoiceHealthReport, VoiceLimits } from '../voice/VoiceSettings';
 import type { CleanupJob, CleanupOutcome, Lease, NoteHearingAnswer, Reservation, ReserveInput, TurnEvent, VoiceNoteCapabilities } from '../voice/VoiceNoteOrbit';
+import { brickLimitFrom } from '../ai/BrickLimit';
 import { computerReportOf, type ComputerReport, type UndeliverableWhy } from './ComputerReports';
 import { dueRunOf, failedNoticeOf, heldNoticeOf, type DueRun, type FailedNotice, type HeldNotice, type ReportAnswer, type RunCheck, type RunReport } from './BrickRunner';
 import { retryJobOf, type RetryJob } from '../ai/ComputerTryAgain';
+import { computerJobsNowOf, type ComputerJobsNow } from '../ai/ComputerJobsNow';
 
 // Optional Sentry integration (uncomment if @sentry/node is installed)
 // import * as Sentry from '@sentry/node';
@@ -167,6 +169,36 @@ export interface ArtifactMediaUpload {
     contentType: string;
     body: Uint8Array;
 }
+
+/**
+ * One note a Brick sends to the Universe team (mock "Brick reports inbox"): product-only, filled from what ran. `draftWords` only when the
+ * person asked to tell the team something: Orbit answers them cleaned (`wordsPreview`) and keeps none of them.
+ */
+export interface BrickReportSend {
+    botId: string;
+    /** Who was in the chat (person:<id>, guest:<id>): Orbit keeps only a one-way hash, to count different people. */
+    personKey?: string;
+    /** sha256 of the chat's message and what the note is about: sent again, Orbit answers the same receipt. */
+    ref: string;
+    kind: 'problem' | 'cant_do' | 'friction' | 'idea';
+    area: 'apps' | 'computer' | 'pages' | 'chat' | 'voice' | 'map' | 'memory' | 'files' | 'credit' | 'other';
+    /** One of the Brick's own tools, `app` or `none`. */
+    operation: string;
+    /** For `app`: the connection it ran on, so Orbit can name the catalog App it came from. */
+    appConnectionId?: string;
+    failure: 'failed' | 'signed_out' | 'timed_out' | 'not_allowed' | 'no_result' | 'missing_ability' | 'corrected' | 'idea';
+    retried: boolean;
+    effect: 'stopped' | 'slowed' | 'idea';
+    draftWords?: string;
+    context?: { model?: string; ownKey?: boolean; gameVersion?: string; tools?: string[] };
+}
+
+/** The note as Orbit kept it: what the chat shows under "What was sent". */
+export type BrickReportKept = Pick<BrickReportSend, 'kind' | 'area' | 'failure' | 'retried' | 'effect'> & { title: string; operation: string };
+
+export type BrickReportOutcome =
+    | { sent: true; id: string; takeBackKey: string; note: BrickReportKept; again?: boolean; takenBack?: boolean; wordsPreview?: string }
+    | { sent: false; reason: 'limit' | 'unknown_brick' | 'refused' };
 
 /** Orbit said no, or could not be asked. `code` is Orbit's (edit_not_found, change_not_allowed, ...) or orbit_unavailable. */
 export class ArtifactCallError extends Error {
@@ -411,6 +443,23 @@ export interface InstantToolInfo {
     inputSchema: Record<string, unknown>;
     /** The least one run costs, for the Brick's own judgement. Never a bound, and never said to anyone. */
     fromMicros: number;
+    /** The App it belongs to, as people know it ("Exa"); empty when Orbit did not say. Never the service that runs it for Universe. */
+    app?: string;
+    /** What that App is good at, in one line: what the Brick picks an App by. */
+    strength?: string;
+    /** The owner has never had a run of this App that worked: its first use says once that their own free account has no Universe limit. */
+    firstUse?: boolean;
+    /** What kind of App it is, as Orbit says it: only a `research` one is told to the Brick as a research App (search right away, pick by strength). */
+    kind?: 'research';
+}
+
+/**
+ * Why research on Universe's account is not offered to the owner now, while it otherwise would be: they were not given credit for it this month
+ * (`not_given`: the month's budget ran out, for one) or they spent it (`used_up`, back at `renewsAt` when it is monthly). Comes with no tools.
+ */
+export interface InstantResearchStanding {
+    state: 'not_given' | 'used_up';
+    renewsAt: string | null;
 }
 
 /** What may be offered now. `ready` false (paused, not set up, no credit source) comes with no tools. */
@@ -418,6 +467,8 @@ export interface InstantListing {
     ready: boolean;
     reason: string | null;
     tools: InstantToolInfo[];
+    /** Present when the owner has no credit that pays for a search: the Brick says so once, instead of searching. */
+    research?: InstantResearchStanding;
 }
 
 /** Who an Instant call is for: a person's own chat message, or the Brick working for its owner on its own. */
@@ -481,6 +532,11 @@ const INSTANT_RUN_TIMEOUT_MS = 75_000;
 const INSTANT_LIST_TIMEOUT_MS = 10_000;
 
 const asText = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
+/** A short plain line from Orbit (one line, at most `max` long), or undefined: what goes into a Brick's instructions is never long or broken over lines. */
+const asShort = (value: unknown, max: number): string | undefined => {
+    const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+    return text && text.length <= max ? text : undefined;
+};
 
 /** One App on Orbit's list as a Brick may offer it (game #2001): what a person sees of it, and where they stand with it. */
 export interface OfferableApp {
@@ -611,6 +667,18 @@ export function jobNotesOf(raw: unknown): Array<{ seq: number; text: string }> {
     return notes.sort((a, b) => a.seq - b.seq);
 }
 
+const RESTART_KINDS = ['details', 'signin', 'upload', 'pay', 'submit', 'answer', 'person'] as const;
+
+/** The ask that was open when the person had the computer restarted (what Brick waited for, or `person` when it was working and the person took over, and for details what it was ready to put in and where): only a known kind, words trimmed. Null when Orbit gave none. */
+export function restartAskOf(raw: unknown): { kind: (typeof RESTART_KINDS)[number]; what: string | null; where: string | null } | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const row = raw as Record<string, unknown>;
+    const kind = (RESTART_KINDS as readonly unknown[]).includes(row.kind) ? (row.kind as (typeof RESTART_KINDS)[number]) : null;
+    if (!kind) return null;
+    const text = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim().slice(0, 150) : null);
+    return { kind, what: text(row.what), where: text(row.where) };
+}
+
 function finishPendingOf(raw: unknown): { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null {
     if (!isPlainObject(raw) || (raw.outcome !== 'done' && raw.outcome !== 'failed')) return null;
     const turns = Array.isArray(raw.turns) ? raw.turns.filter((one): one is number => typeof one === 'number' && Number.isInteger(one) && one >= 0) : [];
@@ -679,6 +747,11 @@ export interface ComputerControlAsk {
     pauseRunning?: boolean;
     /** With `stop`: the jobs the person confirmed. Orbit ends only those still live, never a job that began after the question was asked. */
     confirmedJobIds?: string[];
+    /**
+     * With `cancel`, sent only when the job was shown as never started and so goes without a question: Orbit then cancels it only if it still has not started, and otherwise
+     * cancels nothing and answers `{ ok: false, reason: 'started' }` (the job began after it was listed: the person is asked first, as for any job that has started).
+     */
+    expected?: 'not_started';
     isGuest?: boolean;
     /**
      * This control's own id (GPT's sixth answer, finding 4), made once where the person asked for it and the same every time THAT ask is sent again: Orbit applies a control once
@@ -707,6 +780,8 @@ export interface ComputerControlJob {
     control: 'brick' | 'person';
     /** The job has been paused before (Orbit's `pausedBefore`, or a pause count above 0): a job put back in line after it ran is `queued` with `queuedFor` `turn` and has this set. */
     pausedBefore: boolean;
+    /** When the person asked for the job (milliseconds), from Orbit's `askedAt` (an ISO time): a question that tells two jobs of one title apart says how long ago. Absent when Orbit did not say. */
+    askedAt?: number;
 }
 
 export interface ComputerControlView {
@@ -753,6 +828,7 @@ export function controlJobOf(value: unknown): ComputerControlJob | null {
         waitingFor: textOrNull(value.waitingFor),
         control: value.control === 'person' ? 'person' : 'brick',
         pausedBefore: value.pausedBefore === true || (countOrNull(value.pauses) ?? 0) > 0,
+        ...(typeof value.askedAt === 'string' && Number.isFinite(Date.parse(value.askedAt)) ? { askedAt: Date.parse(value.askedAt) } : typeof value.askedAt === 'number' && Number.isFinite(value.askedAt) && value.askedAt > 0 ? { askedAt: value.askedAt } : {}),
     };
 }
 
@@ -892,6 +968,16 @@ export interface AIProviderCredentials {
 }
 
 /**
+ * Where a bot's images go (#374, the Vision row): "this" is its own model (when that can't see, only the link stays in the
+ * text; `problem: 'key'` says the key picked for images can't be used now), "universe-ai" is Universe AI's default vision
+ * provider, "another" is a Vision model on the maker's own key, with that key's credentials.
+ */
+export type BotVisionPlan =
+    | { choice: 'this'; problem?: 'key' }
+    | { choice: 'universe-ai' }
+    | { choice: 'another'; credentials: AIProviderCredentials & { keyOwnerId?: string; keyAddressTyped?: boolean } };
+
+/**
  * Orbit's answer for a bot (#374): a provider and where it came from, or "resting". `own-key` is a person's own key
  * (`keyAddressTyped` says the person typed its address, so the address guard applies); `universe-ai` may stand in for
  * a key that is down (`standingInFor`); `resting` means the owner chose Stop replying: say the line, call nothing.
@@ -905,6 +991,8 @@ export type BotAiCredentialsAnswer =
           movedFromKey?: string;
           /** Orbit says the answer is for someone the Brick does not belong to (#2005): its owner's apps, files and computer stay out of the reply. */
           forOthers?: boolean;
+          /** Where the bot's images go, when that isn't left to its own model (the Vision row). Missing: as it always was. */
+          vision?: BotVisionPlan;
       })
     | { source: 'resting'; keyOwnerId: string; restingLine: string };
 
@@ -963,7 +1051,9 @@ export class AdminApiService {
     }
 
     /**
-     * Save bot configuration to admin API
+     * Save bot configuration to admin API. With the Admin API token, Orbit knows no person is saving; a change that only a
+     * person may make (putting a bot on their own key, picking their key for its images) carries that person's own Orbit
+     * session instead, so Orbit checks it is their key and their bot.
      */
     async saveBotConfiguration(config: BotConfiguration, actingSession?: string): Promise<void> {
         if (!this.isConfigured()) {
@@ -1006,7 +1096,8 @@ export class AdminApiService {
                 console.log(`[AdminApiService] Successfully saved bot config for ${config.botId}`);
             }
         } catch (error) {
-            // Orbit turned the save down and said why: that is an answer for the person, not a crash
+            // Orbit refused the save and said why (a key that isn't theirs, a model that can't see images): that is an answer for the
+            // person, not a crash, so it travels on as a BotConfigRefused.
             if (axios.isAxiosError(error) && error.response?.status === 400 && typeof error.response.data?.error === 'string') {
                 throw new BotConfigRefused(error.response.data.error);
             }
@@ -1424,7 +1515,7 @@ export class AdminApiService {
         };
     }
 
-    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<AxiosResponse<T>> {
+    private async brickCall<T>(method: 'get' | 'post' | 'put' | 'patch' | 'delete', path: string, body?: unknown, params?: Record<string, string>, timeoutMs: number = BRICK_CALL_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<AxiosResponse<T>> {
         const botServiceToken = process.env.BOT_SERVICE_TOKEN;
         if (!this.isConfigured() || !botServiceToken) throw new Error('Orbit is not set up for Bricks');
         return axios.request<T>({
@@ -1440,10 +1531,13 @@ export class AdminApiService {
     /**
      * A person asks their Brick for another Brick (#1996). Orbit makes it only for the owner of the Brick that asks
      * (`userId` is their game uuid), and answers the one they already have when its name is taken. Throws when Orbit
-     * says no or cannot be reached: the caller tells the person it did not work.
+     * says no or cannot be reached: the caller tells the person it did not work. When they have made too many new Bricks this
+     * hour ("New Bricks per hour") it throws BrickLimitReached, whose `line` is Orbit's kind answer with the time to say as it is.
      */
     async makeBrickFor(viaBotId: string, userId: string, ask: NewBrickAsk): Promise<{ made: boolean; brick: BrickCard }> {
-        const response = await this.brickCall<{ made?: unknown; brick?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/bricks`, { userId, ...ask });
+        const response = await this.brickCall<{ made?: unknown; brick?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/bricks`, { userId, ...ask }).catch((error: unknown) => {
+            throw brickLimitFrom(error) ?? error;
+        });
         const brick = brickCardOf(response.data?.brick);
         if (!brick) throw new Error('Orbit answered without a Brick');
         return { made: response.data?.made === true, brick };
@@ -1459,10 +1553,77 @@ export class AdminApiService {
         };
     }
 
+    /**
+     * A Brick's note to the Universe team (mock "Brick reports inbox"): Orbit counts it into a problem and answers it as kept, with the key
+     * the chat holds to take it back; the same `ref` sent again answers the same receipt (`again`). A refusal (`limit`, `unknown_brick`) is
+     * an answer, not an error. Throws when Orbit cannot be reached or says anything else: the caller may ask again with the same `ref`.
+     */
+    async sendBrickReport(report: BrickReportSend): Promise<BrickReportOutcome> {
+        let response: AxiosResponse<Record<string, unknown>>;
+        try {
+            response = await this.brickCall<Record<string, unknown>>('post', 'api/bricks/reports', report);
+        } catch (error) {
+            // Orbit turned the request down (not its kind of note, or not this bot's to send): nothing was kept, so asking again changes nothing.
+            // A timeout, "too many", a server error or no answer at all may still be a note Orbit kept: that throws, and is asked again.
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429) return { sent: false, reason: 'refused' };
+            throw error;
+        }
+        const data = response.data ?? {};
+        if (data.sent === true && typeof data.id === 'string' && typeof data.takeBackKey === 'string' && data.note && typeof data.note === 'object') {
+            const note = data.note as Record<string, unknown>;
+            const words = (value: unknown) => (typeof value === 'string' ? value : '');
+            return {
+                sent: true,
+                id: data.id,
+                takeBackKey: data.takeBackKey,
+                note: {
+                    kind: report.kind,
+                    area: report.area,
+                    effect: report.effect,
+                    title: words(note.title),
+                    operation: words(note.operation) || report.operation,
+                    failure: report.failure,
+                    retried: note.retried === true,
+                },
+                ...(data.again === true ? { again: true } : {}),
+                ...(data.takenBack === true ? { takenBack: true } : {}),
+                ...(typeof data.wordsPreview === 'string' && data.wordsPreview ? { wordsPreview: data.wordsPreview } : {}),
+            };
+        }
+        if (data.sent === false && (data.reason === 'limit' || data.reason === 'unknown_brick')) return { sent: false, reason: data.reason };
+        // Anything else may be a note Orbit kept: never read as a refusal; asked again with the same reference, Orbit answers its receipt
+        throw new Error('Orbit answered the note in a way it does not know');
+    }
+
+    /**
+     * Tells Orbit the chat message carrying these notes' receipts went out (mock "Brick reports inbox"). A note never confirmed is withdrawn
+     * after 15 minutes. Throws when Orbit cannot be reached; asking again is harmless.
+     */
+    async confirmBrickReports(botId: string, ids: string[]): Promise<number> {
+        const response = await this.brickCall<{ confirmed?: unknown }>('post', 'api/bricks/reports/delivered', { botId, ids: ids.slice(0, 4) });
+        return typeof response.data?.confirmed === 'number' ? response.data.confirmed : 0;
+    }
+
     /** May the suggestion for this topic be shown now? Orbit says yes once per person and topic, on every device (#1996). */
     async claimBrickOffer(viaBotId: string, userId: string, topic: string): Promise<{ show: boolean; topic: string }> {
         const response = await this.brickCall<{ show?: unknown; topic?: unknown }>('post', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });
         return { show: response.data?.show === true, topic: typeof response.data?.topic === 'string' ? response.data.topic : topic };
+    }
+
+    /**
+     * The card for this topic was claimed (`claimBrickOffer`) but never reached the person (the chat refused it twice): Orbit takes the claim back, so the topic is suggested again
+     * another time and a card nobody saw never closes it (GPT's fifth note, after release). Orbit takes back only a claim the person has not answered. Never throws; says whether Orbit
+     * took it back (an older Orbit without this answers 404 or 405: nothing changes, as before).
+     */
+    async releaseBrickOffer(viaBotId: string, userId: string, topic: string): Promise<boolean> {
+        try {
+            const response = await this.brickCall<{ released?: unknown }>('delete', `api/bots/${encodeURIComponent(viaBotId)}/brick-offers`, { userId, topic });
+            return response.data?.released === true;
+        } catch (error) {
+            console.warn('[AdminApiService] Could not take back an offer that was never shown:', error instanceof Error ? error.message : error);
+            return false;
+        }
     }
 
     /**
@@ -1804,14 +1965,16 @@ export class AdminApiService {
      * The same read, with the job "try again" would carry on (piece 8, `retry=1`): the person's latest ended job on this Brick that failed as ours or that we ended, or null (none, or an
      * Orbit that does not say). One request. Read only. Off and no job when Orbit cannot be asked.
      */
-    async computerState(viaBotId: string, userId: string): Promise<{ on: boolean; retry: RetryJob | null }> {
+    async computerState(viaBotId: string, userId: string): Promise<{ on: boolean; retry: RetryJob | null; available?: boolean; jobs?: ComputerJobsNow | null; read?: boolean }> {
         try {
-            const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1' });
-            const on = response.data?.available === true && response.data?.on === true;
-            return { on, retry: on ? retryJobOf(response.data?.retry) : null };
+            // `jobs=1` (the Brick chat audit, 26 Nov): the person's jobs on this Brick, live and lately ended, for the note the Brick gets with every message. An Orbit without it sends none
+            const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown; jobs?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1', jobs: '1' });
+            const available = response.data?.available === true;
+            const on = available && response.data?.on === true;
+            return { on, retry: on ? retryJobOf(response.data?.retry) : null, available, jobs: on ? computerJobsNowOf(response.data?.jobs) : null, read: true };
         } catch (error) {
             console.warn("[AdminApiService] Could not read a Brick's computer:", error instanceof Error ? error.message : error);
-            return { on: false, retry: null };
+            return { on: false, retry: null, available: false, jobs: null, read: false };
         }
     }
 
@@ -1821,16 +1984,19 @@ export class AdminApiService {
      * pick). An Orbit that sends no `ended` list is answered with the one `retry` job it names. `null` when Orbit cannot be asked or the computer is not on (nothing is listed, and nothing is
      * started either way). One request, read only.
      */
-    async computerEndedJobs(viaBotId: string, userId: string): Promise<Array<{ id: string; title: string }> | null> {
+    async computerEndedJobs(viaBotId: string, userId: string): Promise<Array<{ id: string; title: string; endedAt?: number }> | null> {
         try {
             const response = await this.brickCall<{ on?: unknown; available?: unknown; retry?: unknown; ended?: unknown }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs`, undefined, { userId, retry: '1', ended: '5' });
             if (!(response.data?.available === true && response.data?.on === true)) return null;
-            const jobs: Array<{ id: string; title: string }> = [];
+            const jobs: Array<{ id: string; title: string; endedAt?: number }> = [];
             if (Array.isArray(response.data.ended)) {
                 for (const raw of response.data.ended) {
                     if (typeof raw !== 'object' || raw === null || (raw as { continuable?: unknown }).continuable !== true) continue;
                     const one = retryJobOf({ ...raw, how: 'ended' });
-                    if (one && !jobs.some((seen) => seen.id === one.id)) jobs.push({ id: one.id, title: one.title });
+                    // When it ended (milliseconds), as Orbit says it (a time, or a number): the question that tells two jobs of one title apart says how long ago
+                    const rawEnd = (raw as { endedAt?: unknown }).endedAt;
+                    const endedAt = typeof rawEnd === 'number' ? rawEnd : typeof rawEnd === 'string' ? Date.parse(rawEnd) : NaN;
+                    if (one && !jobs.some((seen) => seen.id === one.id)) jobs.push({ id: one.id, title: one.title, ...(Number.isFinite(endedAt) && endedAt > 0 ? { endedAt } : {}) });
                 }
                 return jobs;
             }
@@ -1933,9 +2099,21 @@ export class AdminApiService {
                 // Passed to the model as Orbit gave it; only a missing one is made an empty object
                 inputSchema: schema && typeof schema === 'object' && !Array.isArray(schema) ? (schema as Record<string, unknown>) : { type: 'object', properties: {} },
                 fromMicros: typeof tool.fromMicros === 'number' && Number.isFinite(tool.fromMicros) ? tool.fromMicros : 0,
+                // Short words only: a name and a line, never a page of text in the Brick's instructions
+                ...(asShort(tool.app, 40) ? { app: asShort(tool.app, 40) } : {}),
+                ...(asShort(tool.strength, 120) ? { strength: asShort(tool.strength, 120) } : {}),
+                ...(tool.firstUse === true ? { firstUse: true } : {}),
+                ...(tool.kind === 'research' ? { kind: 'research' as const } : {}),
             });
         }
-        return { ready: answer.data.ready === true, reason: asText(answer.data.reason), tools };
+        const research = answer.data.research as Record<string, unknown> | null | undefined;
+        const state = research?.state === 'not_given' || research?.state === 'used_up' ? research.state : null;
+        return {
+            ready: answer.data.ready === true,
+            reason: asText(answer.data.reason),
+            tools,
+            ...(state ? { research: { state, renewsAt: asShort(research?.renewsAt, 40) ?? null } } : {}),
+        };
     }
 
     /**
@@ -2231,6 +2409,7 @@ export class AdminApiService {
                     ...(ask.action === 'stop' && Array.isArray(ask.confirmedJobIds) && ask.confirmedJobIds.length > 0 ? { confirmedJobIds: ask.confirmedJobIds } : {}),
                     ...(typeof ask.text === 'string' ? { text: ask.text } : {}),
                     ...(ask.pauseRunning ? { pauseRunning: true } : {}),
+                    ...(ask.action === 'cancel' && ask.expected === 'not_started' ? { expected: 'not_started' } : {}),
                 },
                 undefined,
                 undefined,
@@ -2268,9 +2447,9 @@ export class AdminApiService {
     }
 
     /** The job as Orbit has it (#2000), with its control generation when Orbit gives one; null only when Orbit says it is not there (404). Any other failure throws, so the runner asks again rather than take a hiccup for a deleted job. */
-    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null; resumed?: boolean; askAgain?: boolean; notes?: Array<{ seq: number; text: string }> } | null> {
+    async getComputerJob(viaBotId: string, jobId: string): Promise<{ id: string; status: string; control: string; generation?: number; ownerEpoch?: number; finishPending?: { outcome: 'done' | 'failed'; cause?: 'ours' | 'agent'; why?: string; turns?: number[]; run?: string; generation?: number } | null; resumed?: boolean; askAgain?: boolean; restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer' | 'person'; what: string | null; where: string | null }; notes?: Array<{ seq: number; text: string }> } | null> {
         try {
-            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; ownerEpoch?: unknown; finishPending?: unknown; resumed?: unknown; askAgain?: unknown; notes?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
+            const response = await this.brickCall<{ job?: { id?: unknown; status?: unknown; control?: unknown; generation?: unknown; ownerEpoch?: unknown; finishPending?: unknown; resumed?: unknown; askAgain?: unknown; restarts?: unknown; restartAsk?: unknown; notes?: unknown } }>('get', `api/bots/${encodeURIComponent(viaBotId)}/computer-jobs/${encodeURIComponent(jobId)}`);
             const job = response.data?.job;
             if (job && typeof job.id === 'string' && typeof job.status === 'string') {
                 // The control generation, when Orbit gives one (an Orbit that does not is not asked to fence)
@@ -2291,6 +2470,9 @@ export class AdminApiService {
                     ...(job.resumed === true ? { resumed: true } : {}),
                     // That pause took the screen back from the person (Orbit piece 3, held screen): on carrying on, the agent asks them for their step again
                     ...(job.askAgain === true ? { askAgain: true } : {}),
+                    // The person had the computer restarted (post 0.5.0, 1B): how many times, and the ask that was open then, so Brick asks again with the same words once its page is ready
+                    ...(typeof job.restarts === 'number' && Number.isInteger(job.restarts) && job.restarts > 0 ? { restarts: job.restarts } : {}),
+                    ...(restartAskOf(job.restartAsk) ? { restartAsk: restartAskOf(job.restartAsk) as NonNullable<ReturnType<typeof restartAskOf>> } : {}),
                     ...(notes.length > 0 ? { notes } : {}),
                 };
             }
@@ -3368,6 +3550,8 @@ export class AdminApiService {
         isGuest?: boolean;
         /** A greeting the bot made on its own (greetings cooldown): free for the person, still the payer's usage. */
         greeting?: boolean;
+        /** A look Universe AI's vision took at an image (G7): the person's Universe AI use, never counted as a reply. */
+        imageRead?: boolean;
     }): Promise<void> {
         if (!this.isConfigured()) {
             if (process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -3404,6 +3588,9 @@ export class AdminApiService {
                 ...(typeof usage.isGuest === "boolean" ? { isGuest: usage.isGuest } : {}),
                 // A greeting the bot made on its own: the payer's usage, never counted against the person it greeted
                 ...(usage.greeting ? { greeting: true } : {}),
+                // A look at an image is also marked a greeting, so an Orbit from before image looks still keeps it out of every reply
+                // count; an Orbit that knows `imageRead` stores it as a look at an image and not as a greeting
+                ...(usage.imageRead ? { imageRead: true, greeting: true } : {}),
             };
 
             if (process.env.ENABLE_BOT_DEBUG === 'true') {

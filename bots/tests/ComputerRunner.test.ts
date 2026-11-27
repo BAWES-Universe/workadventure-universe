@@ -6,6 +6,10 @@ import { createComputerModelRelay, RELAY_GUARDS } from '../server/ComputerModelR
 import { describe, expect, it, vi } from 'vitest';
 import {
     RESUME_PROMPT,
+    RESTARTED_HEAD,
+    RESTARTED_PERSON,
+    RESTARTED_SIGNED_OUT,
+    restartedPrompt,
     CONTINUE_PROMPT,
     RUNNER_GUARDS,
     createComputerRunner,
@@ -18,6 +22,8 @@ import {
     POOL_BUSY_WHY,
     RELAY_UNREACHABLE_WHY,
     relayUrlFromEnv,
+    RUNNER_TIMING,
+    sharedBusyWhy,
     type RelayProbeResult,
     runnerOrbitFor,
     type RunnableJob,
@@ -38,7 +44,7 @@ const done = (words: string): RunnerEvent[] => [{ type: 'created', id: 'r', sess
 const stream = (events: RunnerEvent[]): TurnOpened => ({ ok: true, events: (async function* () { for (const event of events) yield event; })() });
 
 /** A scripted Orbit: each turn answers with the next script, and `look` says how the job stands each time the runner asks. */
-function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number } | null = () => ({ status: 'running', control: 'brick' })) {
+function fakeOrbit(scripts: Array<RunnerEvent[] | TurnOpened | ((input: string) => RunnerEvent[] | TurnOpened)>, look: () => { status: string; control: string; generation?: number; restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer' | 'person'; what: string | null; where: string | null } } | null = () => ({ status: 'running', control: 'brick' })) {
     const seen = { turns: [] as string[], streams: 0, prepares: [] as string[], prepareFacts: [] as Array<{ run?: string } | undefined>, actions: [] as Array<Record<string, unknown>>, cancels: 0, looks: 0 };
     let renewAnswer: (n: number) => Record<string, unknown> = () => ({ ok: true, renewInSeconds: 240 });
     let handoverFails = 0;
@@ -656,6 +662,126 @@ describe('the person’s part', () => {
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
     });
 
+    describe('a computer another job is on (Orbit answers browser_shared)', () => {
+        /** A runner whose clock moves only when it waits, so the 10-minute bound is reached in a test without waiting. */
+        const runShared = async (orbit: RunnerOrbit, stopAfterWaits?: number) => {
+            let clock = 1_000_000;
+            const waits: number[] = [];
+            let runner!: ReturnType<typeof createComputerRunner>;
+            runner = createComputerRunner({
+                orbit,
+                relayUrl: RELAY,
+                sleep: async (ms) => {
+                    waits.push(ms);
+                    clock += ms;
+                    if (stopAfterWaits !== undefined && waits.length >= stopAfterWaits) runner.stop();
+                },
+                now: () => clock,
+                log: quiet,
+                timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0], sharedWaitMs: 30_000, sharedGiveUpMs: 10 * 60_000 },
+            });
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await runner.idle();
+            return waits;
+        };
+        const answering = (orbit: RunnerOrbit, answers: Array<Record<string, unknown>>) => {
+            const original = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                const answer = await original(botId, jobId, body);
+                if (body.action !== 'handover') return answer;
+                return answers.length > 0 ? answers.shift()! : answer;
+            };
+        };
+        const SHARED = { ok: false, reason: 'browser_shared' };
+
+        it('starts no turn and ends nothing: it asks again with the same handover after 30 s, and waits for the person as usual once it lands', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);
+            // more shared answers than tries: a shared answer is no try
+            answering(orbit, Array.from({ length: RUNNER_GUARDS.maxBadTurns + 2 }, () => SHARED));
+            const waits = await runShared(orbit);
+            const handovers = seen.actions.filter((a) => a.action === 'handover');
+            expect(handovers).toHaveLength(RUNNER_GUARDS.maxBadTurns + 3);
+            // the very same handover each time
+            expect(new Set(handovers.map((a) => JSON.stringify(a))).size).toBe(1);
+            expect(waits.filter((ms) => ms === 30_000)).toHaveLength(RUNNER_GUARDS.maxBadTurns + 2);
+            // one turn before the handover, one after the person handed back: none while it waited for the computer
+            expect(seen.turns).toHaveLength(2);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+
+        it('ends the job as ours (given back), with its own line, when the computer is still shared after 10 minutes', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+            answering(orbit, Array.from({ length: 1000 }, () => SHARED));
+            const waits = await runShared(orbit);
+            // asked at 0 s, 30 s, … 600 s
+            expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(21);
+            expect(waits.reduce((sum, ms) => sum + ms, 0)).toBe(10 * 60_000);
+            expect(seen.turns).toHaveLength(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', why: sharedBusyWhy('signin'), basis: 'browser_shared' }]);
+        });
+
+        it('CodeRabbit: sends the end at the bound again until Orbit takes it', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+            answering(orbit, Array.from({ length: 1000 }, () => SHARED));
+            const answer = orbit.action;
+            let lost = 2;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'finish' && lost > 0) {
+                    lost--;
+                    seen.actions.push(body);
+                    throw new Error('Orbit could not be reached');
+                }
+                return answer(botId, jobId, body);
+            };
+            await runShared(orbit);
+            expect(finished(seen)).toHaveLength(3);
+            expect(finished(seen).every((f) => f.basis === 'browser_shared' && f.cause === 'ours')).toBe(true);
+        });
+
+        it('says the step the job waited for, and names no other job, title or person', () => {
+            expect(sharedBusyWhy('signin')).toBe("The computer stayed busy with other work, so I couldn't hand it to you to sign in.");
+            expect(sharedBusyWhy('pay')).toContain('to pay');
+            expect(sharedBusyWhy('upload')).toContain('for your document');
+            expect(sharedBusyWhy('details')).toContain('for your details');
+            expect(sharedBusyWhy('submit')).toContain('for your OK to submit');
+            expect(RUNNER_TIMING.sharedWaitMs).toBe(30_000);
+            expect(RUNNER_TIMING.sharedGiveUpMs).toBe(10 * 60_000);
+        });
+
+        it('still ends as the agent’s when, after shared answers, Orbit answers no every time (the shared answers took none of the tries)', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover pay | x | y]]')]);
+            answering(orbit, [SHARED, SHARED, ...Array.from({ length: 50 }, () => ({ ok: false, reason: 'not_running' }))]);
+            await runShared(orbit);
+            expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(2 + RUNNER_GUARDS.maxBadTurns);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        });
+
+        it('reads the job again, ending nothing, when the job moved on while it waited (stale)', async () => {
+            let stopped = false;
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')], () => ({ status: stopped ? 'stopped' : 'running', control: 'brick' }));
+            answering(orbit, [SHARED, { ok: false, reason: 'stale' }]);
+            const answer = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                const said = await answer(botId, jobId, body);
+                // the person stopped the job while it waited: the next handover is stale, and the job is read as stopped
+                if (body.action === 'handover' && said.reason === 'stale') stopped = true;
+                return said;
+            };
+            await runShared(orbit);
+            expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(2);
+            expect(finished(seen)).toEqual([]);
+        });
+
+        it('sends no handover after the worker is stopped while it waits', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+            answering(orbit, Array.from({ length: 1000 }, () => SHARED));
+            await runShared(orbit, 2);
+            expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(2);
+            expect(finished(seen)).toEqual([]);
+        });
+    });
+
     it('reads a handover for a job Orbit no longer has (404) as a no, but a request of ours that does not fit (400), a key it does not accept (401), its own failure (500) and an Orbit that is down as ours', async () => {
         const run = async (error: Error) => {
             const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
@@ -685,6 +811,111 @@ describe('the person’s part', () => {
         expect(seen.actions).toContainEqual({ action: 'handover', waitingFor: 'details', ready: { what: 'Your passport number', where: 'visa.example.com' }, responseId: 'r' });
         expect(seen.turns[1]).toBe(RESUME_PROMPT);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+    });
+
+    describe('after the person had the computer restarted (the check before a take over found a program still running)', () => {
+        /** Brick asks, the person has the computer (a restart happens meanwhile), and Brick is its own again: the look after the person's wait says what the restart was. */
+        const afterRestart = (back: { restarts?: number; restartAsk?: { kind: 'details' | 'signin' | 'upload' | 'pay' | 'submit' | 'answer' | 'person'; what: string | null; where: string | null } }) => {
+            const states = [{ status: 'running', control: 'brick' }, { status: 'running', control: 'brick' }, { status: 'waiting', control: 'brick' }, { status: 'running', control: 'brick', generation: 2, ...back }];
+            return (look: number) => states[Math.min(look, states.length - 1)] ?? states[0];
+        };
+
+        it('is told the computer was restarted, to get its page ready again, and to ask the same thing again with the same line (a sign-in)', async () => {
+            let looks = 0;
+            const state = afterRestart({ restarts: 1, restartAsk: { kind: 'signin', what: null, where: null } });
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[handover signin]]'), done('[[done]]')], () => state(looks++));
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(restartedPrompt({ kind: 'signin', what: null, where: null }));
+            expect(seen.turns[1].startsWith(RESTARTED_HEAD)).toBe(true);
+            expect(seen.turns[1].endsWith('[[handover signin]]')).toBe(true);
+            expect(seen.turns[1]).not.toBe(RESUME_PROMPT);
+            // a sign-in is asked for again anyway: nothing more to say about being signed out
+            expect(seen.turns[1]).not.toContain(RESTARTED_SIGNED_OUT);
+            // the words never promise what a restart cannot keep: sign-ins the browser saved are "usually" kept, and a signed-out page is covered
+            expect(seen.turns[1]).toContain('Sign-ins the browser saved are usually kept too');
+            expect(seen.turns[1]).not.toContain('sign-ins are kept');
+        });
+
+        it('says what Brick was ready to put in and where, exactly as it asked before, when the ask was for details', async () => {
+            let looks = 0;
+            const state = afterRestart({ restarts: 1, restartAsk: { kind: 'details', what: 'Your passport number', where: 'visa.example.com' } });
+            const { orbit, seen } = fakeOrbit([done('[[handover details | Your passport number | visa.example.com]]'), done('[[done]]')], () => state(looks++));
+            await runJob(orbit);
+            const line = '[[handover details | Your passport number | visa.example.com]]';
+            expect(seen.turns[1]).toBe(`${RESTARTED_HEAD}\n${line}\n${RESTARTED_SIGNED_OUT}`);
+            // and what it says to end with is a line the runner reads back as the same ask
+            expect(endingOf(line)).toEqual(endingOf(`ok ${line}`));
+            // if the site signed it out, it asks for the sign-in instead
+            expect(endingOf(RESTARTED_SIGNED_OUT)).toMatchObject({ kind: 'handover', waitingFor: 'signin' });
+        });
+
+        it('after a take over in the middle of its work (no ask was open), is told to open the page again, change nothing, and say it is ready for the person with an answer line', async () => {
+            let looks = 0;
+            const state = afterRestart({ restarts: 1, restartAsk: { kind: 'person', what: null, where: null } });
+            const { orbit, seen } = fakeOrbit([done('Working. [[handover answer]]'), done('[[handover answer]]'), done('[[done]]')], () => state(looks++));
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(restartedPrompt({ kind: 'person', what: null, where: null }));
+            expect(seen.turns[1]).toBe(RESTARTED_PERSON);
+            expect(seen.turns[1]).toContain('change nothing');
+            expect(seen.turns[1]).toContain('end your reply with [[handover answer]]');
+            expect(seen.turns[1]).not.toContain('ask them the same thing again');
+        });
+
+        it('says nothing of a restart once Orbit gives no ask (the person has had the screen and handed back since): a plain look at the page', async () => {
+            let looks = 0;
+            const state = afterRestart({ restarts: 1 });
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')], () => state(looks++));
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(RESUME_PROMPT);
+        });
+
+        it('is told once for each restart: the same restart read again is not told twice', async () => {
+            let looks = 0;
+            const restarted = { restarts: 1, restartAsk: { kind: 'signin' as const, what: null, where: null } };
+            // ask, restart, ask again, the person has the screen and hands back with the same restart still on the job
+            const states = [
+                { status: 'running', control: 'brick' },
+                { status: 'running', control: 'brick' },
+                { status: 'waiting', control: 'brick' },
+                { status: 'running', control: 'brick', generation: 2, ...restarted },
+                { status: 'running', control: 'brick', generation: 2, ...restarted },
+                { status: 'waiting', control: 'brick', generation: 2, ...restarted },
+                { status: 'running', control: 'brick', generation: 3, ...restarted },
+            ];
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[handover signin]]'), done('[[done]]')], () => states[Math.min(looks++, states.length - 1)]);
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(restartedPrompt({ kind: 'signin', what: null, where: null }));
+            expect(seen.turns[2]).toBe(RESUME_PROMPT);
+        });
+
+        it('tells the agent again when the restart turn was refused: the restart counts as told only once the agent has taken its words', async () => {
+            let looks = 0;
+            const restarted = { restarts: 1, restartAsk: { kind: 'signin' as const, what: null, where: null } };
+            // ask, the person has the screen and restarts, Brick is its own again; the restart turn is refused, the retry is taken
+            const states = [{ status: 'running', control: 'brick' }, { status: 'running', control: 'brick' }, { status: 'waiting', control: 'brick' }];
+            const state = () => states[looks++] ?? { status: 'running', control: 'brick', generation: 2, ...restarted };
+            const told = restartedPrompt({ kind: 'signin', what: null, where: null });
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), { ok: false, reason: 'failed' }, done('[[handover signin]]'), done('[[done]]')], state);
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(told);
+            // the refused turn did not tell it: the same words are sent again, never the plain look
+            expect(seen.turns[2]).toBe(told);
+            expect(seen.turns[2]).not.toBe(RESUME_PROMPT);
+            expect(seen.turns[2]).not.toBe(CONTINUE_PROMPT);
+        });
+
+        it('tells the agent again when it was already on a turn of its own (the restart turn was not taken, only reconnected to)', async () => {
+            let looks = 0;
+            const restarted = { restarts: 1, restartAsk: { kind: 'signin' as const, what: null, where: null } };
+            const states = [{ status: 'running', control: 'brick' }, { status: 'running', control: 'brick' }, { status: 'waiting', control: 'brick' }];
+            const state = () => states[looks++] ?? { status: 'running', control: 'brick', generation: 2, ...restarted };
+            const told = restartedPrompt({ kind: 'signin', what: null, where: null });
+            // the agent says it is busy with a turn this process did not start: that turn is read, and the restart words never reached it
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), { ok: false, reason: 'busy', responseId: 'r9' }, done('[[handover signin]]'), done('[[handover signin]]'), done('[[done]]')], state);
+            await runJob(orbit);
+            expect(seen.turns[1]).toBe(told);
+            expect(seen.turns.filter((turn) => turn === told).length).toBeGreaterThanOrEqual(2);
+        });
     });
 
     it('drops what the agent said when the person took over meanwhile, and waits until they hand it back', async () => {
@@ -1113,6 +1344,17 @@ describe('a turn that is lost, or room that is gone', () => {
                 answer({ finishPending: bad });
                 expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
             }
+            // the restart the person asked for: how many, and the ask that was open (only a known kind, trimmed words)
+            answer({ restarts: 2, restartAsk: { kind: 'details', what: '  Your name ', where: 'visa.example.com' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', restarts: 2, restartAsk: { kind: 'details', what: 'Your name', where: 'visa.example.com' } });
+            answer({ restarts: 1, restartAsk: { kind: 'person', what: null, where: null } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', restarts: 1, restartAsk: { kind: 'person', what: null, where: null } });
+            answer({ restarts: 0, restartAsk: { kind: 'sing along', what: 'x', where: 'y' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick' });
+            answer({ restarts: 1.5, restartAsk: { kind: 'pay', what: 3, where: '' } });
+            expect(await service.getComputerJob('b', 'j')).toEqual({ id: 'j', status: 'running', control: 'brick', restartAsk: { kind: 'pay', what: null, where: null } });
+            const restartedAdmin = { computerRunningJobs: vi.fn(), getComputerJob: vi.fn(async () => ({ id: 'j', status: 'running', control: 'brick', restarts: 1, restartAsk: { kind: 'signin' as const, what: null, where: null } })), computerJobAction: vi.fn() };
+            expect(await runnerOrbitFor(restartedAdmin as never).job('b', 'j')).toEqual({ status: 'running', control: 'brick', restarts: 1, restartAsk: { kind: 'signin', what: null, where: null } });
             // and the runner's own Orbit hands it on
             const admin = { computerRunningJobs: vi.fn(), getComputerJob: vi.fn(async () => ({ id: 'j', status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed' as const, cause: 'ours' as const } })), computerJobAction: vi.fn() };
             expect(await runnerOrbitFor(admin as never).job('b', 'j')).toEqual({ status: 'running', control: 'brick', generation: 4, finishPending: { outcome: 'failed', cause: 'ours' } });

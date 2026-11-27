@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { getContext, hasContext, onMount } from "svelte";
+    import { getContext, hasContext } from "svelte";
     import { readable } from "svelte/store";
     import type { Readable } from "svelte/store";
     import LL from "../../../../../i18n/i18n-svelte";
@@ -20,20 +20,29 @@
     export let latest = 3;
     /** The bot of a direct chat with a bot. */
     export let botName: string | undefined = undefined;
+    /** The Orbit id of that bot: its list also holds what it made for this person in other chats. */
+    export let botId: string | undefined = undefined;
 
     // The chat the cards of this conversation open from: a bubble's space or a direct chat's room
     const chatOf: ArtifactChatOf = hasContext(ARTIFACT_CHAT_CONTEXT)
         ? getContext(ARTIFACT_CHAT_CONTEXT)
         : () => undefined;
     const chat = chatOf();
-    const list = chat ? chatArtifactsList(chat) : undefined;
-    const state: Readable<ChatArtifactsState> =
-        list ?? readable({ artifacts: [], total: 0, next: null, loading: false, failed: false, loaded: false });
+    const noList: Readable<ChatArtifactsState> = readable({
+        artifacts: [],
+        total: 0,
+        next: null,
+        loading: false,
+        failed: false,
+        loaded: false,
+    });
+    // The bot is known once the partner is: the list follows it
+    $: list = chat ? chatArtifactsList(chat, botId) : undefined;
+    $: state = list ?? noList;
     const direction = document.documentElement.getAttribute("dir") || "ltr";
 
-    onMount(() => {
-        list?.refresh().catch((error) => console.error(error));
-    });
+    // Read the first page each time the group shows, and again for another list
+    $: list?.refresh().catch((error) => console.error(error));
 
     $: shown = $state.artifacts.slice(0, latest);
     $: hint = botName !== undefined && $state.loaded && $state.total === 0;

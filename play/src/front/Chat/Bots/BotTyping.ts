@@ -1,6 +1,6 @@
 import { derived, get, type Readable } from "svelte/store";
 import type { ChatMessage } from "../Connection/ChatConnection";
-import { currentStep, type BotSteps } from "./BotSteps";
+import { currentStep, msUntilStale, stoppedIfStale, type BotSteps } from "./BotSteps";
 
 /**
  * While a bot's steps line shows a tool running (#1545) the line shows what it does, so the typing dots wait: they show
@@ -23,15 +23,38 @@ export function workingBotIds(messages: Readable<readonly ChatMessage[]>): Reada
                 }
             }
             const working = new Set<string>();
-            const unsubscribes = [...newest].map(([id, steps]) =>
-                steps.subscribe((value) => {
-                    if (value?.state === "working" && currentStep(value)) working.add(id);
-                    else working.delete(id);
+            // A line left "working" for over an hour is stopped (it is drawn so), so it holds the typing dots back no longer
+            const timers = new Set<ReturnType<typeof setTimeout>>();
+            const unsubscribes = [...newest].map(([id, steps]) => {
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                let last: BotSteps | undefined;
+                const decide = () => {
+                    if (timer) {
+                        clearTimeout(timer);
+                        timers.delete(timer);
+                        timer = undefined;
+                    }
+                    const value = last;
+                    if (value?.state === "working" && currentStep(value) && !stoppedIfStale(value, Date.now()).stale) {
+                        working.add(id);
+                        const wait = msUntilStale(value, Date.now());
+                        if (wait !== undefined) {
+                            timer = setTimeout(decide, wait);
+                            timers.add(timer);
+                        }
+                    } else working.delete(id);
                     set(new Set(working));
-                })
-            );
+                };
+                return steps.subscribe((value) => {
+                    last = value;
+                    decide();
+                });
+            });
             set(new Set(working));
-            return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+            return () => {
+                unsubscribes.forEach((unsubscribe) => unsubscribe());
+                timers.forEach((timer) => clearTimeout(timer));
+            };
         },
         new Set<string>() as ReadonlySet<string>
     );

@@ -66,6 +66,7 @@ describe("what a bot remembers about the person (#2003)", () => {
             expect(say({ kind: "birthday", value: "June 5" }).text).toBe("Your birthday is June 5");
             expect(say({ kind: "fact", label: "current_state", value: "tired" }).text).toBe("Said you were tired");
             expect(say({ kind: "fact", label: "favorite_color", value: "blue" }).text).toBe("Favorite color: blue");
+            expect(say({ kind: "fact", label: "dislike_coffee", value: "coffee" }).text).toBe("Doesn't like coffee");
             // Two facts that share a value are told apart by their labels
             expect(say({ kind: "fact", label: "home_city", value: "Paris" }).text).toBe("Home city: Paris");
             expect(say({ kind: "fact", label: "next_trip", value: "Paris" }).text).toBe("Next trip: Paris");

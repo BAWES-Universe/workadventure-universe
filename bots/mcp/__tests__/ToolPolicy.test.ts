@@ -40,8 +40,28 @@ describe('parseServerPolicy', () => {
         expect(policy.state).toBe('confirmed');
         expect(policy.policyRevision).toBe(4);
         expect(policy.settings.deletesOrSends).toBe('off');
-        expect(policy.tools.get('search')).toEqual({ name: 'search', fingerprint: 'fp-1', heading: 'looksUp', suggestedHeading: 'looksUp', confirmed: true });
+        expect(policy.kind).toBe('tools');
+        expect(policy.tools.get('search')).toEqual({ name: 'search', fingerprint: 'fp-1', heading: 'looksUp', suggestedHeading: 'looksUp', confirmed: true, setting: null });
         expect(policy.tools.get('remove')).toMatchObject({ heading: null, suggestedHeading: 'deletesOrSends', confirmed: false });
+    });
+
+    it("reads a ready-made App's grant as its actions: the kind, each action's words and its own choice", () => {
+        const policy = parseServerPolicy(
+            's1',
+            answer({
+                kind: 'appActions',
+                tools: [
+                    { id: 't1', name: 'GMAIL_FETCH_EMAILS', title: 'Fetch emails', fingerprint: 'a-1', heading: 'looksUp', state: 'confirmed', setting: null },
+                    { id: 't2', name: 'GMAIL_REPLY_TO_THREAD', title: 'Reply to thread', fingerprint: 'a-2', heading: 'deletesOrSends', state: 'confirmed', setting: 'rightAway' },
+                    { id: 't3', name: 'GMAIL_DELETE', fingerprint: 'a-3', heading: 'deletesOrSends', state: 'confirmed', setting: 'whenever' },
+                ],
+            }).data
+        )!;
+        expect(policy.kind).toBe('appActions');
+        expect(policy.tools.get('GMAIL_FETCH_EMAILS')).toMatchObject({ title: 'Fetch emails', setting: null });
+        expect(policy.tools.get('GMAIL_REPLY_TO_THREAD')).toMatchObject({ title: 'Reply to thread', setting: 'rightAway' });
+        // A choice it does not know follows the heading
+        expect(policy.tools.get('GMAIL_DELETE')!.setting).toBeNull();
     });
 
     it('reads a setting it does not know as asks first, the stricter reading', () => {
@@ -66,7 +86,8 @@ describe('ToolPolicySource', () => {
     it('asks Orbit for the bot and server with the admin token', async () => {
         get.mockResolvedValue(answer());
         await sourceAt({ now: 1 }).read('bot 1', 's1');
-        expect(get).toHaveBeenCalledWith('https://orbit.test/api/bots/bot%201/mcp-servers/s1/tools', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer admin-token' }) }));
+        // `actions=1`: a ready-made App's grant comes as the App's own actions
+        expect(get).toHaveBeenCalledWith('https://orbit.test/api/bots/bot%201/mcp-servers/s1/tools?actions=1', expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer admin-token' }) }));
     });
 
     it('uses a fresh answer without asking again, and asks again once it is old', async () => {

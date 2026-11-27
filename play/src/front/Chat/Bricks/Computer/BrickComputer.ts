@@ -40,6 +40,12 @@ export interface ComputerNotice {
     how: NoticeHow;
 }
 
+export type CheckState = "blocked" | "restarting" | "running";
+export interface ComputerCheck {
+    state: CheckState;
+    restartOffered: boolean;
+}
+
 export interface BrickComputerView {
     /** False on a server with no computers: the page says they are not open yet. */
     available: boolean;
@@ -53,6 +59,12 @@ export interface BrickComputerView {
     month: { leftFraction: number; unlimited: boolean; endsAt: string } | null;
     files: { bytes: number; savedAt: string | null };
     restoredFrom: string | null;
+    /**
+     * The honest check before a take over (Orbit, post 0.5.0). `blocked`: a program the agent left behind is still running, so the person is asked; `restarting`: the
+     * computer is being restarted at their choice; `running`: they took over anyway, with such a program still running. `restartOffered`: whether "Restart first" can
+     * still be offered for this ask (once per ask). Null when there is nothing to say. Never names a program.
+     */
+    check: ComputerCheck | null;
     /** Told once: it is only the Brick's latest job, and a new job or Dismiss takes it away. Null when there is nothing to say. */
     notice: ComputerNotice | null;
 }
@@ -134,8 +146,26 @@ export function parseBrickComputer(value: unknown): BrickComputerView | undefine
         },
         restoredFrom: typeof row.restoredFrom === "string" ? row.restoredFrom : null,
         notice: parseNotice(row.notice),
+        check: parseCheck(row.check),
     };
 }
+
+function parseCheck(value: unknown): ComputerCheck | null {
+    const row = value as Record<string, unknown> | null | undefined;
+    if (!row || typeof row !== "object") return null;
+    if (row.state !== "blocked" && row.state !== "restarting" && row.state !== "running") return null;
+    return { state: row.state, restartOffered: row.restartOffered === true };
+}
+
+/**
+ * Whether the person really has the screen: the job is theirs AND the check before the take over is not asking them something first (a program still running)
+ * or restarting the computer. While it is asking, they are still watching, and the block is under the screen.
+ */
+export const personHasScreen = (view: BrickComputerView | undefined): boolean =>
+    !!view?.job &&
+    view.job.control === "person" &&
+    view.check?.state !== "blocked" &&
+    view.check?.state !== "restarting";
 
 function parseNotice(value: unknown): ComputerNotice | null {
     const row = value as Record<string, unknown> | null | undefined;

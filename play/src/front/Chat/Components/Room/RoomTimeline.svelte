@@ -51,6 +51,7 @@
         nextAskChange,
         shownAskPosition,
         type BotAsk,
+        type BotAskApp,
         type BotAskTap,
     } from "../../Bots/BotAsk";
     import { chatSheetLayoutStore, chatSheetSnapStore } from "../../ChatSheetStore";
@@ -80,7 +81,7 @@
     import { isTouchScreen, SETTLE_CHECKS_MS } from "../../../Utils/ViewportGuard";
     import { ARTIFACT_CHAT_CONTEXT, type ArtifactChatOf } from "../../../Artifacts/artifactChatContext";
     import PrivateReplyNote from "../../Bots/PrivateReplyNote.svelte";
-    import { STARTER_IDEAS } from "../../Bricks/Brick";
+    import { STARTER_IDEAS, brickChatId } from "../../Bricks/Brick";
     import {
         APP_CONNECT,
         APP_OTHER,
@@ -108,7 +109,10 @@
     import { loadMyApps } from "../../Bricks/Apps/AppsStore";
     import { warningMessageStore } from "../../../Stores/ErrorStore";
     import BrickMadeLinks from "../../Bricks/BrickMadeLinks.svelte";
+    import BrickReportLine from "../../Bricks/BrickReportLine.svelte";
     import { GuestBrickChatRoom } from "../../Bricks/GuestBrickChatRoom";
+    import { PendingBrickChatRoom } from "../../Bricks/PendingBrickChat";
+    import PendingBrickTitle from "../../Bricks/PendingBrickTitle.svelte";
     import GuestBrickSignIn from "../../Bricks/GuestBrickSignIn.svelte";
     import GuestBrickTitle from "../../Bricks/GuestBrickTitle.svelte";
     import {
@@ -312,6 +316,20 @@
     // What the Brick for guests takes now (plan v3): the same paperclip, GIFs and mic as every bot chat, where its server has them
     $: guestTakes = guestRoom ? guestRoom.takes : readable({ files: false, notes: false });
     $: guestBrick = guestRoom ? guestBrickCard($LL, 0) : undefined;
+    // A Brick's chat that is still being made: its screen is the Brick's own, and holds what is written meanwhile
+    $: pendingRoom = room instanceof PendingBrickChatRoom ? room : undefined;
+    $: pendingBrick = pendingRoom ? pendingRoom.card : readable(undefined);
+    // Words the screen was given back (the chat could not be made in time) go into the message box
+    $: pendingTextBack = pendingRoom ? pendingRoom.textBack : readable(undefined);
+    $: if (pendingRoom && $pendingTextBack !== undefined && messageInputBarRef) {
+        const words = $pendingTextBack;
+        pendingRoom.clearTextBack();
+        messageInputBarRef.putText(words).catch((error: unknown) => console.error(error));
+    }
+    // What is typed and not sent goes to the real chat's box when it takes this screen's place
+    $: pendingRoom?.readTypedFrom(() => messageInputBarRef?.currentText() ?? "");
+    // Leaving the screen keeps what is typed and not sent: it is put back when the screen is shown again
+    onDestroy(() => pendingRoom?.screenLeft());
 
     // Counts the chat objects shown here: a chat can be made again under the same id (its type found out later, or a new
     // map), and what is keyed on this is made again with it. A number, so the same chat set again changes nothing.
@@ -595,6 +613,12 @@
     $: shownAsk = waitingAsks[shownAskIndex];
     $: queuedSoonIndex = waitingAsks.findIndex((entry, i) => i !== shownAskIndex && closesSoon(entry.ask, askNow));
     $: askCompact = askBarFits($chatSheetLayoutStore, $chatSheetSnapStore);
+    // "What {brick} may do with {app}" on a card of an App action: only on the viewer's own Brick (game "Ask, Do, Ignore")
+    $: ownBrickIds = new Set(($myBricksStore ?? []).map((brick) => brick.id));
+    function appLinkOf(ask: BotAsk, own: Set<string>): ((app: BotAskApp) => void) | undefined {
+        if (!ask.app || !own.has(ask.app.botId)) return undefined;
+        return (app) => openAppsPage({ brick: { botId: app.botId, serverId: app.serverId } });
+    }
     async function tapAsk(ask: BotAsk, tap: BotAskTap): Promise<boolean> {
         if (!room.answerBotAsk) return false;
         try {
@@ -608,27 +632,29 @@
     // The person's own Brick (#1995). While its chat is empty the game shows its hello as its first words, with the
     // ways to start on the question card above the message box. Its fixed "what I can do" answer has its ideas there
     // while it is the newest message. All of it is the game's own words: nothing is sent until the person taps or writes.
-    $: ownBrick = partner ? $myBricksByChatId.get(partner.id) : guestBrick;
+    $: ownBrick = partner ? $myBricksByChatId.get(partner.id) : pendingRoom ? $pendingBrick : guestBrick;
     $: brickAnswers = botState !== "resting" && botState !== "unready" && !botClosed;
     // A chat that is being brought along from the guest's time says its own words: the hello waits for them
     $: brickChatEmpty =
         ownBrick !== undefined &&
-        (matrixRoom !== undefined || guestRoom !== undefined) &&
+        (matrixRoom !== undefined || guestRoom !== undefined || pendingRoom !== undefined) &&
         !showLoading &&
-        $messages.length === 0 &&
+        // What is written while the chat is made is faded under the hello, which stays above it until the chat takes over
+        ($messages.length === 0 || pendingRoom !== undefined) &&
         !$guestChatCarrying;
     // The first time the chat with the person's own Brick is open, the chat they had as a guest is brought into it (#1997)
     $: if (partner && ownBrick && matrixRoom && !showLoading) bringGuestChatInto(ownBrick.id);
     let shownHello: { key: string; message: ChatMessage } | undefined;
     $: showBrickHello(
-        brickChatEmpty && ownBrick && (partner || guestRoom)
+        brickChatEmpty && ownBrick && (partner || guestRoom || pendingRoom)
             ? {
                   key: `${room.id}|${ownBrick.id}|${ownBrick.name}|${ownBrick.hello ?? ""}|${$locale}`,
                   make: () =>
                       brickHelloMessage(
                           room.id,
                           ownBrick,
-                          partner?.id ?? GUEST_BRICK_ID,
+                          partner?.id ??
+                              (pendingRoom ? brickChatId(ownBrick.id, myChatID) ?? ownBrick.id : GUEST_BRICK_ID),
                           // A guest's hello is the game's own words for someone it does not know yet
                           guestRoom
                               ? $LL.chat.brick.guest.hello()
@@ -648,24 +674,25 @@
     // A deleted message drives no card: its ideas or suggestion went with it
     $: newestDeletedStore = newestMessage?.isDeleted ?? noneDeleted;
     $: newestLive = newestMessage && !$newestDeletedStore ? newestMessage : undefined;
-    $: brickCardKey = !ownBrick
-        ? undefined
-        : shownHello
-        ? // A guest's chat is empty again after it expires: its starters come back with each visit to the page, not for good
-          startersCardKey(guestRoom ? `${room.id}:${guestBrickShownAt}` : room.id)
-        : guestRoom
-        ? newestLive?.guestKeep
-            ? keepCardKey(newestLive.id)
-            : undefined
-        : newestLive?.brickIdeas
-        ? ideasCardKey(newestLive.id)
-        : newestLive?.brickOffer
-        ? offerCardKey(newestLive.id)
-        : newestLive?.appOffer
-        ? appCardKey(newestLive.id)
-        : newestLive?.newJobOffer
-        ? newJobCardKey(newestLive.id)
-        : undefined;
+    $: brickCardKey =
+        !ownBrick || (pendingRoom && $messages.length > 0)
+            ? undefined
+            : shownHello
+            ? // A guest's chat is empty again after it expires: its starters come back with each visit to the page, not for good
+              startersCardKey(guestRoom ? `${room.id}:${guestBrickShownAt}` : room.id)
+            : guestRoom
+            ? newestLive?.guestKeep
+                ? keepCardKey(newestLive.id)
+                : undefined
+            : newestLive?.brickIdeas
+            ? ideasCardKey(newestLive.id)
+            : newestLive?.brickOffer
+            ? offerCardKey(newestLive.id)
+            : newestLive?.appOffer
+            ? appCardKey(newestLive.id)
+            : newestLive?.newJobOffer
+            ? newJobCardKey(newestLive.id)
+            : undefined;
     // A Brick's suggestion (#1996) is a card only while it is the newest message: once the person wrote on, tapped
     // or closed it, its question stays in the chat as the Brick's words.
     $: shownOffer = newestLive?.brickOffer && brickCardKey === offerCardKey(newestLive.id) ? newestLive : undefined;
@@ -718,6 +745,7 @@
             return true;
         }
         if (guestRoom && tap.action === "pick") return tapGuestCard(card, tap.choices);
+        if (pendingRoom && tap.action === "pick") return tapPendingCard(card, tap.choices);
         if (tap.action !== "pick" || !matrixRoom) return false;
         try {
             if (card.id === BRICK_APP_CARD) return tapAppCard(tap.choices[0]);
@@ -840,6 +868,20 @@
             .finally(() => {
                 connectingApp = false;
             });
+    }
+    // A tap on one of the ways to start while the Brick's chat is being made: each says what it says in the person's words,
+    // kept with what they wrote and sent once the chat is there (the Apps page opens at once, nothing is sent for it)
+    function tapPendingCard(card: BotAsk, choices: string[]): boolean {
+        if (!pendingRoom || card.id !== BRICK_STARTERS_CARD) return false;
+        const choice = choices[0];
+        if (choice === STARTER_APPS) {
+            openAppsPage();
+            return true;
+        }
+        if (choice === STARTER_GOAL) pendingRoom.sendMessage($LL.chat.brick.giveGoalAsk());
+        else if (choice === STARTER_MAKE) pendingRoom.sendMessage($LL.chat.brick.makeAnotherAsk());
+        else pendingRoom.sendStarter($LL.chat.brick.whatCanYouDo(), STARTER_IDEAS);
+        return true;
     }
     // A tap on a card of the Brick for guests (#1997): a starter says what it says in the guest's words; "Make Brick mine"
     // opens the sign-in card and "Not now" closes the card.
@@ -1417,6 +1459,9 @@
             <PartnerProfilePanel
                 room={matrixRoom}
                 partner={$directPartner}
+                bot={partnerBotId !== undefined}
+                botState={shownBotState}
+                botDotState={botState}
                 on:close={() => openProfileRoomIdStore.set(undefined)}
             />
         {:else if roomDetailsOpen && matrixRoom}
@@ -1471,6 +1516,8 @@
                         <ProximityThreadTitle room={proximityRoom} />
                     {:else if guestRoom && guestBrick}
                         <GuestBrickTitle brick={guestBrick} />
+                    {:else if pendingRoom && $pendingBrick}
+                        <PendingBrickTitle brick={$pendingBrick} />
                     {:else if matrixRoom && $directPartner}
                         <DirectChatTitle
                             room={matrixRoom}
@@ -1665,6 +1712,23 @@
                         </li>
                     {/if}
                 {/if}
+                {#if pendingRoom && shownHello && $messages.length > 0}
+                    <!-- What is written while the chat is made is faded under the hello, which stays above it until the
+                         chat takes over -->
+                    {#key shownHello.key}
+                        <li class="run-start" data-testid="brickHello">
+                            {#if shownHello.message.date}
+                                <div class="flex justify-center mb-3" data-testid="chatDayLabel">
+                                    <span
+                                        class="px-3 py-1.5 m-0 text-xs text-center border border-solid border-white/10 rounded-2xl text-white/80"
+                                        >{dayLabel(shownHello.message.date, $locale)}</span
+                                    >
+                                </div>
+                            {/if}
+                            <Message message={shownHello.message} plain />
+                        </li>
+                    {/key}
+                {/if}
                 {#each drawnEntries as entry, drawnIndex (entry.message.id)}
                     {@const index = firstDrawnIndex + drawnIndex}
                     {@const place = runs.get(entry.message.id)}
@@ -1709,6 +1773,7 @@
                                     botName={entry.message.sender?.username ?? $roomName}
                                     now={askNow}
                                     onTap={tapAsk}
+                                    onOpenApp={appLinkOf(asked, ownBrickIds)}
                                 />
                             {/if}
                         {:else if (shownOffer?.id === entry.message.id || shownApp?.id === entry.message.id) && brickCard}
@@ -1725,6 +1790,12 @@
                             />
                             {#if entry.message.brickMade?.length}
                                 <BrickMadeLinks made={entry.message.brickMade} content={entry.message.content} />
+                            {/if}
+                            {#if entry.message.brickReports?.length}
+                                <BrickReportLine
+                                    reports={entry.message.brickReports}
+                                    messageAt={entry.message.date?.getTime() ?? null}
+                                />
                             {/if}
                             {#if entry.message.stoppedBySpeech}
                                 <StoppedBySpeechNote stopped={entry.message.stoppedBySpeech} />
@@ -1791,6 +1862,7 @@
                         ask={shownAsk.ask}
                         botName={shownAsk.message.sender?.username ?? $roomName}
                         now={askNow}
+                        onOpenApp={appLinkOf(shownAsk.ask, ownBrickIds)}
                         position={{ at: shownAskIndex + 1, total: waitingAsks.length }}
                         queuedClosingSoon={queuedSoonIndex >= 0
                             ? { at: queuedSoonIndex + 1, total: waitingAsks.length }
@@ -1852,8 +1924,12 @@
                         {room}
                         partner={$directPartner}
                         inputHint={botPlaceholder}
-                        allowVoiceNotes={guestRoom ? $guestTakes.notes : partnerBotId === undefined || $botHears}
-                        textOnly={guestRoom !== undefined && !$guestTakes.files}
+                        allowVoiceNotes={pendingRoom
+                            ? false
+                            : guestRoom
+                            ? $guestTakes.notes
+                            : partnerBotId === undefined || $botHears}
+                        textOnly={pendingRoom !== undefined || (guestRoom !== undefined && !$guestTakes.files)}
                         bind:this={messageInputBarRef}
                     />
                 {/key}

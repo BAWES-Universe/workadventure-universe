@@ -20,7 +20,8 @@ import { randomUUID } from 'node:crypto';
 import { v5 as uuidv5 } from 'uuid';
 import type { ComputerControlAnswer, ComputerControlAsk, ComputerControlJob, ComputerControlView, AdminApiService } from '../server/AdminApiService';
 import type { ConfirmationQueue } from './ComputerTools';
-import { CONTROL_REFUSALS, CONTROL_WORDS, lineOf, quotedTitles } from './ComputerControlWords';
+import { CONTROL_REFUSALS, CONTROL_WORDS, lineOf, othersOf, quotedTitles, whichDated } from './ComputerControlWords';
+import { endedJobWords, endedNotLive, type EndedJobNow } from './ComputerJobsNow';
 
 export const COMPUTER_JOBS_TOOL = 'computer_jobs';
 export const PAUSE_JOB_TOOL = 'pause_computer_job';
@@ -43,28 +44,31 @@ const JOB_WORDS_MAX = 200;
 
 const JOB_ARG = { type: 'string', description: 'Which job, in the person\'s words or as the bar shows it ("visa", "Taxi booking"), or its id from computer_jobs. Leave out when there is only one that fits.' };
 
+const PICK_ARG = { type: 'integer', description: 'After they were asked which of several jobs they mean: the number of the one they chose, counting the jobs in the question from the first one named. Use it with the same job words, never a guessed id.' };
+
 export function computerControlToolDefinitions(): { type: 'function'; function: { name: string; description: string; parameters: object } }[] {
     const tool = (name: string, description: string, properties: Record<string, object> = {}, required: string[] = []) => ({
         type: 'function' as const,
         function: { name, description, parameters: { type: 'object', properties, ...(required.length ? { required } : {}) } },
     });
     return [
-        tool(COMPUTER_JOBS_TOOL, 'See the jobs on your computer and how each is going: the one working and its step, what needs them, what is waiting in line, what is paused. Use it when they ask how a job is going or what is on your computer. Name a job to also get the steps it took so far.', { job: JOB_ARG }),
-        tool(PAUSE_JOB_TOOL, 'Pause a job on your computer: it keeps its progress and sign-ins, costs nothing while it waits, and carries on from where it was when they say resume. Use it when they ask you to pause, hold or stop a job "for now". It acts at once: do not ask first.', { job: JOB_ARG }),
-        tool(RESUME_JOB_TOOL, 'Carry on with a paused job, from where it stopped. It acts at once: do not ask first.', { job: JOB_ARG }),
+        tool(COMPUTER_JOBS_TOOL, 'See the jobs on your computer and how each is going: the one working and its step, what needs them, what is waiting in line, what is paused. Use it when they ask how a job is going or what is on your computer. Name a job to also get the steps it took so far.', { job: JOB_ARG, pick: PICK_ARG }),
+        tool(PAUSE_JOB_TOOL, 'Pause a job on your computer: it keeps its progress and sign-ins, costs nothing while it waits, and carries on from where it was when they say resume. Use it when they ask you to pause, hold or stop a job "for now". It acts at once: do not ask first.', { job: JOB_ARG, pick: PICK_ARG }),
+        tool(RESUME_JOB_TOOL, 'Carry on with a paused job, from where it stopped. It acts at once: do not ask first.', { job: JOB_ARG, pick: PICK_ARG }),
         tool(
             JOB_FIRST_TOOL,
             'Put a waiting job first. With pause_running, do it now: the job that is working pauses, this one starts, and the paused one carries on by itself right after. Use pause_running only when they say it cannot wait ("do this first", "do it now"); a new ask never interrupts the running job on its own. For a job they have not asked for yet, start it with use_computer first, then call this.',
-            { job: JOB_ARG, pause_running: { type: 'boolean', description: 'True when they want it done now, before the job that is working (that one pauses and carries on by itself after).' } },
+            { job: JOB_ARG, pick: PICK_ARG, pause_running: { type: 'boolean', description: 'True when they want it done now, before the job that is working (that one pauses and carries on by itself after).' } },
             ['job']
         ),
-        tool(CANCEL_JOB_TOOL, 'Cancel one job: it ends and cannot be resumed; its files are kept, and the others carry on. A job that has started always asks them first, with a line under your reply: call it when they ask to cancel or end one job, and again when they say yes in their next message (a job that never started is cancelled at once). Never cancel to "pause"; never in the same reply as the question.', { job: JOB_ARG }),
+        tool(CANCEL_JOB_TOOL, 'Cancel one job: it ends and cannot be resumed; its files are kept, and the others carry on. A job that has started always asks them first, with a line under your reply: call it when they ask to cancel or end one job, and again when they say yes in their next message (a job that never started is cancelled at once). Never cancel to "pause"; never in the same reply as the question.', { job: JOB_ARG, pick: PICK_ARG }),
         tool(STOP_COMPUTER_TOOL, 'Stop everything on your computer: every job ends, paused ones too, and their files are kept. It always asks them first, with a line under your reply: call it when they ask to stop everything, and again when they say yes in their next message. For one job use cancel_computer_job.'),
         tool(
             TELL_JOB_TOOL,
             "Pass the person's words on to a job: a change to a job that is working (\"use 12 March instead\", \"skip the hotel\"), or their answer when a job is waiting for their answer. It reaches the job at once and it carries on with it. Decide from their words whether it is a change to a job or a new job; if you truly cannot tell, ask one short question first. Never pass something on silently: this tool says it under your reply.",
             {
                 job: JOB_ARG,
+                pick: PICK_ARG,
                 message: { type: 'string', description: "What to tell the job, in the person's own words with what the job needs to act on it." },
             },
             ['message']
@@ -93,6 +97,24 @@ interface ControlAsk {
     told: boolean;
     /** A message of the person's came after it was told: this turn may answer it. */
     answerable: boolean;
+    /** Only for a question a narrowed Stop put again (GPT's eighth note, D): the jobs of the original question this one leaves alone, by title (null: none), said after what was done. */
+    leftOut?: Array<string | null>;
+}
+
+/**
+ * A yes to a Stop that named only SOME of the jobs it listed (GPT's eighth note, D), for the message of this turn alone: nothing is stopped by it. Brick says it will act on exactly those jobs and
+ * asks about them; the person's next plain yes acts on them only. `which`: the words fit two of the listed titles (or name part of one title and all of another), so Brick asks which.
+ */
+interface Narrowed {
+    jobIds: string[];
+    titles: string[];
+    leftOut: Array<string | null>;
+    which?: boolean;
+    /**
+     * The reply queue the question was put under (`true`: no queue, the model says it). A second call of this turn on the SAME queue says nothing again; a reply asked again makes a new queue,
+     * and the question goes into it (CodeRabbit on the round 9 head).
+     */
+    said?: ConfirmationQueue | true;
 }
 
 /** The controls of one person and Brick in this chat (kept in the chat's memory, runtime only). */
@@ -113,6 +135,18 @@ export interface ControlState {
      * again (a reply written again, a request whose answer was lost) is done once. The person's next message clears them, so a second identical note is a second note.
      */
     commands: Map<string, string>;
+    /** This turn's message narrowed an answerable Stop (see `Narrowed`). Cleared by the next message. */
+    narrowed?: Narrowed;
+    /** The live jobs the last "which one do you mean?" named, in the order it named them (kept across messages): the answer picks one of them by its number, never by a guessed id. */
+    shown?: { ids: string[]; at: number; seq?: number };
+    /** The number of the last "which one?" question put (the one whose choices were kept last wins, whatever order the replies are delivered in). */
+    askedSeq?: number;
+}
+
+/** Keeps the choices of a "which one?" question once it was delivered, unless the choices of a LATER question were kept already (a late delivery never puts an older list back). */
+function commitShown(state: ControlState, ids: string[], seq: number): void {
+    if ((state.shown?.seq ?? 0) > seq) return;
+    state.shown = { ids, at: Date.now(), seq };
 }
 
 export function newControlState(): ControlState {
@@ -179,9 +213,11 @@ function titleRunsNamed(tokens: string[], titles: string[]): { named: boolean[];
     const named = new Array<boolean>(tokens.length).fill(false);
     // The words of a run that is the title's WHOLE token sequence
     const whole = new Array<boolean>(tokens.length).fill(false);
-    for (const title of titles.map((one) => tokensOf(one)).filter((words) => words.length > 0)) {
-        for (let at = 0; at < tokens.length; at++) {
-            if (!endsJobBefore(tokens, at)) continue;
+    const words = titles.map((one) => tokensOf(one)).filter((one) => one.length > 0);
+    // Left to right: a title may also follow a title that was named ("cancel Visa form and Taxi booking"), straight after it or after "and"
+    for (let at = 0; at < tokens.length; at++) {
+        if (!startsTitle(tokens, at, named)) continue;
+        for (const title of words) {
             let length = 0;
             while (at + length < tokens.length && length < title.length && tokens[at + length] === title[length]) length++;
             // A title that BEGINS with a condition word ("When ready") is told apart from the condition only when the message says it is a name: "yes, cancel when ready" is ambiguous and is no yes,
@@ -208,6 +244,13 @@ const OTHER_ACTION = new Set(['pause', 'paused', 'pausing', 'resume', 'resumed',
 const ENDING_VERB = new Set(['cancel', 'cancels', 'cancelled', 'canceled', 'cancelling', 'canceling', 'end', 'ends', 'ending', 'stop', 'stops', 'stopping', 'delete', 'kill', 'abort', 'remove', 'drop', 'terminate', 'finish']);
 /** Words that may stand between the ending verb and the title ("cancel the pause job"). */
 const BETWEEN = new Set(['the', 'my', 'that', 'this', 'job', 'task', 'one', 'called', 'named']);
+
+/** Where a title may start: right after an ending verb ("cancel Visa form"), or after a title the message already named ("... and Taxi booking"). */
+function startsTitle(tokens: string[], at: number, named: boolean[]): boolean {
+    if (endsJobBefore(tokens, at)) return true;
+    if (at > 0 && named[at - 1]) return true;
+    return at > 1 && tokens[at - 1] === 'and' && named[at - 2];
+}
 
 function endsJobBefore(tokens: string[], at: number): boolean {
     // "the job CALLED Pause menu audit": naming the job by "called" or "named" is a reference to it, whatever comes before (CodeRabbit on 24dea75c, item 5)
@@ -243,6 +286,50 @@ function namesAnotherAction(message: string, asks: Array<Pick<ControlAsk, 'title
     return tokens.some((word, index) => !own[index] && OTHER_ACTION.has(word));
 }
 
+/**
+ * Which of the jobs a Stop listed a clear yes names (GPT's eighth note, D). Null when it names none of them (a plain yes: everything listed) or all of them. Otherwise the jobs it names, by the
+ * words it uses: a title in full counts only when no longer title is named at the same place ("Visa form renewal" is not also "Visa form"); words that are only the START of a title count as naming
+ * that job when it is the only one they fit; words that fit two titles, or one in full and part of another, ask which.
+ */
+export function narrowingOf(message: string, ask: Pick<ControlAsk, 'titles' | 'jobIds'>): Narrowed | null {
+    const tokens = tokensOf(message);
+    const words = ask.titles.map((title) => tokensOf(title));
+    const whole = new Array<boolean>(words.length).fill(false);
+    const partial = new Array<boolean>(words.length).fill(false);
+    const named = new Array<boolean>(tokens.length).fill(false);
+    // The words of a title named in full: a title that starts INSIDE them is part of that longer title, never named by itself ("Book taxi" names "Book taxi", not also "Taxi"), wherever the longer one began (CodeRabbit on the round 9 head)
+    const insideWhole = new Array<boolean>(tokens.length).fill(false);
+    for (let at = 0; at < tokens.length; at++) {
+        if (insideWhole[at] || !startsTitle(tokens, at, named)) continue;
+        const matches = words.map((title, index) => {
+            let length = 0;
+            while (title.length > 0 && at + length < tokens.length && length < title.length && tokens[at + length] === title[length]) length++;
+            const ambiguous = length === title.length && length > 0 && CONDITION_WORDS.has(tokens[at]) && !(at > 0 && (tokens[at - 1] === 'called' || tokens[at - 1] === 'named'));
+            return { index, length, whole: length > 0 && length === title.length && !ambiguous };
+        });
+        const longest = Math.max(0, ...matches.filter((one) => one.whole).map((one) => one.length));
+        for (const one of matches) {
+            if (one.length === 0) continue;
+            for (let i = 0; i < one.length; i++) named[at + i] = true;
+            if (one.whole) {
+                // a shorter title inside a longer one that is also named here is not named by itself
+                if (one.length === longest) {
+                    whole[one.index] = true;
+                    for (let i = 1; i < one.length; i++) insideWhole[at + i] = true;
+                }
+            } else if (one.length >= longest) partial[one.index] = true;
+        }
+    }
+    const wholeCount = whole.filter(Boolean).length;
+    const partialCount = partial.filter((one, index) => one && !whole[index]).length;
+    if (wholeCount === words.length || (wholeCount === 0 && partialCount === 0)) return null;
+    const leftOutOf = (keep: boolean[]): Array<string | null> => ask.titles.filter((_, index) => !keep[index]).map((title) => (title.trim() ? title : null));
+    if ((wholeCount >= 1 && partialCount >= 1) || (wholeCount === 0 && partialCount >= 2)) return { jobIds: [...ask.jobIds], titles: [...ask.titles], leftOut: [], which: true };
+    const keep = wholeCount >= 1 ? whole : partial.map((one, index) => one && !whole[index]);
+    if (keep.every(Boolean)) return null;
+    return { jobIds: ask.jobIds.filter((_, index) => keep[index]), titles: ask.titles.filter((_, index) => keep[index]), leftOut: leftOutOf(keep) };
+}
+
 /** How far a message names the question: the whole-word overlap with the titles of the jobs a cancel is about, and for Stop the words that mean everything. 0 names it not at all. */
 export function askNamedBy(message: string, ask: Pick<ControlAsk, 'kind' | 'titles'>): number {
     const tokens = new Set(tokensOf(message));
@@ -265,14 +352,19 @@ export function startControlTurn(state: ControlState | undefined, message?: stri
     if (!state) return;
     state.turn += 1;
     state.said = typeof message === 'string' ? message : '';
+    state.narrowed = undefined;
     const answered = new Set<string>();
     // A yes that names another action ("yes, pause it") is no answer to a question about ending a job (a job whose own title says "pause" is not an action: see `namesAnotherAction`)
     const told = [...state.asks].filter(([, ask]) => ask.told && !ask.answerable);
     if (isClearYes(message, told.flatMap(([, ask]) => ask.titles)) && !namesAnotherAction(message as string, told.map(([, ask]) => ask))) {
         // One question was asked: a yes answers it. Several were asked in one reply (cancel this job, cancel that one): a yes answers ONE of them, and only when it names that one alone; a
         // bare yes, or one that names more than one, answers none, and every question ends (they are asked again, so the person says which)
-        if (told.length === 1) answered.add(told[0][0]);
-        else if (told.length > 1) {
+        if (told.length === 1) {
+            // A yes to a Stop that names only SOME of its jobs ends nothing: it narrows what is asked (GPT's eighth note, D), and only the next plain yes acts, on those jobs only
+            const narrowed = told[0][1].kind === 'stop' && told[0][1].titles.length > 1 ? narrowingOf(message as string, told[0][1]) : null;
+            if (narrowed) state.narrowed = narrowed;
+            else answered.add(told[0][0]);
+        } else if (told.length > 1) {
             const named = told.filter(([, ask]) => askNamedBy(message as string, ask) > 0);
             if (named.length === 1) answered.add(named[0][0]);
         }
@@ -300,6 +392,11 @@ export interface ComputerControlContext {
      * again, an answer that was lost, the whole event delivered again) is done once. Without it a control has a random id, as before: it is done once per request only.
      */
     inbound?: { eventId: string };
+    /**
+     * The jobs of this person on this Brick that ended lately, newest first, read fresh from Orbit (the Brick chat audit, 26 Nov): `computer_jobs` lists them beside the live ones, so a job that
+     * finished is never read as "no job". Null when Orbit could not say; without it the list is only the live jobs, as before.
+     */
+    endedLately?: () => Promise<EndedJobNow[] | null>;
 }
 
 /** The name the ids of controls are made under: a fixed name of our own, so the same message and control always make the same id, here and after a restart. */
@@ -410,9 +507,11 @@ const LINE_SAID = 'A fixed line under your reply already tells them this, in its
 export function runComputerControlTool(name: string, args: Record<string, unknown>, context: ComputerControlContext): Promise<Record<string, unknown>> {
     // The message this call began on: when a newer one has come by the time the call is about to change something, the call is abandoned
     const turn = context.state.turn;
+    // The choices the person was shown when this call was made: a newer question may commit other choices while the job list is read, and their number picks from the ones they saw (CodeRabbit round 3)
+    const shown = context.state.shown;
     const run = context.state.chain.then(
-        () => control(name, args, context, turn),
-        () => control(name, args, context, turn)
+        () => control(name, args, context, turn, shown),
+        () => control(name, args, context, turn, shown)
     );
     context.state.chain = run.catch(() => undefined);
     return run.catch((error) => {
@@ -435,7 +534,32 @@ function say(context: ComputerControlContext, lines: string[], result: Record<st
 const STALE_CALL = { done: false, stale: true, note: 'A newer message from them came in while this was being looked at, so nothing was changed. Answer their newer message instead.' };
 
 /** What names a job in this turn's record of who a control went to: the person's words EXACTLY (two jobs whose ids differ only in a dash are two jobs), never a cleaned-up version of them. */
-const resolvedKeyOf = (name: string, words: string, args: Record<string, unknown>): string => `${name}|${JSON.stringify(words)}|${args.pause_running === true}`;
+const resolvedKeyOf = (name: string, words: string, args: Record<string, unknown>): string => `${name}|${JSON.stringify(words)}|${args.pause_running === true}|${pickOf(args) ?? ''}`;
+
+/** How long the jobs a "which one do you mean?" named are kept for the answer to pick from. */
+const SHOWN_KEEP_MS = 6 * 60 * 60 * 1000;
+
+/** The number the model gave as `pick` (a whole number from 1), or undefined. */
+function pickOf(args: Record<string, unknown>): number | undefined {
+    return typeof args.pick === 'number' && Number.isInteger(args.pick) && args.pick >= 1 ? args.pick : undefined;
+}
+
+/**
+ * The job a `pick` names: the nth job of the last live "which one?" question, only if it is still on the computer, and only if it is one the words fit (a pick kept from a question about another
+ * title never reaches a job of that title). null: a pick that names no job now; it is never read as the title (the one they turned down could be the one left).
+ */
+function pickedJob(args: Record<string, unknown>, words: string, jobs: ComputerControlJob[], shown: ControlState['shown']): ComputerControlJob | null {
+    const n = pickOf(args);
+    if (n === undefined || !shown || Date.now() - shown.at >= SHOWN_KEEP_MS) return null;
+    const job = jobs.find((one) => one.id === shown.ids[n - 1]);
+    if (!job) return null;
+    if (words) {
+        const fits = findJob(words, jobs);
+        const ok = 'job' in fits ? fits.job.id === job.id : 'which' in fits && fits.which.some((one) => one.id === job.id);
+        if (!ok) return null;
+    }
+    return job;
+}
 
 /** The key this turn already holds for the control being asked (the job it first went to, and the control it sent), when it was sent. */
 function recordedControl(name: string, args: Record<string, unknown>, state: ControlState): string | null {
@@ -454,7 +578,7 @@ function recordedControl(name: string, args: Record<string, unknown>, state: Con
     return key && state.calls.has(key) ? key : null;
 }
 
-async function control(name: string, args: Record<string, unknown>, context: ComputerControlContext, turn: number): Promise<Record<string, unknown>> {
+async function control(name: string, args: Record<string, unknown>, context: ComputerControlContext, turn: number, shown: ControlState['shown']): Promise<Record<string, unknown>> {
     if (!isComputerControlTool(name)) return { error: 'Unknown tool.' };
     const door = (ask: Omit<ComputerControlAsk, 'isGuest'>): Promise<ComputerControlAnswer> =>
         context.admin.controlComputerJobs(context.botId, context.userId, { ...ask, ...(typeof context.isGuest === 'boolean' ? { isGuest: context.isGuest } : {}) });
@@ -474,9 +598,11 @@ async function control(name: string, args: Record<string, unknown>, context: Com
     const jobs = jobsOf(view);
     const words = clean(args.job, JOB_WORDS_MAX);
 
-    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, view, jobs, door);
+    if (name === COMPUTER_JOBS_TOOL) return seeJobs(words, args, context, view, jobs, door, shown);
     // The list was read while a newer message may have come: a call that began on an older message changes nothing (a cancel or a stop must not run on the strength of a message that is no longer the latest)
     if (context.state.turn !== turn) return STALE_CALL;
+    // A yes that named only some of the jobs a Stop listed ended nothing: Brick says what it will do, and asks about exactly those jobs (GPT's eighth note, D). Whichever of the two tools the model calls
+    if (context.state.narrowed && (name === STOP_COMPUTER_TOOL || name === CANCEL_JOB_TOOL)) return askNarrowed(context.state.narrowed, view, jobs, context, door);
     if (name === STOP_COMPUTER_TOOL) return stopAll(view, jobs, context, door);
     // The same control again in this turn (a reply asked again) goes to the job it first named, and replays what it did, whatever the list shows by now
     const resolvedKey = resolvedKeyOf(name, words, args);
@@ -494,9 +620,22 @@ async function control(name: string, args: Record<string, unknown>, context: Com
               : name === JOB_FIRST_TOOL
                 ? view.queued
                 : jobs;
-    const found: Found = resolved ? { job: resolved } : findJob(words, jobs, fallback);
+    let found: Found;
+    if (resolved) found = { job: resolved };
+    else if (args.pick !== undefined && args.pick !== null) {
+        // The answer to "which one?": that job by its number, or the question again; a pick that names no job is never read as the title
+        const chosen = pickedJob(args, words, jobs, shown);
+        if (chosen) found = { job: chosen };
+        else {
+            const again = findJob(words, jobs, fallback);
+            found = 'which' in again ? again : { none: true };
+        }
+    } else found = findJob(words, jobs, fallback);
     if ('none' in found) return say(context, [CONTROL_REFUSALS.noSuchJob(quotedTitles(jobs.map((job) => job.title)))], { done: false, success: false });
-    if ('which' in found) return say(context, [CONTROL_REFUSALS.whichJob(quotedTitles(found.which.map((job) => job.title)))], { done: false, asked: 'which' });
+    if ('which' in found) {
+        const which = whichLine(found.which, context);
+        return say(context, [which.line], { done: false, asked: 'which' }, which.keep);
+    }
     const job = found.job;
     context.state.resolved.set(resolvedKey, job);
 
@@ -547,14 +686,27 @@ async function control(name: string, args: Record<string, unknown>, context: Com
             // The cancel already sent in this turn (a reply asked again) says what it did, and asks nothing
             if (context.state.calls.has(key)) return once(context, key, () => Promise.reject(new Error('unused')));
             const ask = context.state.asks.get(key);
+            // A question a narrowed Stop put again carries the jobs it left alone: they are said last, after what was done
+            const leftOut = ask?.answerable && ask.told ? ask.leftOut : undefined;
             // A job that has started (or is paused) is always named back first; one that never started used nothing and goes at once (the approved mock, pictures 13 and 14)
             if (hasStarted(job) && (!ask || !ask.told || !ask.answerable)) return askFirst(context, key, { kind: 'cancel', jobIds: [job.id], titles: [job.title] }, [lineOf(CONTROL_WORDS.askCancel, job.title)]);
             context.state.asks.delete(key);
-            return once(context, key, async () => {
-                const answer = await acting({ action: 'cancel', jobId: job.id });
+            // A job shown as never started goes without a question, but only if it still has not started when Orbit looks: it says `started` and cancels nothing otherwise
+            let startedSince = false;
+            const done = await once(context, key, async () => {
+                const answer = await acting({ action: 'cancel', jobId: job.id, ...(hasStarted(job) ? {} : { expected: 'not_started' as const }) });
+                if (!answer.ok && reasonOf(answer) === 'started') {
+                    startedSince = true;
+                    return { result: { done: false }, lines: [] };
+                }
                 if (!answer.ok) return refused(reasonOf(answer), job, view);
-                return { result: { done: true }, lines: [lineOf(hasStarted(job) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, job.title)] };
+                const cancelled = lineOf(hasStarted(job) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, job.title);
+                return { result: { done: true }, lines: [leftOut && leftOut.length > 0 ? `${cancelled}\n${CONTROL_WORDS.notStopped(othersOf(leftOut))}` : cancelled] };
             });
+            if (!startedSince) return done;
+            // It began after the list was read: nothing was cancelled, and it is asked about like any job that has started. This turn holds no cancel for it, so the question is not cut short
+            context.state.calls.delete(key);
+            return askFirst(context, key, { kind: 'cancel', jobIds: [job.id], titles: [job.title], ...(leftOut ? { leftOut } : {}) }, [lineOf(CONTROL_WORDS.askCancel, job.title)]);
         }
         case TELL_JOB_TOOL: {
             const message = cleanMessage(args.message);
@@ -657,7 +809,7 @@ async function once(context: ComputerControlContext, key: string, act: () => Pro
 }
 
 /** Cancel and Stop ask first: the question goes under the reply, and counts as asked only once that reply was delivered. */
-function askFirst(context: ComputerControlContext, key: string, ask: Pick<ControlAsk, 'kind' | 'jobIds' | 'titles'>, lines: string[]): Record<string, unknown> {
+function askFirst(context: ComputerControlContext, key: string, ask: Pick<ControlAsk, 'kind' | 'jobIds' | 'titles' | 'leftOut'>, lines: string[]): Record<string, unknown> {
     const kept = context.state.asks.get(key);
     // The same question again in this turn (or a reply asked again) is the same question: it is not answered by it
     const entry: ControlAsk = kept && !kept.answerable && sameJobs(kept.jobIds, ask.jobIds) ? kept : { ...ask, told: false, answerable: false };
@@ -674,6 +826,108 @@ function askFirst(context: ComputerControlContext, key: string, ask: Pick<Contro
     );
 }
 
+/**
+ * "Which one do you mean?" over live jobs. A title shown twice is told apart by when the person asked for it (FINAL, 24 Nov), newest first (Orbit's own list is oldest first, so it is sorted here by
+ * `askedAt`). When Orbit gave no time for such a job, nothing is said about newer or older (the game cannot know): the plain question. The jobs are kept in the order they were named, so the
+ * answer can pick by number.
+ */
+function whichLine(found: ComputerControlJob[], context: ComputerControlContext): { line: string; keep: () => void } {
+    const same = (a: string, b: string): boolean => plain(a) === plain(b);
+    const ordered = [...found].sort((a, b) => (a.askedAt !== undefined && b.askedAt !== undefined ? b.askedAt - a.askedAt : a.askedAt !== undefined ? -1 : b.askedAt !== undefined ? 1 : 0));
+    // Jobs that all share one title are told apart in at most three places ("the newest one, the one before it, the oldest one"): more than three are cut to the newest three, in the question AND in the numbers kept,
+    // so a number in the question is always the job it names (never the fourth, oldest one under "the oldest one")
+    const sorted = ordered.every((job) => same(job.title, ordered[0].title)) ? ordered.slice(0, WHICH_SHOWN_MAX) : ordered;
+    const ids = sorted.map((job) => job.id);
+    // The choices are kept only once the question is delivered: one that never reached the person must not replace the ones they were last shown (CodeRabbit on the round 9 head)
+    const seq = (context.state.askedSeq = (context.state.askedSeq ?? 0) + 1);
+    const keep = (): void => commitShown(context.state, ids, seq);
+    const twinsUndated = sorted.some((job, index) => job.askedAt === undefined && sorted.some((other, at) => at !== index && same(other.title, job.title)));
+    if (twinsUndated) return { line: CONTROL_REFUSALS.whichJob(quotedTitles(sorted.map((job) => job.title))), keep };
+    return { line: whichDated('live', sorted.map((job) => ({ title: job.title, ...(job.askedAt === undefined ? {} : { at: job.askedAt }) })), Date.now(), same, (quoted) => CONTROL_REFUSALS.whichJob(quoted)), keep };
+}
+/** How many jobs a "which one do you mean?" about live jobs names (the same three the question about ended jobs names). */
+const WHICH_SHOWN_MAX = 3;
+
+/**
+ * A yes that named only some of the jobs a Stop listed (GPT's eighth note, D): nothing is stopped. Brick says it will act on exactly those jobs and who it leaves alone, then asks about them (the
+ * approved cancel question for one, the same for two or more); the person's next plain yes acts on them only. A job that never started used nothing: those are cancelled at once (the approved
+ * rule) and the jobs left alone are said last. Words that fit two titles ask which.
+ */
+async function askNarrowed(
+    narrowed: Narrowed,
+    view: ComputerControlView,
+    jobs: ComputerControlJob[],
+    context: ComputerControlContext,
+    door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>
+): Promise<Record<string, unknown>> {
+    // Put under the reply already in this turn (the model called both tools, or the reply was asked again): nothing is said twice
+    // The message this question was put on: the cancels below stop when a newer one has come
+    const origin = context.state.turn;
+    // (a reply asked again has a NEW queue: the question goes into it, and a second call on the same queue says nothing again)
+    const queue = context.confirmations ?? true;
+    if (narrowed.said === queue) return { done: false, asked: true, waitingForTheirAnswer: true, note: LINE_SAID };
+    const named = narrowed.jobIds.map((id) => jobs.find((job) => job.id === id)).filter((job): job is ComputerControlJob => !!job);
+    narrowed.said = queue;
+    if (narrowed.which) {
+        if (named.length > 1) {
+            const which = whichLine(named, context);
+            return say(context, [which.line], { done: false, asked: 'which' }, which.keep);
+        }
+        return say(context, [CONTROL_REFUSALS.whichJob(quotedTitles(narrowed.titles))], { done: false, asked: 'which' });
+    }
+    if (named.length === 0) return say(context, [CONTROL_WORDS.stoppedNothingLeft(0, narrowed.jobIds.length, narrowed.titles.length === 1 ? narrowed.titles[0] : undefined)], { done: false, success: false });
+    const statement = CONTROL_WORDS.narrowedStatement(quotedTitles(named.map((job) => job.title)), othersOf(narrowed.leftOut));
+    if (named.every((job) => !hasStarted(job))) {
+        // Jobs Orbit found started since the list was read: nothing was cancelled for them, and they are asked about below, like any job that has started
+        const startedSince: ComputerControlJob[] = [];
+        const done = await once(context, `stop|${named.map((job) => job.id).join('|')}`, async () => {
+            const lines: string[] = [];
+            // `done` only when EVERY selected job was cancelled: a cancel that broke or came back unknown may or may not have been taken, a refused one was not, and one never sent (a newer message came) was not
+            // (CodeRabbit on the round 10 head). `unknown` says some cancel may have gone through
+            let cancelled = 0;
+            let known = true;
+            for (const job of named) {
+                // A newer message came while the cancels were going: no more are sent on the strength of the older one, and what was already done is still said (CodeRabbit on the round 9 head)
+                if (context.state.turn !== origin) break;
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const answer = await door({ action: 'cancel', jobId: job.id, expected: 'not_started', commandId: commandIdOf(context.state, context.inbound?.eventId, 'cancel', job.id, '') });
+                    if (!answer.ok && reasonOf(answer) === 'started') {
+                        startedSince.push(job);
+                        continue;
+                    }
+                    if (answer.ok) cancelled += 1;
+                    else if (reasonOf(answer) === 'unknown') known = false;
+                    lines.push(answer.ok ? lineOf(CONTROL_WORDS.cancelledQueued, job.title) : refused(reasonOf(answer), job, view).lines[0]);
+                } catch {
+                    // A request that broke may have been taken: said as not known (never as done, never as "nothing changed"), and the cancels that were done stay told
+                    lines.push(CONTROL_REFUSALS.unknown);
+                    known = false;
+                }
+            }
+            // Only when nothing was said at all (a newer message came before the first cancel went) is there nothing to tell
+            if (lines.length === 0) return { result: { done: false, stale: true }, lines: [] };
+            // The jobs left alone are said last: with a question still to come (some jobs began) they are said after its yes, with the question's own record of them
+            if (narrowed.leftOut.length > 0 && startedSince.length === 0) lines.push(CONTROL_WORDS.notStopped(othersOf(narrowed.leftOut)));
+            return { result: cancelled === named.length ? { done: true } : { done: false, ...(known ? {} : { unknown: true }) }, lines: [lines.join('\n')] };
+        });
+        if (startedSince.length === 0) return done;
+        // This turn holds no cancel for the jobs that began: the question about them is not cut short by the record of the others
+        context.state.calls.delete(`stop|${named.map((job) => job.id).join('|')}`);
+        const asked =
+            startedSince.length === 1
+                ? askFirst(context, `cancel|${startedSince[0].id}`, { kind: 'cancel', jobIds: [startedSince[0].id], titles: [startedSince[0].title], leftOut: narrowed.leftOut }, [lineOf(CONTROL_WORDS.askCancel, startedSince[0].title)])
+                : askFirst(context, 'stop', { kind: 'stop', jobIds: startedSince.map((job) => job.id), titles: startedSince.map((job) => job.title), leftOut: narrowed.leftOut }, [CONTROL_WORDS.askCancelMany(quotedTitles(startedSince.map((job) => job.title)))]);
+        // Lines already said for the jobs that were cancelled stay said (the model is given both when it says them itself)
+        return context.confirmations || typeof done.note !== 'string' || done.stale === true ? asked : { ...asked, note: `${done.note} ${String(asked.note)}` };
+    }
+    if (named.length === 1) {
+        const job = named[0];
+        return askFirst(context, `cancel|${job.id}`, { kind: 'cancel', jobIds: [job.id], titles: [job.title], leftOut: narrowed.leftOut }, [`${statement}\n${lineOf(CONTROL_WORDS.askCancel, job.title)}`]);
+    }
+    return askFirst(context, 'stop', { kind: 'stop', jobIds: named.map((job) => job.id), titles: named.map((job) => job.title), leftOut: narrowed.leftOut }, [`${statement}\n${CONTROL_WORDS.askCancelMany(quotedTitles(named.map((job) => job.title)))}`]);
+}
+
 /** Orbit's reason for a no (the union is not narrowed by `ok` under this project's compiler settings). */
 const reasonOf = (answer: ComputerControlAnswer): string => ('reason' in answer && typeof answer.reason === 'string' ? answer.reason : 'unknown');
 
@@ -686,18 +940,38 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
     if (sent) return once(context, sent, () => Promise.reject(new Error('unused')));
     if (!jobs.length) return say(context, [CONTROL_REFUSALS.noJobs], { done: false, success: false });
     const key = 'stop';
-    const ids = jobs.map((job) => job.id);
+    const allIds = jobs.map((job) => job.id);
     const ask = context.state.asks.get(key);
-    if (!ask || !ask.told || !ask.answerable || !sameJobs(ask.jobIds, ids)) {
+    // The question a narrowed Stop put (only some of the jobs): its yes ends exactly those jobs, never the others
+    const narrowedAsk = ask && ask.answerable && ask.told && ask.leftOut !== undefined ? ask : undefined;
+    if (!narrowedAsk && (!ask || !ask.told || !ask.answerable || !sameJobs(ask.jobIds, allIds))) {
         if (ask && ask.answerable) context.state.asks.delete(key);
-        return askFirst(context, key, { kind: 'stop', jobIds: ids, titles: jobs.map((job) => job.title) }, [CONTROL_WORDS.askStop(quotedTitles(jobs.map((job) => job.title)))]);
+        return askFirst(context, key, { kind: 'stop', jobIds: allIds, titles: jobs.map((job) => job.title) }, [CONTROL_WORDS.askStop(quotedTitles(jobs.map((job) => job.title)))]);
     }
     context.state.asks.delete(key);
+    const ids = narrowedAsk ? [...narrowedAsk.jobIds] : allIds;
+    const named = narrowedAsk ? ids.map((id) => jobs.find((job) => job.id === id)).filter((job): job is ComputerControlJob => !!job) : jobs;
     return once(context, `stop|${ids.join('|')}`, async () => {
         // Stop names no one job: its id is made from the jobs it was asked about, so a stop asked again over the same jobs is one stop (finding 4)
         // The jobs the person was asked about go WITH the command: Orbit ends those (that are still live), never whatever is live by the time the request lands
         const answer = await door({ action: 'stop', confirmedJobIds: [...ids], commandId: commandIdOf(context.state, context.inbound?.eventId, 'stop', '', [...ids].sort().join('|')) });
-        if (!answer.ok) return refused(reasonOf(answer), jobs[0], view);
+        if (!answer.ok) return refused(reasonOf(answer), named[0] ?? jobs[0], view);
+        if (narrowedAsk) {
+            // The jobs the person left out of their answer are still live and Orbit lists them as left: they are not news. Any other job that is left was added after the question
+            const known = [...(narrowedAsk.leftOut ?? [])];
+            const added = (answer.left ?? []).filter((title) => {
+                const at = known.findIndex((one) => one === title);
+                if (at >= 0) known.splice(at, 1);
+                return at < 0;
+            });
+            const tail = narrowedAsk.leftOut && narrowedAsk.leftOut.length > 0 ? `\n${CONTROL_WORDS.notStopped(othersOf(narrowedAsk.leftOut))}` : '';
+            const count = typeof answer.stopped === 'number' ? answer.stopped : null;
+            if (added.length > 0) {
+                return { result: { done: true, someLeft: true, andThen: 'Some jobs were stopped and some were NOT. A fixed line under your reply already names them: do not say it again and do not reword it. Do not stop or cancel the left jobs unless the person asks in a new message.' }, lines: [CONTROL_WORDS.stoppedSome(count, ids.length, added)] };
+            }
+            const said = count === ids.length && named.length === ids.length ? named.map((job) => lineOf(hasStarted(job) ? CONTROL_WORDS.cancelled : CONTROL_WORDS.cancelledQueued, job.title)).join('\n') : CONTROL_WORDS.stoppedNothingLeft(count, ids.length, named.length === 1 ? named[0].title : undefined);
+            return { result: { done: true }, lines: [`${said}${tail}`] };
+        }
         // Jobs that were live but not in the set the person confirmed (they began after the question): never stopped, and said so in Brick's own words (a statement, so a plain yes after it confirms nothing)
         if (answer.ok && answer.left && answer.left.length > 0) {
             return { result: { done: true, someLeft: true, andThen: 'Some jobs were stopped and some were NOT. A fixed line under your reply already names them: do not say it again and do not reword it. Do not stop or cancel the left jobs unless the person asks in a new message.' }, lines: [CONTROL_WORDS.stoppedSome(answer.stopped ?? null, jobs.length, answer.left)] };
@@ -711,16 +985,36 @@ async function stopAll(view: ComputerControlView, jobs: ComputerControlJob[], co
 }
 
 /** "How is it going?": the jobs as Orbit has them, in words for the model (no fixed line: it changes nothing), and the steps a named job took so far when Orbit keeps them. */
-async function seeJobs(words: string, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>): Promise<Record<string, unknown>> {
+async function seeJobs(words: string, args: Record<string, unknown>, context: ComputerControlContext, view: ComputerControlView, jobs: ComputerControlJob[], door: (ask: Omit<ComputerControlAsk, 'isGuest'>) => Promise<ComputerControlAnswer>, shown?: ControlState['shown']): Promise<Record<string, unknown>> {
+    // The jobs that ended lately are listed too: a job that ran and finished is not "no job" (the Brick chat audit, 26 Nov). Never in the way of the live list
+    // Read apart from `jobs`: a job that may have ended in between is kept out of the ended list, so no job is told as both going and ended (CodeRabbit on 4ad0f165)
+    const read = context.endedLately ? await context.endedLately().catch(() => null) : null;
+    const ended = read ? endedNotLive(read, jobs) : null;
+    const now = Date.now();
+    const endedLately = ended?.length ? ended.map((job) => endedJobWords(job, now)) : null;
     const result: Record<string, unknown> = {
         jobs: jobs.map((job) => shownJob(job, view)),
+        ...(endedLately ? { endedLately } : {}),
         note: jobs.length
-            ? 'Tell them in a sentence or two how it is going, in plain words, from these states and steps only. Say what needs them, if anything. Never a price, how much time is left or how long it will take.'
-            : 'There are no jobs on your computer right now. Say so in one plain sentence.',
+            ? 'Tell them in a sentence or two how it is going, in plain words, from these states and steps only. Say what needs them, if anything. Never a price, how much time is left or how long it will take.' +
+              (endedLately ? ' The jobs in endedLately ran and ended as they say: never say they did not happen.' : '')
+            : endedLately
+              ? 'Nothing is working, waiting or in line on your computer right now. The jobs in endedLately ran and ended as they say: never say there was no job. Say so in one or two plain sentences.'
+              : ended
+                ? 'Nothing is working, waiting or in line on your computer right now, and no job ended lately. Say so in one plain sentence.'
+                : 'Nothing is working, waiting or in line on your computer right now. Say so in one plain sentence, and never say that no job ran.',
     };
-    if (!words || !jobs.length) return result;
-    const found = findJob(words, jobs);
-    if (!('job' in found)) return { ...result, ...('which' in found ? { which: found.which.map((job) => job.title) } : { notFound: true }) };
+    if ((!words && (args.pick === undefined || args.pick === null)) || !jobs.length) return result;
+    const hasPick = args.pick !== undefined && args.pick !== null;
+    const chosen = hasPick ? pickedJob(args, words, jobs, shown) : undefined;
+    const found: Found = hasPick ? (chosen ? { job: chosen } : { none: true }) : findJob(words, jobs);
+    if (!('job' in found)) {
+        if (!('which' in found)) return { ...result, notFound: true };
+        // The question is a fixed line (the model never words it), and the choices are kept only with that line: a reply that leaves the question out must not replace the ones the person was last shown.
+        // The same ordered list is rendered and saved, so a number in the question is the job it names (CodeRabbit on the round 3 head)
+        const which = whichLine(found.which, context);
+        return say(context, [which.line], { jobs: result.jobs, done: false, asked: 'which' }, which.keep);
+    }
     const activity = await door({ action: 'activity', jobId: found.job.id });
     if (activity.ok && activity.steps?.length) return { ...result, job: found.job.id, stepsSoFar: activity.steps.map((step) => step.label) };
     return { ...result, job: found.job.id };

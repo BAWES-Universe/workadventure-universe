@@ -558,6 +558,25 @@ describe('the model of a check', () => {
         expect(readPage).toHaveBeenCalledWith('brick-1', 'https://example.com');
     });
 
+    it('gives a web page the room a chat reply has, and says when it cut it', async () => {
+        const sentence = 'Price list. ';
+        for (const [length, cut] of [[60_000, false], [200_000, true]] as const) {
+            const content = sentence.repeat(Math.ceil(length / sentence.length)).slice(0, length);
+            const readPage = vi.fn(async () => ({ content }));
+            const ai = {
+                runBrickTask: vi.fn(async (opts: any) => {
+                    const text: string = await opts.runTool(READ_PAGE_TOOL, { url: 'https://example.com' });
+                    // Whole page, valid JSON, when it fits; cut with the chat notice when it does not
+                    if (cut) expect(text).toMatch(/Only the first 72,000 of 200,0\d\d characters fit/);
+                    else expect(JSON.parse(text)).toEqual({ content });
+                    return { ended: 'final' };
+                }),
+            };
+            await new ModelTaskRunner({ ai: ai as never, brick: async () => brick, readPage }).run(run(), async () => true);
+            expect(ai.runBrickTask).toHaveBeenCalledTimes(1);
+        }
+    });
+
     it('refuses a tool it was not given, and tells the model what to fix in a result it cannot use', async () => {
         const { runner } = modelWith(async (opts) => {
             expect(await opts.runTool('send_message', {})).toContain('error');
@@ -623,6 +642,35 @@ describe('each model call of a run is on the books, one row each, under the runâ
     }
     const base = { botId: 'brick-1', providerId: 'universe-ai', system: 's', user: 'u', tools: [], maxSteps: 4, final: 'finish_check', usage: { runId: 'run-1', attempt: 2, userId: 'sara-uuid' } };
     const done = (tokens: number) => ({ content: '', done: true, metadata: { tokensUsed: tokens, promptTokens: tokens - 10, completionTokens: 10 } });
+
+    it('gives the rounds of a run the room a chat reply has: older answers are set aside to a line, a longer one is cut and says so', async () => {
+        const seen: { content: string; name: string }[][] = [];
+        const ai = Object.create(AIService.prototype) as AIService;
+        let call = 0;
+        Object.assign(ai, {
+            resolveProvider: vi.fn(async () => ({ resting: false, source: 'universe-ai', config: { providerId: 'deepseek-flash', limits: { roomChars: 1_000 } } })),
+            meteredStream: async function* (_l: unknown, _p: unknown, _s: unknown, _u: string, _c: unknown, _t: unknown, _sig: unknown, _i: unknown, steps?: { steps: { results: { content: string; name: string }[] }[] }) {
+                seen.push((steps?.steps ?? []).flatMap((step) => step.results.map((result) => ({ ...result }))));
+                call++;
+                yield { content: call < 3 ? 'x'.repeat(300) : '', done: false, toolCalls: [{ id: `c${call}`, name: call < 3 ? 'search' : 'finish_check', arguments: call < 3 ? '{}' : '{"result":"nothing_new"}' }] };
+                yield { content: '', done: true, metadata: { tokensUsed: 10, promptTokens: 5, completionTokens: 5 } };
+            },
+            trackUsage: vi.fn(async () => undefined),
+        });
+        const answers = ['A'.repeat(600), 'B'.repeat(700)];
+        let n = 0;
+        const runTool = vi.fn(async (name: string) => (name === 'search' ? answers[n++] : '{"ok":true}'));
+        const base = { botId: 'brick-1', providerId: 'universe-ai', system: 's', user: 'u', tools: [], maxSteps: 4, final: 'finish_check', usage: { runId: 'run-1', attempt: 1 } };
+        expect(await (ai as unknown as Pick<AIService, 'runBrickTask'>).runBrickTask({ ...base, permit: async () => true, runTool })).toEqual({ ended: 'final' });
+        // Round two still sees round one whole; round three sees round one's answer set aside to a line and round two's cut to what is left of
+        // the room beside what the model said in both (700 would fit alone, but not with the 600 it said before it, and 600 more it said now)
+        expect(seen[0]).toEqual([]);
+        expect(seen[1].map((result) => result.content)).toEqual(['A'.repeat(600)]);
+        expect(seen[2][0].content).toMatch(/^\[search: 600 characters, set aside to make room/);
+        expect(seen[2][1].content).toContain('Only the first');
+        expect(seen[2][1].content.startsWith('B'.repeat(100))).toBe(true);
+        expect(seen[2][1].content.length).toBeLessThan(700);
+    });
 
     it('goes on after a tool, ends after finish_check ran, and books each call on the task channel with its own id', async () => {
         const { ai, tracked } = service([

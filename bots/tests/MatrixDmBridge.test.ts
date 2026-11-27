@@ -1777,10 +1777,40 @@ describe('MatrixDmBridge', () => {
         deps.reply.mockResolvedValue({ text: '', media: [], failed: true });
         await bridge.checkWaiting();
         const kept = () => JSON.parse([...(bridge as any).localWaiting.get(BOT).values()][0].message);
-        expect(kept().unsigned).toEqual({ universe_attempts: 1 });
+        // the test's message has no time of its own: it is kept as one (GPT's eighth note, A2)
+        expect(kept().unsigned).toEqual({ universe_ts_v: 2, universe_attempts: 1, universe_no_ts: true });
         deps.getBotConfig.mockResolvedValueOnce({ ...resting, enabled: true } as never).mockResolvedValueOnce(resting as never);
         await bridge.checkWaiting();
-        expect(kept().unsigned).toEqual({ universe_attempts: 1 });
+        expect(kept().unsigned).toEqual({ universe_ts_v: 2, universe_attempts: 1, universe_no_ts: true });
+    });
+
+    it('a waiting message kept by older code is answered without a moment of consent, one kept now keeps its own time (CodeRabbit round 3)', async () => {
+        await bridge.onEvent(invite());
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        const at = Date.now() - 60_000;
+        await bridge.onEvent({ ...message('book it'), origin_server_ts: at });
+        const rooms = (bridge as any).localWaiting.get(BOT) as Map<string, { message: string; at: number }>;
+        const stored = JSON.parse([...rooms.values()][0].message);
+        expect(stored.unsigned.universe_ts_v).toBe(2);
+        expect(stored.unsigned.universe_no_ts).toBeUndefined();
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenLastCalledWith(BOT, expect.anything(), 'book it', [], expect.objectContaining({ eventTs: at }));
+
+        // The same record as the previous code wrote it: a real-looking time, no version mark (it may have been the inbox's arrival time)
+        deps.getBotConfig.mockResolvedValue(resting as never);
+        await bridge.onEvent({ ...message('book it again'), origin_server_ts: at });
+        const again = (bridge as any).localWaiting.get(BOT) as Map<string, { message: string; at: number }>;
+        const [room, kept] = [...again.entries()][0];
+        const legacy = JSON.parse(kept.message);
+        delete legacy.unsigned;
+        again.set(room, { ...kept, message: JSON.stringify(legacy) });
+        deps.reply.mockClear();
+        deps.getBotConfig.mockResolvedValue({ ...resting, enabled: true } as never);
+        await bridge.checkWaiting();
+        expect(deps.reply).toHaveBeenCalledTimes(1);
+        expect(deps.reply.mock.calls[0][2]).toBe('book it again');
+        expect(deps.reply.mock.calls[0][4]).not.toHaveProperty('eventTs');
     });
 
     it('a waiting message stays in line when the room store is unreachable, and is dropped once the chat is closed', async () => {

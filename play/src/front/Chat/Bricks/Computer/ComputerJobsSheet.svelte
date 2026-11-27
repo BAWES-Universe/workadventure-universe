@@ -52,7 +52,9 @@
             const back = face;
             endAtOnce(brick, what)
                 .then((ended) => {
-                    if (ended && back.face === "activity" && face === back) face = { face: "list" };
+                    // It began while the tap was on its way: nothing was cancelled, and it is asked about like a job that has run
+                    if (ended === "started") face = { face: "ask", what, back };
+                    else if (ended && back.face === "activity" && face === back) face = { face: "list" };
                 })
                 .catch((error) => console.error(error));
         }

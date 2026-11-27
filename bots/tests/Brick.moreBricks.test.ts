@@ -17,13 +17,14 @@ vi.mock('@sentry/node', () => ({ captureException: vi.fn() }));
 vi.mock('../mcp/MCPConnector', () => ({ MCPConnector: { clearCache: vi.fn() } }));
 vi.mock('../utils/MovementLogger', () => ({ movementLogger: {} }));
 
+import { BrickLimitReached } from '../ai/BrickLimit';
 import { AdminApiService } from '../server/AdminApiService';
 import { BotAPI } from '../server/BotAPI';
 import { BotRegistry } from '../server/BotRegistry';
 import { brickChangedEverywhere, listenForBrickChanges } from '../server/brickChanges';
 import { BRICK_NOT_MADE_TEXT, DmReplyService, brickMadeText } from '../server/DmReplyService';
 import { ConversationMemory } from '../memory/ConversationMemory';
-import { BRICK_MADE_KEY, BRICK_MAKE_KEY, BRICK_OFFER_KEY, COMPUTER_NEW_JOB_KEY, COMPUTER_NEW_JOB_OFFER_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
+import { BRICK_MADE_KEY, BRICK_MAKE_KEY, BRICK_OFFER_KEY, COMPUTER_NEW_JOB_KEY, COMPUTER_NEW_JOB_OFFER_KEY, NOTICE_TXN_KEY, MatrixDmBridge } from '../matrix/MatrixDmBridge';
 import { AIService } from '../ai/AIService';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from '../ai/BrickTools';
 import type { MatrixEvent } from '../matrix/MatrixAppServiceRouter';
@@ -82,10 +83,30 @@ describe('What the bot server asks Orbit about Bricks', () => {
         await expect(service.makeBrickFor(BRICK, 'uuid-alice', { name: 'Mine' })).rejects.toThrow();
     });
 
+    it('throws Orbit\'s kind line when the person has made too many new Bricks this hour, so a Brick can say it as it is', async () => {
+        const line = "You've made a lot of Bricks this hour. Try again at 3:40 PM.";
+        request.mockRejectedValueOnce({ isAxiosError: true, response: { status: 429, data: { error: line, code: 'new_bricks_limit', retryAt: '2026-11-21T12:40:00.000Z' } } });
+        await expect(service.makeBrickFor(BRICK, 'uuid-alice', { name: 'Mine' })).rejects.toMatchObject({ name: 'BrickLimitReached', line, retryAt: '2026-11-21T12:40:00.000Z' });
+        // Any other 429, or one that says no line, is an ordinary failure
+        request.mockRejectedValueOnce({ isAxiosError: true, response: { status: 429, data: { error: 'slow down' } } });
+        await expect(service.makeBrickFor(BRICK, 'uuid-alice', { name: 'Mine' })).rejects.not.toBeInstanceOf(BrickLimitReached);
+    });
+
     it('reads how often a job has to come back and what was already suggested', async () => {
         request.mockResolvedValue({ status: 200, data: { after: 5, topics: [{ topic: 'recipes', answer: 'not_now' }, { topic: 'workouts', answer: null }, { nope: 1 }] } });
         expect(await service.brickOffersFor(BRICK, 'uuid-alice')).toEqual({ after: 5, topics: ['recipes', 'workouts'] });
         expect(request.mock.calls[0][0]).toMatchObject({ method: 'get', url: `http://orbit.test/api/bots/${BRICK}/brick-offers`, params: { userId: 'uuid-alice' } });
+    });
+
+    it('asks Orbit to take a claim back with a DELETE, says whether it did, and never fails over it', async () => {
+        request.mockResolvedValueOnce({ status: 200, data: { released: true } });
+        expect(await service.releaseBrickOffer(BRICK, 'uuid-alice', 'recipes')).toBe(true);
+        expect(request.mock.calls[0][0]).toMatchObject({ method: 'delete', url: `http://orbit.test/api/bots/${BRICK}/brick-offers`, data: { userId: 'uuid-alice', topic: 'recipes' } });
+        request.mockResolvedValueOnce({ status: 200, data: { released: false } });
+        expect(await service.releaseBrickOffer(BRICK, 'uuid-alice', 'recipes')).toBe(false);
+        // an Orbit that does not know the call (or is down) changes nothing
+        request.mockRejectedValueOnce(new Error('405'));
+        expect(await service.releaseBrickOffer(BRICK, 'uuid-alice', 'recipes')).toBe(false);
     });
 
     it('asks Orbit whether a suggestion may be shown, and keeps what was tapped without ever failing a reply over it', async () => {
@@ -146,6 +167,16 @@ describe('The two Brick tools', () => {
         expect(make).toContain('right now');
         expect(make).toContain('Do not ask them to confirm');
         expect(make).toContain('"Bot" and "Brick" mean the same');
+    });
+
+    it('tell the model to say the kind line, with its time as written, and not to try again, when too many Bricks were made this hour', async () => {
+        const line = "You've made a lot of Bricks this hour. Try again at 3:40 PM.";
+        admin.makeBrickFor.mockRejectedValue(new BrickLimitReached(line));
+        const notes: BrickNote[] = [];
+        const result = await runBrickTool(MAKE_BRICK_TOOL, ASK, context(notes));
+        expect(result.error).toContain(line);
+        expect(result.error).toContain('Do not try again');
+        expect(notes).toEqual([]);
     });
 
     it('make the Brick for the person, and leave a note for the game with its name, line and look', async () => {
@@ -306,6 +337,7 @@ describe('A reply that made a Brick, or suggests one', () => {
             makeBrickFor: vi.fn(async () => ({ made: true, brick: MADE })),
             answerBrickOffer: vi.fn(async () => undefined),
             claimBrickOffer: vi.fn(async (_botId: string, _userId: string, topic: string) => ({ show: true, topic: topic.toLowerCase() })),
+            releaseBrickOffer: vi.fn(async () => true),
         };
         Object.assign(service, {
             queues: new Map(),
@@ -331,7 +363,7 @@ describe('A reply that made a Brick, or suggests one', () => {
     it('tells the AI service before each answer whether this is a first Brick', async () => {
         const { service, noteBrick } = makeReplies(brickConfig);
         await service.reply(BRICK, person, 'hello', [], { roomId: ROOM });
-        expect(noteBrick).toHaveBeenCalledWith(BRICK, { ownerId: 'user-alice', isDefault: true });
+        expect(noteBrick).toHaveBeenCalledWith(BRICK, { ownerId: 'user-alice', isDefault: true }, 'Brick');
     });
 
     it('carries what the turn did about Bricks with the reply, once, and nothing left from a turn before', async () => {
@@ -445,6 +477,24 @@ describe('A reply that made a Brick, or suggests one', () => {
         expect(await (await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }))!.claimOffer!()).toBeNull();
     });
 
+    it('takes the claim for a suggestion or an App offer back at Orbit when its card never got out, and never for an App the person asked for by name', async () => {
+        const offer: BrickNote = { kind: 'offer', topic: 'Recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const { service, admin } = makeReplies(brickConfig, (memory, playerId) => void (memory.getMemory(BRICK, playerId)!.pendingBricks ??= []).push({ ...offer }));
+        const reply = (await service.reply(BRICK, person, 'pasta again?', [], { roomId: ROOM }))!;
+        expect(admin.releaseBrickOffer).not.toHaveBeenCalled();
+        await reply.releaseOffer!();
+        expect(admin.releaseBrickOffer).toHaveBeenCalledWith(BRICK, 'uuid-alice', 'Recipes');
+
+        const app = { kind: 'app', topic: 'app gmail', app: 'gmail', name: 'Gmail', connectKind: 'readyMade', state: 'new', connectionId: null, ask: 'Connect it?', asked: false, other: null } as BrickNote;
+        const listed = makeReplies(brickConfig, (memory, playerId) => void (memory.getMemory(BRICK, playerId)!.pendingBricks ??= []).push({ ...app }));
+        await (await listed.service.reply(BRICK, person, 'any new email?', [], { roomId: ROOM }))!.releaseApp!();
+        expect(listed.admin.releaseBrickOffer).toHaveBeenCalledWith(BRICK, 'uuid-alice', 'app gmail');
+
+        // one the person asked for by name was never claimed at Orbit: nothing to take back
+        const named = makeReplies(brickConfig, (memory, playerId) => void (memory.getMemory(BRICK, playerId)!.pendingBricks ??= []).push({ ...app, asked: true } as BrickNote));
+        expect(await named.service.reply(BRICK, person, 'connect gmail', [], { roomId: ROOM })).not.toHaveProperty('releaseApp');
+    });
+
     it('never uses up a suggestion on a turn that failed or came back empty', async () => {
         const offer: BrickNote = { kind: 'offer', topic: 'recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
         const { service, generate, admin } = makeReplies(brickConfig);
@@ -507,6 +557,16 @@ describe('A reply that made a Brick, or suggests one', () => {
         admin.makeBrickFor.mockRejectedValue(new Error('down'));
         const reply = await service.reply(BRICK, person, 'Make Recipe Brick', [], { roomId: ROOM, makeOffered: offered });
         expect(reply).toMatchObject({ text: BRICK_NOT_MADE_TEXT });
+        expect(reply).not.toHaveProperty('bricks');
+        expect(admin.answerBrickOffer).not.toHaveBeenCalled();
+    });
+
+    it('says the kind line, with the time they can make another, when "Make it" is over the hour\'s limit, and claims no Brick', async () => {
+        const line = "You've made a lot of Bricks this hour. Try again at 3:40 PM.";
+        const { service, admin } = makeReplies(brickConfig);
+        admin.makeBrickFor.mockRejectedValue(new BrickLimitReached(line));
+        const reply = await service.reply(BRICK, person, 'Make Recipe Brick', [], { roomId: ROOM, makeOffered: offered });
+        expect(reply).toMatchObject({ text: line });
         expect(reply).not.toHaveProperty('bricks');
         expect(admin.answerBrickOffer).not.toHaveBeenCalled();
     });
@@ -649,7 +709,7 @@ describe("More Bricks in a Brick's chat", () => {
         expect(order).toEqual(['answer', 'card']);
         expect(claimOffer).toHaveBeenCalledTimes(1);
         const { kind: _kind, ...card } = offer;
-        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: offer.ask, [BRICK_OFFER_KEY]: card }, expect.any(String)]);
+        expect(client.sendMessage.mock.calls[0]).toEqual([BRICK_USER, ROOM, { msgtype: 'm.text', body: offer.ask, [BRICK_OFFER_KEY]: card, [NOTICE_TXN_KEY]: expect.any(String) }, expect.any(String)]);
 
         client.sendMessage.mockClear();
         claimOffer.mockClear();
@@ -703,6 +763,56 @@ describe("More Bricks in a Brick's chat", () => {
         // One message to Matrix: a first try that arrived but whose answer was lost is not posted twice
         expect(cards[0][3]).toEqual(expect.any(String));
         expect(cards[1][3]).toBe(cards[0][3]);
+    });
+
+    // GPT's fifth note (after release): Orbit counts a suggestion as shown when it allows it, so a card that never reached the person gives the claim back
+    it('gives the suggestion back to Orbit when its card could not be sent even on the second try, and keeps it when the card got through', async () => {
+        const offer = { kind: 'offer', topic: 'recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const { bridge, client, deps } = makeBridge();
+        await bridge.onEvent(invite());
+        const releaseOffer = vi.fn(async () => undefined);
+        const claimOffer = vi.fn(async () => 'recipes');
+
+        // the first try fails and the second gets through: the person saw it, nothing is given back
+        client.sendMessage.mockRejectedValueOnce(new Error('homeserver busy'));
+        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer, releaseOffer });
+        await bridge.onEvent(message('pasta again?'));
+        expect(releaseOffer).not.toHaveBeenCalled();
+
+        // both tries fail: the card never reached them, so the claim is given back
+        client.sendMessage.mockRejectedValueOnce(new Error('homeserver busy')).mockRejectedValueOnce(new Error('homeserver busy'));
+        await bridge.onEvent(message('pasta once more?'));
+        expect(releaseOffer).toHaveBeenCalledTimes(1);
+
+        // a give-back that itself fails never breaks the chat
+        client.sendMessage.mockRejectedValueOnce(new Error('down')).mockRejectedValueOnce(new Error('down'));
+        releaseOffer.mockRejectedValueOnce(new Error('orbit down'));
+        await expect(bridge.onEvent(message('pasta, please?'))).resolves.toBeUndefined();
+        expect(releaseOffer).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not give the suggestion back when both tries got no answer but the card is in the room, or the room cannot be read (Sentry on 3eed7eeb6)', async () => {
+        const offer = { kind: 'offer', topic: 'recipes', ask: 'Want a Brick just for recipes?', name: 'Recipe Brick', line: 'Keeps recipes', instructions: 'You keep recipes.' };
+        const { bridge, client, deps } = makeBridge();
+        await bridge.onEvent(invite());
+        const releaseOffer = vi.fn(async () => undefined);
+        const claimOffer = vi.fn(async () => 'recipes');
+        deps.reply.mockResolvedValue({ text: 'Here is the pasta recipe.', media: [], bricks: [offer], claimOffer, releaseOffer });
+
+        // both answers were lost, but the first try arrived: the card is among the Brick's own messages under its transaction id
+        client.sendMessage.mockRejectedValueOnce(new Error('timeout')).mockRejectedValueOnce(new Error('timeout'));
+        client.getRecentMessages.mockImplementationOnce(async () => {
+            const sent = client.sendMessage.mock.calls.filter(([, , content]: any[]) => BRICK_OFFER_KEY in content).pop()!;
+            return [{ type: 'm.room.message', room_id: ROOM, sender: BRICK_USER, event_id: '$card', content: sent[2] }] as MatrixEvent[];
+        });
+        await bridge.onEvent(message('pasta again?'));
+        expect(releaseOffer).not.toHaveBeenCalled();
+
+        // both answers were lost and the room cannot be read: nothing is known, so the claim stays (a second card is worse than a spent topic)
+        client.sendMessage.mockRejectedValueOnce(new Error('timeout')).mockRejectedValueOnce(new Error('timeout'));
+        client.getRecentMessages.mockRejectedValueOnce(new Error('down'));
+        await bridge.onEvent(message('pasta once more?'));
+        expect(releaseOffer).not.toHaveBeenCalled();
     });
 
     it('hands "Make it" on with the Brick the card described, cut to size, and typed words with nothing', async () => {

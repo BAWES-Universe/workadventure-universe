@@ -61,9 +61,14 @@ describe("a page that takes payments, in the game's window", () => {
         vi.useRealTimers();
     });
 
-    const make = (pay: (...args: unknown[]) => Promise<ArtifactPay>, openWindow?: () => Window | null) =>
+    const make = (
+        pay: (...args: unknown[]) => Promise<ArtifactPay>,
+        openWindow?: () => Window | null,
+        shownVersion?: () => number | undefined
+    ) =>
         pagePayments({
             artifactId: "a1",
+            shownVersion,
             chat: () => undefined,
             frame: () => frameWindow,
             loaded: () => true,
@@ -271,6 +276,89 @@ describe("a page that takes payments, in the game's window", () => {
         await flush();
         expect(get(clear.line)).toMatchObject({ problem: "unavailable", canCheck: false });
         clear.destroy();
+    });
+
+    it("says why when Orbit refuses because the payment was set on a version this person is not shown yet, and the page hears only unavailable", async () => {
+        const close = vi.fn();
+        const popup = { location: { href: "" }, close } as unknown as Window;
+        const payments = make(
+            vi.fn().mockRejectedValueOnce(new ArtifactRequestError(409, "not_published")),
+            () => popup
+        );
+        ask(payments);
+        await flush();
+        expect(close).toHaveBeenCalled();
+        expect(get(payments.line)).toMatchObject({ problem: "not_published", canCheck: false });
+        expect(told()).toEqual(["unavailable"]);
+        payments.destroy();
+    });
+
+    it("says the page was updated when Orbit refuses because a newer version was published since it was opened, and the page hears only unavailable", async () => {
+        const close = vi.fn();
+        const popup = { location: { href: "" }, close } as unknown as Window;
+        const payments = make(
+            vi.fn().mockRejectedValueOnce(new ArtifactRequestError(409, "page_changed")),
+            () => popup
+        );
+        ask(payments);
+        await flush();
+        expect(close).toHaveBeenCalled();
+        expect(get(payments.line)).toMatchObject({ problem: "page_changed", canCheck: false });
+        expect(told()).toEqual(["unavailable"]);
+        payments.destroy();
+    });
+
+    it("asks for the version of the opening the asking page first spoke in, not the one on show now", async () => {
+        let onShow = 1;
+        const at = vi.fn((opening: number) => (opening === 1 ? 3 : 4));
+        const pay = vi
+            .fn()
+            .mockResolvedValueOnce({ status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 })
+            .mockReturnValue(new Promise<never>(() => {}));
+        const payments = pagePayments({
+            artifactId: "a1",
+            chat: () => undefined,
+            frame: () => frameWindow,
+            loaded: () => true,
+            opening: () => onShow,
+            pay: pay as never,
+            storage: memoryStorage(),
+            randomId: counting(),
+            shownVersion: at,
+        });
+        // The page speaks in opening 1 (its restore on load); another version comes on show; the same page taps
+        ask(payments, frameWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "r0",
+            session: "s1",
+            restore: true,
+        });
+        await flush();
+        onShow = 2;
+        ask(payments, frameWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await flush();
+        expect(at).toHaveBeenLastCalledWith(1);
+        expect(pay.mock.calls[1][2]).toMatchObject({ start: true, shownVersion: 3 });
+        payments.destroy();
+    });
+
+    it("sends the version on screen at the tap with the start, and nothing when it is not a real version", async () => {
+        let onScreen: number | undefined = 3;
+        const pay = vi.fn().mockReturnValue(new Promise<never>(() => {}));
+        const payments = make(pay, undefined, () => onScreen);
+        ask(payments);
+        await flush();
+        expect(pay.mock.calls[0][2]).toMatchObject({ start: true, intentId: WISH_1, shownVersion: 3 });
+        payments.destroy();
+
+        onScreen = undefined;
+        const unknown = vi.fn().mockReturnValue(new Promise<never>(() => {}));
+        const without = make(unknown, undefined, () => onScreen);
+        ask(without);
+        await flush();
+        expect(unknown.mock.calls[0][2]).not.toHaveProperty("shownVersion");
+        without.destroy();
     });
 
     it("says it is too many tries on the server's own rate limit (429), however it words it", async () => {

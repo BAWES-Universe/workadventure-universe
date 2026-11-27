@@ -14,20 +14,28 @@
  * Pure of the AI and of the chat: the tools, the gate, the cards and the call are somebody else's (injected).
  */
 import { createHash } from 'crypto';
+import { SCRUBBED_LOOKUPS, asMayHaveRun, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
+import { actionName } from '../mcp/AppBatch';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, SessionOwners, withoutSession } from '../mcp/AppLookups';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
 import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
 import type { ToolHeading } from '../mcp/ToolCatalog';
 import type { DueRun } from './BrickRunner';
 import { FINISH_CHECK_TOOL, READ_PAGE_TOOL, type ToolDefinition } from './BrickTaskRun';
+import { fitAppAnswer, isMailTool, RUN_ANSWER_MAX } from './BrickAppAnswer';
 
-/** What an App's answer to a step can be at most, as text for the model (the rest is cut). */
-export const APP_RESULT_MAX = 12_000;
+/**
+ * What an App's answer to a step can be at most, as text for the model: the room a chat reply has. An answer longer than that is first
+ * made smaller (encoded bodies and raw HTML out), then shortened by whole items, and only then cut, and it always says so (BrickAppAnswer).
+ */
+export const APP_RESULT_MAX = RUN_ANSWER_MAX;
 
 export interface TaskAppsDeps {
     /** The tools the Brick's Apps give, and where each one lives. Throws when they cannot be listed. */
     discover(brickId: string): Promise<{ tools: ToolDefinition[]; servers: Map<string, ToolServerEntry> }>;
-    gate: Pick<ToolGate, 'decide'>;
+    /** `appPolicy`, when given, reads a ready-made App's actions, so an action Off in it is taken out of what the link's lookups answer. */
+    gate: Pick<ToolGate, 'decide'> & Partial<Pick<ToolGate, 'appPolicy'>>;
     approvals: { propose(input: ProposeInput): Promise<Proposed> };
     /** The person's own chat with the Brick, where the card goes; never made here. */
     room(brickId: string, matrixUserId: string): Promise<{ ok: true; roomId: string } | { ok: false; reason: 'no_chat' | 'not_allowed' | 'unsure' }>;
@@ -45,9 +53,9 @@ export interface TaskAppsSession {
     waiting(): boolean;
 }
 
-const asText = (value: unknown): string => {
+const asText = (value: unknown, mail: boolean): string => {
     try {
-        return (typeof value === 'string' ? value : JSON.stringify(value ?? null)).slice(0, APP_RESULT_MAX);
+        return fitAppAnswer(value, APP_RESULT_MAX, mail);
     } catch {
         return JSON.stringify({ error: 'That gave back something that cannot be read.' });
     }
@@ -61,6 +69,9 @@ const refused = (line: string): string => JSON.stringify({ error: `${line} This 
 const stepId = (runId: string, toolName: string, args: Record<string, unknown>): string => `${runId}:${createHash('sha256').update(JSON.stringify([toolName, args])).digest('hex').slice(0, 24)}`;
 
 export class TaskApps {
+    /** Which App's link gave each session id a lookup handed out, so a step of another App is never sent it. */
+    private readonly sessionOwners = new SessionOwners();
+
     constructor(private readonly deps: TaskAppsDeps) {}
 
     /** The Apps this run may use: every tool the gate does not refuse for the owner, and none an unreviewed App gives. Null when there are none. */
@@ -82,8 +93,12 @@ export class TaskApps {
                 if (name === READ_PAGE_TOOL || name === FINISH_CHECK_TOOL) return;
                 const entry = found.servers.get(name);
                 if (!entry) return;
-                const verdict = await this.deps.gate.decide(this.gateCall(run, name, entry));
-                if (this.refusal(verdict, name) === null) {
+                // A batch of several Apps is offered when any of them allows it: its actions go to their own Apps when it is called
+                const judged = isBatchTool(name) && entry.otherApps?.length ? [entry, ...entry.otherApps] : [entry];
+                const verdicts = await Promise.all(judged.map(async (app) => (await this.decideFor(run, name, app)).verdict));
+                // A ready-made App's batch tool is offered as it is: each call brings its actions, judged one by one when it is made
+                const offeredBatch = (verdict: GateDecision) => isBatchTool(name) && verdict.kind === 'run' && !verdict.heading;
+                if (verdicts.some((verdict) => offeredBatch(verdict) || this.refusal(verdict, name) === null)) {
                     offered.push(tool);
                     servers.set(name, entry);
                 }
@@ -101,10 +116,39 @@ export class TaskApps {
         };
     }
 
-    private gateCall(run: DueRun, toolName: string, entry: ToolServerEntry): GateCall {
+    /** What a ready-made App's own lookups answer (its search, its schemas) never shows an action that is Off in any of the Brick's Apps, as in chat. */
+    private async withoutOffActions(brickId: string, name: string, entry: ToolServerEntry, answer: unknown): Promise<unknown> {
+        const readPolicy = this.deps.gate.appPolicy?.bind(this.deps.gate);
+        if (!readPolicy || !SCRUBBED_LOOKUPS.has(name.trim().toUpperCase())) return answer;
+        const apps = [entry, ...(entry.otherApps ?? [])].filter((app) => app.readyMade);
+        if (apps.length === 0) return answer;
+        const policies = (await Promise.all(apps.map((app) => readPolicy(brickId, app.serverId)))).filter((policy) => !!policy);
+        return policies.length > 0 ? withoutOff(answer, (slug) => policies.some((policy) => isOffRow(policy!, slug))) : answer;
+    }
+
+    /**
+     * The gate's verdict on a tool, and the App the step goes through. A link tool that several ready-made Apps share (their search,
+     * schemas, connections) goes through the first of them that lets it be used, as in chat; a batch goes through the App it was routed to.
+     */
+    private async decideFor(run: DueRun, name: string, entry: ToolServerEntry, args?: Record<string, unknown>): Promise<{ app: ToolServerEntry; verdict: GateDecision }> {
+        // The person's own App comes first under its name (own Apps first); an Off there never takes the tool from the ready-made Apps beside it
+        const apps = entry.otherApps?.length && !isBatchTool(name) ? [entry, ...entry.otherApps] : [entry];
+        let first: { app: ToolServerEntry; verdict: GateDecision } | undefined;
+        for (const app of apps) {
+            // eslint-disable-next-line no-await-in-loop
+            const verdict = await this.deps.gate.decide(this.gateCall(run, name, app, args));
+            first ??= { app, verdict };
+            if (this.refusal(verdict, name) === null) return { app, verdict };
+        }
+        return first!;
+    }
+
+    private gateCall(run: DueRun, toolName: string, entry: ToolServerEntry, args?: Record<string, unknown>): GateCall {
         return {
             botId: run.brickId,
             toolName,
+            // What the call asks for, where it changes the verdict: a batch's actions, reconnecting an App
+            ...(args !== undefined ? { args } : {}),
             ...(entry.title ? { toolTitle: entry.title } : {}),
             serverId: entry.serverId,
             ...(entry.fingerprint ? { fingerprint: entry.fingerprint } : {}),
@@ -125,16 +169,31 @@ export class TaskApps {
 
     private async call(run: DueRun, name: string, args: Record<string, unknown>, entry: ToolServerEntry | undefined, state: { waiting: boolean }): Promise<string> {
         if (!entry) return JSON.stringify({ error: 'That is not something a check can do.' });
+        // Every App under this name, for what the link's lookups answer, whichever App the step goes through
+        const listed = entry;
         try {
+            // A batch goes through the one App its actions belong to, holding them as they were read
+            if (isBatchTool(name)) {
+                const routed = await this.batchApp(run, entry, args);
+                if ('line' in routed) return refused(routed.line);
+                ({ app: entry, args } = routed);
+            }
+            // A search or a schemas request on a Brick with several Apps is asked of every App that allows it, and the answers are one
+            if (isJoinedLookup(name) && entry.otherApps?.length) return await this.joinedLookup(run, name, args, entry, state);
             // The check right before the call: the tool, the person and the settings as they are now
-            const verdict = await this.deps.gate.decide(this.gateCall(run, name, entry));
+            const decided = await this.decideFor(run, name, entry, args);
+            entry = decided.app;
+            const verdict = decided.verdict;
             const why = this.refusal(verdict, name);
             if (why !== null) return refused(why);
             if (verdict.kind === 'refuse') return refused(verdict.line);
             const heading = verdict.heading!;
             const asks = verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading);
             if (!asks) {
-                return asText(await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) }));
+                const answer = await this.callWithSessionFallback(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) });
+                if (entry.readyMade && isJoinedLookup(name)) this.sessionOwners.note(run.brickId, answer, entry.serverId);
+                // A batch whose tool answered with its own error may have run some of its actions: it is never read as "nothing was done"
+                return asText(await this.withoutOffActions(run.brickId, name, listed, isBatchTool(name) ? asMayHaveRun(answer) : answer), isMailTool(name, entry.serverName));
             }
             return await this.askFor(
                 run,
@@ -148,6 +207,107 @@ export class TaskApps {
             console.warn(`[TaskApps] A step of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
             return JSON.stringify({ error: 'That did not work just now.' });
         }
+    }
+
+    /**
+     * One call to an App's tool, tried once more without the session id it carried when its link refused that session (the model carries the
+     * session one App's link gave to another App's link). Only a ready-made App's lookups (search, schemas: they change nothing), and only a refusal that names the session and says nothing
+     * more, is tried again, only without the session, and as its own try (its own call id). Never the batch that runs actions.
+     */
+    private async callWithSessionFallback(brickId: string, entry: ToolServerEntry, name: string, args: Record<string, unknown>, ownerId: string, use: { heading: ToolHeading; callId: string }): Promise<unknown> {
+        const answer = await this.deps.call(brickId, entry, name, args, ownerId, use);
+        const bare = retryWithoutSession(entry, name, args, answer);
+        return bare ? this.deps.call(brickId, entry, name, bare, ownerId, { ...use, callId: `${use.callId}:no-session` }) : answer;
+    }
+
+    /**
+     * A search or a schemas request of a Brick with several Apps, as in chat: each App's link only knows its own actions, so it is asked of
+     * every App the gate lets it be used through (a schemas request only of the Apps that own the actions it names) and the answers are
+     * joined, oldest App first, with what is Off in any App taken out. An App that must ask first shows its card before anything is asked,
+     * and the check ends with it.
+     */
+    private async joinedLookup(run: DueRun, name: string, args: Record<string, unknown>, first: ToolServerEntry, state: { waiting: boolean }): Promise<string> {
+        const apps = [first, ...(first.otherApps ?? [])];
+        const readPolicy = this.deps.gate.appPolicy?.bind(this.deps.gate);
+        const policies = readPolicy ? await Promise.all(apps.map((app) => readPolicy(run.brickId, app.serverId))) : apps.map(() => null);
+        const requests = lookupRequests(name, args, apps, policies);
+        const decided = await Promise.all(requests.map(async ({ app, args: own }) => ({ app, args: own, verdict: await this.deps.gate.decide(this.gateCall(run, name, app, own)) })));
+        const usable = decided.filter(({ verdict }) => this.refusal(verdict, name) === null);
+        // No App lets it be used: the first App's refusal stands
+        if (usable.length === 0) return refused(this.refusal(decided[0].verdict, name) ?? `${name} cannot be used.`);
+        // The first App that asks shows its card and the check ends with it; the person's approval runs only that App's lookup, so the Apps that
+        // need no OK are asked now and their joined answer travels with the card
+        let card: string | undefined;
+        const asking = new Set<string>();
+        for (const { app, args: own, verdict } of usable) {
+            const heading = verdict.kind === 'refuse' ? undefined : verdict.heading;
+            if (verdict.kind === 'refuse' || !heading) continue;
+            if (verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading)) {
+                asking.add(app.serverId);
+                if (card === undefined) {
+                    // eslint-disable-next-line no-await-in-loop
+                    card = await this.askFor(run, name, app, own, { kind: 'ask', heading, notReviewed: false, policyRevision: verdict.policyRevision!, fingerprint: verdict.fingerprint! }, state);
+                }
+            }
+        }
+        const going = card === undefined ? usable : usable.filter(({ app }) => !asking.has(app.serverId));
+        if (card !== undefined && going.length === 0) return card;
+        const step = stepId(run.runId, name, args);
+        const answers = await Promise.all(
+            going.map(async ({ app, args: own, verdict }) => {
+                let answer: unknown;
+                try {
+                    answer = await this.callWithSessionFallback(run.brickId, app, name, own, run.userId, { heading: (verdict as { heading: ToolHeading }).heading, callId: requests.length === 1 ? step : `${step}:${app.serverId}` });
+                } catch (error) {
+                    console.warn(`[TaskApps] A lookup of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
+                    answer = { error: 'That did not work just now.' };
+                }
+                this.sessionOwners.note(run.brickId, answer, app.serverId);
+                return { app: app.serverName ?? '', answer };
+            })
+        );
+        // What is Off in any App is taken out of each App's answer before they are joined, so a label put in front of one can't hide it
+        const scrubbed = await Promise.all(answers.map(async (one) => ({ ...one, answer: await this.withoutOffActions(run.brickId, name, first, one.answer) })));
+        const joined = asText(joinLookupAnswers(scrubbed), isMailTool(name, first.serverName));
+        return card === undefined ? joined : `${card}\n\nAnswered now by the other Apps: ${joined}`;
+    }
+
+    /**
+     * The App a batch step goes through, with only its actions as they were read. A step holds one App's actions: an action no App
+     * clearly owns, or actions of several Apps in one step, are refused (the model asks again, one App per step). Inputs that are not a
+     * batch go on as they are, for the gate to refuse.
+     */
+    private async batchApp(run: DueRun, first: ToolServerEntry, args: Record<string, unknown>): Promise<{ app: ToolServerEntry; args: Record<string, unknown> } | { line: string }> {
+        const parts = batchParts(args);
+        if (!parts) return { app: first, args };
+        const apps = [first, ...(first.otherApps ?? [])];
+        // An App left out for the person's own copy (own Apps first) is checked even with one App left: its action never goes through another
+        const leftOut = first.ownCopyApps?.length ? first.ownCopyApps : undefined;
+        if (apps.length === 1 && !leftOut) return { app: first, args: batchOf(args, parts) };
+        const appPolicy = this.deps.gate.appPolicy?.bind(this.deps.gate);
+        const policies = appPolicy ? await Promise.all(apps.map((app) => appPolicy(run.brickId, app.serverId))) : apps.map(() => null);
+        const owners = new Map<string, ToolServerEntry>();
+        for (const part of parts) {
+            const owner = ownerOfAction(part.slug, apps, policies);
+            // An action of the left-out App that no remaining App lists or is named by: the step uses the person's own copy instead
+            const ownCopy = owner === 'none' ? ownCopyOf(part.slug, leftOut) : undefined;
+            if (ownCopy) return { line: ownCopyLine(actionName(part.slug, ownCopy), ownCopy) };
+            if (apps.length === 1) {
+                owners.set(first.serverId, first);
+                continue;
+            }
+            // With the owner's own server first under this name, an action no ready-made App lists or is named by goes to that server
+            const app = owner === 'none' ? (first.readyMade ? undefined : first) : owner === 'unclear' ? undefined : owner;
+            if (!app) return { line: whichAppLine(actionName(part.slug)) };
+            owners.set(app.serverId, app);
+        }
+        if (owners.size > 1) return { line: `That asked for actions of ${[...owners.values()].map((app) => app.serverName || 'an App').join(' and ')} at once. Ask for each App's actions in a step of its own.` };
+        const app = [...owners.values()][0];
+        const batch = batchOf(args, parts);
+        // The session id the model carries is the one the link of the App that answered its lookup gave (the first App when that is not known):
+        // another App's link does not know it, and a write is sent once
+        const from = this.sessionOwners.ownerOf(run.brickId, args) ?? first.serverId;
+        return { app, args: app.readyMade && app.serverId !== from ? (withoutSession(batch) ?? batch) : batch };
     }
 
     /** The card for this step, in the person's own chat: it waits there, and the run only ends. */
