@@ -40,7 +40,7 @@ the map and has Download); `make_artifact`'s description says so, while `make_fi
 | `make_file` | `name`, `format` (`md`, `csv`, `xlsx`), then `content` (md), `rows` (csv, or xlsx with one tab) or `sheets: [{ name, rows }]` (xlsx, one tab each). |
 
 - Offered where the bot has a chat to send in (a bubble or a direct message) and the uploader is set up (`UPLOADER_URL` and
-  `BOT_SERVICE_TOKEN`). It needs no Orbit call. The file goes to the uploader and is sent as a file the person asked for, so it is
+  `BOT_SERVICE_TOKEN`). It is the owner's: a visitor's turn on someone's Brick is neither offered it nor runs it. It needs no Orbit call. The file goes to the uploader and is sent as a file the person asked for, so it is
   on their list of files like any file the bot sends (made with `make_file`).
 - Cells are plain text, never formulas: in an `.xlsx` every cell is typed as text, and in a `.csv` a cell that begins with `=`, `+`,
   `-` or `@` gets a leading quote so a sheet app does not run it. A CSV starts with a byte order mark and ends rows with CRLF, so

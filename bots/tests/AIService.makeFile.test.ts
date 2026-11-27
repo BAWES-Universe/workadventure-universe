@@ -158,6 +158,14 @@ describe('make_file in AIService', () => {
         expect(broken.result).toMatchObject({ error: expect.stringMatching(/couldn't be sent right now/) });
     });
 
+    it("is not run for a visitor of someone's Brick (a reply for others), even if the model asks for it", async () => {
+        const client = botClient();
+        const [result] = await service()['executeToolCalls']([sheetCall()], client as never, undefined, undefined, 'uuid-1', 'bubble-1', 'bot1', 7, undefined, undefined, false, undefined, undefined, undefined, false, true);
+        expect(uploadAttachmentWithLink).not.toHaveBeenCalled();
+        expect(client.sendFile).not.toHaveBeenCalled();
+        expect(result.result).not.toMatchObject({ success: true });
+    });
+
     it('is not run when the uploader is not set up here, even if the model asks for it', async () => {
         vi.stubEnv('BOT_SERVICE_TOKEN', '');
         const client = botClient();

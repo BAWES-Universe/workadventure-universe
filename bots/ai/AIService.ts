@@ -2049,7 +2049,7 @@ export class AIService {
                         tools[at] = narrowedToInputs(tools[at], sharedJob.inputs);
                         continue;
                     }
-                    if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isComputerTool(name) || isKeyTool(name)) tools.splice(at, 1);
+                    if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isMakeFileTool(name) || isComputerTool(name) || isKeyTool(name)) tools.splice(at, 1);
                 }
                 for (const [name, entry] of [...toolServerMap]) if (!sharedForOthers(entry)) toolServerMap.delete(name);
             }
@@ -5461,8 +5461,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // An Instant App's name is made from its tool, so it has no case of its own: it is told apart here. A tool server's tool of the same name is
                 // never offered next to it (the Instant App is), so a name that is in the server map is that server's alone
                 const instantRun = isInstantTool(toolCall.name) && !toolServerMap?.has(toolCall.name);
-                // A visitor's turn never runs the owner's artifacts, files, computer, Apps, Instant Apps or reminders, even if the model calls one it was not offered
-                const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isKeyTool(toolCall.name) || isTaskTool(toolCall.name) || instantRun;
+                // A visitor's turn never runs the owner's artifacts, files, made files, computer, Apps, Instant Apps or reminders, even if the model calls one it was not offered
+                const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isMakeFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isKeyTool(toolCall.name) || isTaskTool(toolCall.name) || instantRun;
                 switch ((forOthers && ownersOnly) ? '' : instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isMakeFileTool(toolCall.name) && (!this.makeFileOn() || !!toolServerMap?.has(toolCall.name))) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && (channel !== 'dm' || !this.memoryToolsOn(botId, botClient))) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
