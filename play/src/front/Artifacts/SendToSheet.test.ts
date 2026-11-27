@@ -1,7 +1,7 @@
 /* eslint-disable no-await-in-loop -- the tests wait for the screen to settle, one step after another */
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
-import { get, readable } from "svelte/store";
+import { get, readable, writable, type Writable } from "svelte/store";
 
 vi.hoisted(() => {
     (window as unknown as { env: Record<string, unknown> }).env = {};
@@ -11,6 +11,8 @@ const ME = "@me:chat.test";
 const world = vi.hoisted(() => ({
     directRooms: undefined as unknown,
     rooms: undefined as unknown,
+    /** The direct chats as a list a test can change while the sheet is open. */
+    directStore: undefined as unknown,
 }));
 
 vi.mock("../Phaser/Game/GameManager", async () => {
@@ -19,7 +21,7 @@ vi.mock("../Phaser/Game/GameManager", async () => {
         gameManager: {
             get chatConnection() {
                 return {
-                    directRooms: store(world.directRooms ?? []),
+                    directRooms: (world.directStore as never) ?? store(world.directRooms ?? []),
                     rooms: store(world.rooms ?? []),
                     folders: store([]),
                 };
@@ -110,8 +112,11 @@ const docLink = (openScope: string, extra: Record<string, unknown> = {}) => ({
 });
 
 let view: SendToHost | undefined;
+let directList: Writable<Room[]>;
 async function show(request: Parameters<typeof openSendTo>[0], rooms: { direct?: Room[]; groups?: Room[] } = {}) {
     world.directRooms = rooms.direct ?? [];
+    directList = writable(rooms.direct ?? []);
+    world.directStore = directList;
     world.rooms = rooms.groups ?? [];
     const target = document.createElement("div");
     document.body.appendChild(target);
@@ -128,6 +133,7 @@ describe("the Send to sheet", () => {
     afterEach(() => {
         view?.$destroy();
         view = undefined;
+        world.directStore = undefined;
         closeSendTo();
         chatDoneToastStore.set(undefined);
         bricks.byChatId = new Map();
@@ -340,6 +346,44 @@ describe("the Send to sheet", () => {
         expect(laura.sendFileOrThrow).toHaveBeenCalledTimes(2);
         expect(get(chatDoneToastStore)?.text).toBe("Sent to Laura");
         expect(q("sendToSheet")).toBeNull();
+    });
+
+    it("keeps the failure on show when the chat it was sent to leaves the list while it failed", async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const laura = room("r2", "direct", "Laura", [ME, "@laura:chat.test"]);
+        let fail: (reason: Error) => void = () => undefined;
+        laura.sendFileOrThrow.mockImplementationOnce(
+            () =>
+                new Promise<void>((_resolve, reject) => {
+                    fail = reject;
+                })
+        );
+        await show(request(undefined), { direct: [laura] });
+        rowFor("Laura")?.click();
+        await settle();
+        (q("sendToSend") as HTMLButtonElement).click();
+        await settle();
+        // Laura is gone from the list while the file is still going, and then it fails
+        directList.set([]);
+        await settle();
+        fail(new Error("offline"));
+        await settle();
+        expect(q("sendToFailed")?.textContent).toBe("Could not send. Nothing was sent. Try again.");
+        // There is no chat left to try again with
+        expect((q("sendToRetry") as HTMLButtonElement).disabled).toBe(true);
+        expect(q("sendToClose")).not.toBeNull();
+    });
+
+    it("takes the sheet back to the list when the chat it is about leaves the list before anything is sent", async () => {
+        const laura = room("r2", "direct", "Laura", [ME, "@laura:chat.test"]);
+        await show(request(undefined), { direct: [laura] });
+        rowFor("Laura")?.click();
+        await settle();
+        expect(q("sendToSend")).not.toBeNull();
+        directList.set([]);
+        await settle();
+        expect(q("sendToSend")).toBeNull();
+        expect(q("sendToList")).not.toBeNull();
     });
 
     it("says which part went when only one did, and Try again sends only the other", async () => {

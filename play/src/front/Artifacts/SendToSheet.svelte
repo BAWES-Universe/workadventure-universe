@@ -151,9 +151,10 @@
     $: bricks = grouped.bricks.map((target) => byId.get(target.id)).filter((row): row is Row => !!row);
     $: chats = grouped.chats.map((target) => byId.get(target.id)).filter((row): row is Row => !!row);
     $: chosen = chosenId ? byId.get(chosenId) : undefined;
-    // A chat that left the list while its sheet was open (the person left it) takes the sheet back to the list
+    // A chat that left the list while its sheet was open (the person left it) takes the sheet back to the list, unless a try
+    // just failed: the failure stays on show, with nothing to try again to
     $: chosenGone = chosenId !== undefined && !chosen;
-    $: if (chosenGone && !sending) backToList();
+    $: if (chosenGone && !sending && step !== "failed") backToList();
 
     $: receiver = chosen
         ? receiverOf(chosen.entry.room.type, chosen.entry.memberIds, myChatId, $myBricksByChatId)
@@ -173,7 +174,10 @@
         [fileOn ? "file" : undefined, linkOn && linkChoice?.usable ? "link" : undefined] as (SendPart | undefined)[]
     ).filter((part): part is SendPart => part !== undefined);
 
-    $: who = chosen?.title ?? "";
+    // The last name shown stays when the chat is gone, so the failure still says who it was for
+    let lastWho = "";
+    $: if (chosen) lastWho = chosen.title;
+    $: who = chosen?.title ?? lastWho;
     $: fileLine =
         receiver === "myBrick"
             ? $LL.chat.sendTo.fileBrick({ name: request.fileName })
@@ -343,7 +347,7 @@
             <button
                 type="button"
                 class="st-btn u-cta"
-                disabled={sending}
+                disabled={sending || chosenGone}
                 data-testid="sendToRetry"
                 on:click={() => send(failedParts)}
                 >{#if sending}<IconLoader font-size="18" class="animate-spin" />
