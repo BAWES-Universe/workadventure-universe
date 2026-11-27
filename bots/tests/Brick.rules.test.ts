@@ -213,7 +213,7 @@ describe('The notes of a Brick no longer make it hesitate', () => {
         expect(note).toContain('better than answering yourself or reading a page could');
         expect(note).toContain('such as fresh news, prices, or anything that needs a live search or a service');
         expect(note).not.toContain('anything current');
-        expect(note).toContain('once for a question, never in a loop, never to try it out');
+        expect(note).toContain('never again for the same thing, never in a loop, never to try it out');
     });
 
     it('carries on after its tools ran without stopping to ask, and says one line when something is off', () => {

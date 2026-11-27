@@ -353,6 +353,8 @@ const chat: DeepPartial<Translation["chat"]> = {
             screenControlRunningLine:
                 "{name} のコンピューターに入力しています。{name} がインストールしたプログラムがまだ動いていて、入力内容が見られる可能性があります。",
             notReady: "コンピューターを準備できませんでした。何も変更されていません。もう一度お試しください。",
+            takeOverShared:
+                "{name} はこのコンピューターで複数の作業をしています。作業が1つになったら操作を代われます。先にほかの作業を一時停止することもできます。",
         },
         files: {
             artifactsMade: "作成したアーティファクト {count}件",

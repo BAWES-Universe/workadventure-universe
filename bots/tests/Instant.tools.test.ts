@@ -27,6 +27,7 @@ import {
     instantToolDefinitions,
     instantToolName,
     instantToolsNote,
+    researchAppsOf,
     isInstantTool,
     mixedTaskNote,
     newInstantTask,
@@ -227,7 +228,10 @@ describe('what the model is offered', () => {
         expect(defs[0].function.name).toBe('instant_app_exa_search');
         expect(defs[0].function.parameters).toBe(SEARCH_SCHEMA);
         expect(defs[0].function.description).toMatch(/^Search the web\./);
-        expect(defs[0].function.description).toMatch(/never again for the same question/);
+        // An App that is not a research one (or of no kind) keeps "once for each thing asked", never "once for a question"
+        expect(defs[0].function.description).toMatch(/runs for your owner .* once for each thing asked: never again for the same thing, while a request that needs several runs \(two emails, three events\) gets one run for each\.$/);
+        expect(defs[0].function.description).not.toMatch(/same question|runs once/);
+        expect(defs[0].function.description).not.toMatch(/never twice with the same words/);
         expect(isInstantTool(defs[0].function.name)).toBe(true);
         expect(isInstantTool('use_computer')).toBe(false);
         // "Didn't work" is not a chat tool: a result that ran fine is not given back, and a technical failure is given back by Orbit by itself
@@ -247,12 +251,144 @@ describe('what the model is offered', () => {
     it('tells the Brick to say Instant Apps, never a price, and never to offer more credit for something that is not available', () => {
         const note = instantToolsNote();
         expect(note).toMatch(/Instant Apps or Apps, never tools or connectors/);
-        expect(note).toMatch(/Never say a price, an amount, a provider, or how much credit is left/);
+        expect(note).toMatch(/Never say a price, an amount, or how much credit is left/);
+        expect(note).toMatch(/Never say who runs an App for Universe/);
         expect(note).toMatch(/More credit is never the answer to something that is not available/);
         expect(note).toMatch(/never in a loop/);
+        expect(note).toMatch(/once for each thing asked \(a request that needs several runs, like emailing two people, gets one run for each\), never again for the same thing, never in a loop, never to try it out/);
+        expect(note).not.toMatch(/once for a question|same question/);
+        expect(note).not.toMatch(/try another|never twice with the same words/);
         expect(note).toMatch(/When a rule they set says no/);
         expect(note).not.toMatch(/didn.t work/i);
         expect(note).not.toMatch(/\$\d|cents|per search/);
+    });
+});
+
+describe('research Apps on by default: what the Brick knows about them', () => {
+    const research = (over: Partial<InstantListing['tools'][number]>[] = []): InstantListing =>
+        listing({
+            tools: [
+                { name: 'EXA_GET_CONTENTS_ACTION', toolkit: 'exa', description: 'Read pages.', inputSchema: SEARCH_SCHEMA, fromMicros: 1600, app: 'Exa', kind: 'research' as const, strength: 'Papers, companies and people', firstUse: true },
+                { name: 'EXA_SEARCH', toolkit: 'exa', description: 'Search the web.', inputSchema: SEARCH_SCHEMA, fromMicros: 7600, app: 'Exa', kind: 'research' as const, strength: 'Papers, companies and people', firstUse: true },
+                { name: 'TAVILY_SEARCH', toolkit: 'tavily', description: 'Search the news.', inputSchema: SEARCH_SCHEMA, fromMicros: 8600, app: 'Tavily', kind: 'research' as const, strength: 'Fresh news and quick facts' },
+            ].map((tool, at) => ({ ...tool, ...(over[at] ?? {}) })),
+        });
+
+    it('reads each App’s name, strength and first use from Orbit, short lines only', async () => {
+        respond(200, {
+            ready: true,
+            reason: null,
+            tools: [
+                { name: 'EXA_SEARCH', toolkit: 'exa', description: 'Search', inputSchema: SEARCH_SCHEMA, fromMicros: 7600, app: 'Exa', kind: 'research', strength: ' Papers,\n companies ', firstUse: true },
+                { name: 'TAVILY_SEARCH', toolkit: 'tavily', description: null, inputSchema: SEARCH_SCHEMA, fromMicros: 8600, app: 'x'.repeat(41), strength: 'y'.repeat(121), firstUse: 'yes' },
+            ],
+        });
+        const found = await admin().instantTools(BRICK);
+        expect(found?.tools[0]).toMatchObject({ app: 'Exa', kind: 'research', strength: 'Papers, companies', firstUse: true });
+        expect(found?.tools[1]).not.toHaveProperty('app');
+        expect(found?.tools[1]).not.toHaveProperty('kind');
+        expect(found?.tools[1]).not.toHaveProperty('strength');
+        expect(found?.tools[1]).not.toHaveProperty('firstUse');
+    });
+
+    it('lists the research Apps once each, in Orbit’s order, with what each is good at, and says to search right away with no connect', () => {
+        const note = instantToolsNote(research());
+        expect(note).toMatch(/Research Apps: Exa \(papers, companies and people\), Tavily \(fresh news and quick facts\)\./);
+        expect(note).toMatch(/search right away/);
+        expect(note).toMatch(/Do not ask first, and never offer to connect or switch on anything for these/);
+        expect(note).toMatch(/you may try another research App/);
+        expect(note).toMatch(/as many look-ups as one question may have/);
+        expect(note).toMatch(/say which App you searched with, by its name, and give the sources as links/);
+        expect(note).toMatch(/Add your own app on \[Apps\]\(#apps\)/);
+        expect(note).not.toMatch(/\$\d|cents|per search|composio/i);
+        // The tools say which App they are
+        const defs = instantToolDefinitions(research());
+        expect(defs.map((def) => def.function.description.split(':')[0])).toEqual(['Exa (papers, companies and people)', 'Exa (papers, companies and people)', 'Tavily (fresh news and quick facts)']);
+        // A research App may be searched again with other words; the general rule names it as the one exception
+        for (const def of defs) expect(def.function.description).toMatch(/never twice with the same words\.$/);
+        expect(note).toMatch(/once for each thing asked \(a request that needs several runs/);
+        expect(note).toMatch(/Research Apps are the one exception to once for each thing asked/);
+    });
+
+    it('says once, the first time an App is used, that the owner’s own free account has no Universe limit, only for Apps that are new to them', () => {
+        const firstExa = instantToolsNote(research());
+        expect(firstExa).toMatch(/The first time in this chat that you use Exa, end that reply with one short line .* own free Exa account there is no Universe limit, with \[Apps\]\(#apps\)/);
+        expect(firstExa).not.toMatch(/use Exa or Tavily/);
+        const both = instantToolsNote(research([{ firstUse: true }, { firstUse: true }, { firstUse: true }]));
+        expect(both).toMatch(/use Exa or Tavily, .* own free account of that App there is no Universe limit/);
+        const none = instantToolsNote(research([{ firstUse: false }, { firstUse: false }, {}]));
+        expect(none).not.toMatch(/no Universe limit/);
+        // With no research App in the listing (an older Orbit), the general rules stay as they were
+        expect(instantToolsNote(listing())).not.toMatch(/Research Apps/);
+    });
+
+    it('only Apps Orbit calls research Apps get the research instructions: another App’s tool, with a name and a line, keeps the general rules', () => {
+        const other = listing({ tools: [{ name: 'GMAIL_SEND', toolkit: 'gmail', description: 'Send mail.', inputSchema: SEARCH_SCHEMA, fromMicros: 1000, app: 'Gmail', strength: 'Your mail', firstUse: true }] });
+        expect(researchAppsOf(other)).toEqual([]);
+        const note = instantToolsNote(other);
+        expect(note).not.toMatch(/Research Apps|search right away|no Universe limit/);
+        // Mixed: only the research one is named as research
+        const mixed = listing({ tools: [...research().tools, ...other.tools] });
+        expect(researchAppsOf(mixed).map((one) => one.app)).toEqual(['Exa', 'Tavily']);
+        // ...and only the research ones may be searched again: Gmail keeps "once for each thing asked"
+        const tails = instantToolDefinitions(mixed).map((def) => (def.function.description.endsWith('never twice with the same words.') ? 'again' : def.function.description.endsWith('gets one run for each.') ? 'once' : '?'));
+        expect(tails).toEqual(['again', 'again', 'again', 'once']);
+    });
+
+    it('tells the Brick to use its owner’s own search App first', () => {
+        expect(instantToolsNote(research())).toMatch(/If your owner has their own search App on for you .* use it first; these are for when they do not/);
+    });
+
+    it('reads why research is not offered (never given this month, or spent) and nothing else from Orbit', async () => {
+        respond(200, { ready: true, reason: null, tools: [], research: { state: 'not_given', renewsAt: null } });
+        expect(await admin().instantTools(BRICK)).toEqual({ ready: true, reason: null, tools: [], research: { state: 'not_given', renewsAt: null } });
+        respond(200, { ready: true, reason: null, tools: [], research: { state: 'used_up', renewsAt: '2026-12-01T00:00:00.000Z' } });
+        expect((await admin().instantTools(BRICK))?.research).toEqual({ state: 'used_up', renewsAt: '2026-12-01T00:00:00.000Z' });
+        respond(200, { ready: true, reason: null, tools: [], research: { state: 'something else' } });
+        expect(await admin().instantTools(BRICK)).not.toHaveProperty('research');
+    });
+
+    it('with no research credit, the Brick says once that it cannot search on Universe’s account and points to their own free account: no tools, no card, no credit talk', async () => {
+        const notGiven: InstantListing = listing({ tools: [], research: { state: 'not_given', renewsAt: null } });
+        // Kept for the owner although nothing can run, so the Brick is told why
+        const offers = new InstantOffers();
+        expect(await offers.listingFor({ appsOfferableFor: vi.fn().mockResolvedValue([]), instantTools: vi.fn().mockResolvedValue(notGiven) }, BRICK, 'uuid-alice')).toEqual(notGiven);
+        expect(instantToolDefinitions(notGiven)).toEqual([]);
+        const note = instantToolsNote(notGiven);
+        expect(note).toMatch(/searching the web on Universe's account is not available to your owner right now\. It is not available to them this month\./);
+        expect(note).toMatch(/their own free account of a search App on \[Apps\]\(#apps\) has no Universe limit/);
+        expect(note).toMatch(/Say that line once in this chat, never again, never as a question, and never with a card/);
+        expect(note).toMatch(/Never offer more credit or a top-up/);
+        expect(note).not.toMatch(/instant_app_|search right away|A card asks them/);
+        expect(note).not.toMatch(/\$\d|cents|composio/i);
+        // Spent: it comes back on the 1st when it is monthly
+        expect(instantToolsNote(listing({ tools: [], research: { state: 'used_up', renewsAt: '2026-12-01T00:00:00.000Z' } }))).toMatch(/Their monthly credit for it is used up and comes back on the 1st\./);
+        expect(instantToolsNote(listing({ tools: [], research: { state: 'used_up', renewsAt: null } }))).toMatch(/Their credit for it is used up\./);
+    });
+
+    it('a research standing that comes with other (non-research) Apps keeps both the Instant Apps rules and the standing line', () => {
+        const mixed = listing({ tools: [{ ...TOOL, name: 'instant_app_gmail_send', app: 'gmail', kind: undefined }], research: { state: 'not_given', renewsAt: null } });
+        const note = instantToolsNote(mixed);
+        expect(note).toMatch(/^Instant Apps: you can run Instant Apps for your owner/);
+        expect(note).toMatch(/searching the web on Universe's account is not available to your owner right now\. It is not available to them this month\./);
+        expect(note).toMatch(/their own free account of a search App on \[Apps\]\(#apps\) has no Universe limit/);
+        expect(note).not.toMatch(/search right away/);
+    });
+
+    it('a run refused because no credit was given is not "used up": no card, and more credit is never offered', async () => {
+        const words = 'Research on Universe’s account isn’t available right now. Your own free account on Apps has no Universe limit.';
+        const instantRun = vi.fn().mockResolvedValue({ status: 'refused', reason: 'credit_not_given', message: words, stop: false, renewsAt: undefined, canAskForMore: undefined } satisfies InstantRunAnswer);
+        const outcome = await runInstantTool({ admin: { instantRun }, botId: BRICK, who: { forOwner: true }, tool: TOOL, arguments: { query: 'x' } });
+        expect(outcome).toMatchObject({ ended: 'not_sent', carryOn: null, result: { reason: 'credit_not_given', error: words } });
+        expect(String(outcome.result.note)).toMatch(/never suggest more credit/);
+        expect(String(outcome.result.note)).not.toMatch(/credit does not cover it/);
+    });
+
+    it('a question that had as many runs as one may have is not about credit: more credit is never offered for it', async () => {
+        const instantRun = vi.fn().mockResolvedValue({ status: 'refused', reason: 'question_limit', message: 'That is as many look-ups as I do for one question.', stop: false, renewsAt: undefined, canAskForMore: undefined } satisfies InstantRunAnswer);
+        const outcome = await runInstantTool({ admin: { instantRun }, botId: BRICK, who: { forOwner: true }, tool: TOOL, arguments: { query: 'x' } });
+        expect(outcome).toMatchObject({ ended: 'not_sent', carryOn: null, result: { reason: 'question_limit', error: 'That is as many look-ups as I do for one question.' } });
+        expect(String(outcome.result.note)).toMatch(/never suggest more credit/);
     });
 });
 
@@ -331,6 +467,16 @@ describe('one Instant run', () => {
         expect(ran.result).toMatchObject({ success: true, data: { results: ['a'] }, receipt: '[What it used](#usage=act_1)' });
         expect(String(ran.result.note)).toMatch(/Never say a price/);
         noMoney({ ...ran.result, data: undefined });
+    });
+
+    it('a request that needs two runs of one App (email two people) runs both: each is sent to Orbit, with its own call id, and both work', async () => {
+        const instantRun = answers({ status: 'done', data: { sent: 'ali' }, chargedMicros: 1000 }, { status: 'done', data: { sent: 'mona' }, chargedMicros: 1000 });
+        const first = await go(instantRun, { taskKey: 'instant-2', arguments: { to: 'ali@example.com' } });
+        const second = await go(instantRun, { taskKey: 'instant-2', arguments: { to: 'mona@example.com' } });
+        expect(instantRun).toHaveBeenCalledTimes(2);
+        expect(instantRun.mock.calls.map(([, body]) => body.arguments)).toEqual([{ to: 'ali@example.com' }, { to: 'mona@example.com' }]);
+        expect(instantRun.mock.calls[0][1].callId).not.toBe(instantRun.mock.calls[1][1].callId);
+        expect([first.ended, second.ended]).toEqual(['worked', 'worked']);
     });
 
     it('a very long answer is cut and says so', async () => {

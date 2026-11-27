@@ -252,6 +252,19 @@ describe('Create (approve)', () => {
         expect(s.outcomes).toEqual([expect.objectContaining({ state: 'done', result: '{"successful":true,"data":{"id":"WEB-12"}}' })]);
     });
 
+    it('tells the bot the whole answer of an approved action, not its first 300 characters', async () => {
+        const messages = Array.from({ length: 25 }, (_, i) => ({ id: `m${i}`, subject: `Subject ${i}`, snippet: 'a few plain words '.repeat(15) }));
+        const json = JSON.stringify({ successful: true, data: { messages } });
+        expect(json.length).toBeGreaterThan(5000);
+        s = setup({ runResult: [{ type: 'text', text: json }] });
+        await s.approvals.propose(input());
+        await s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
+        await settle();
+        expect(s.outcomes).toHaveLength(1);
+        expect(s.outcomes[0].result).toBe(json);
+        expect(s.outcomes[0].result).toContain('Subject 24');
+    });
+
     it('runs it once however many times it is tapped', async () => {
         await s.approvals.propose(input());
         const first = s.approvals.handleTap('b1', ROOM, SARA, tap('act_1', 1, { action: 'decide', option: 'approve' }));
