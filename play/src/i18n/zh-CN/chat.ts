@@ -51,6 +51,7 @@ const chat: DeepPartial<Translation["chat"]> = {
             screenInControlRunning: "你正在操作 · 仍有程序在运行",
             screenControlRunningLine: "你正在 {name} 的电脑上输入。{name} 安装的程序仍在运行，可能看到你输入的内容。",
             notReady: "无法准备好电脑。电脑上没有任何改动。请重试。",
+            takeOverShared: "{name} 正在这台电脑上做不止一项任务。等只剩一项时你就可以接管，或者先暂停其他任务。",
         },
         files: {
             artifactsMade: "已创建 {count} 个工件",

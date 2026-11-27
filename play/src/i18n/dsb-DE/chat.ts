@@ -208,6 +208,8 @@ const chat: DeepPartial<Translation["chat"]> = {
             screenControlRunningLine:
                 "Ty pišoš na licadle {name}. Program, kótaryž jo {name} instalěrował, hyšći běžy a móžo wiźeś, což pišoš.",
             notReady: "Licadło njejo se mógło pśigótowaś. Nic njejo se změniło. Wopytaj hyšći raz.",
+            takeOverShared:
+                "{name} cyni na toś tom licadle wěcej ako jaden nadawk. Móžoš pśewześ, gaž jo jano jaden wóstał, abo zastaj nejpjerwjej druge.",
         },
         files: {
             artifactsMade: "Napórane artefakty: {count}",

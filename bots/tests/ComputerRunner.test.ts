@@ -22,6 +22,8 @@ import {
     POOL_BUSY_WHY,
     RELAY_UNREACHABLE_WHY,
     relayUrlFromEnv,
+    RUNNER_TIMING,
+    sharedBusyWhy,
     type RelayProbeResult,
     runnerOrbitFor,
     type RunnableJob,
@@ -658,6 +660,126 @@ describe('the person’s part', () => {
         await runJob(orbit);
         expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(RUNNER_GUARDS.maxBadTurns);
         expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+    });
+
+    describe('a computer another job is on (Orbit answers browser_shared)', () => {
+        /** A runner whose clock moves only when it waits, so the 10-minute bound is reached in a test without waiting. */
+        const runShared = async (orbit: RunnerOrbit, stopAfterWaits?: number) => {
+            let clock = 1_000_000;
+            const waits: number[] = [];
+            let runner!: ReturnType<typeof createComputerRunner>;
+            runner = createComputerRunner({
+                orbit,
+                relayUrl: RELAY,
+                sleep: async (ms) => {
+                    waits.push(ms);
+                    clock += ms;
+                    if (stopAfterWaits !== undefined && waits.length >= stopAfterWaits) runner.stop();
+                },
+                now: () => clock,
+                log: quiet,
+                timing: { waitMs: 0, progressMs: 0, reconnectMs: [0, 0], prepareMs: [0, 0], sharedWaitMs: 30_000, sharedGiveUpMs: 10 * 60_000 },
+            });
+            orbit.running = async () => [JOB];
+            await runner.tick();
+            await runner.idle();
+            return waits;
+        };
+        const answering = (orbit: RunnerOrbit, answers: Array<Record<string, unknown>>) => {
+            const original = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                const answer = await original(botId, jobId, body);
+                if (body.action !== 'handover') return answer;
+                return answers.length > 0 ? answers.shift()! : answer;
+            };
+        };
+        const SHARED = { ok: false, reason: 'browser_shared' };
+
+        it('starts no turn and ends nothing: it asks again with the same handover after 30 s, and waits for the person as usual once it lands', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]'), done('[[done]]')]);
+            // more shared answers than tries: a shared answer is no try
+            answering(orbit, Array.from({ length: RUNNER_GUARDS.maxBadTurns + 2 }, () => SHARED));
+            const waits = await runShared(orbit);
+            const handovers = seen.actions.filter((a) => a.action === 'handover');
+            expect(handovers).toHaveLength(RUNNER_GUARDS.maxBadTurns + 3);
+            // the very same handover each time
+            expect(new Set(handovers.map((a) => JSON.stringify(a))).size).toBe(1);
+            expect(waits.filter((ms) => ms === 30_000)).toHaveLength(RUNNER_GUARDS.maxBadTurns + 2);
+            // one turn before the handover, one after the person handed back: none while it waited for the computer
+            expect(seen.turns).toHaveLength(2);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'done' }]);
+        });
+
+        it('ends the job as ours (given back), with its own line, when the computer is still shared after 10 minutes', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+            answering(orbit, Array.from({ length: 1000 }, () => SHARED));
+            const waits = await runShared(orbit);
+            // asked at 0 s, 30 s, … 600 s
+            expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(21);
+            expect(waits.reduce((sum, ms) => sum + ms, 0)).toBe(10 * 60_000);
+            expect(seen.turns).toHaveLength(1);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'ours', why: sharedBusyWhy('signin'), basis: 'browser_shared' }]);
+        });
+
+        it('CodeRabbit: sends the end at the bound again until Orbit takes it', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+            answering(orbit, Array.from({ length: 1000 }, () => SHARED));
+            const answer = orbit.action;
+            let lost = 2;
+            orbit.action = async (botId, jobId, body) => {
+                if (body.action === 'finish' && lost > 0) {
+                    lost--;
+                    seen.actions.push(body);
+                    throw new Error('Orbit could not be reached');
+                }
+                return answer(botId, jobId, body);
+            };
+            await runShared(orbit);
+            expect(finished(seen)).toHaveLength(3);
+            expect(finished(seen).every((f) => f.basis === 'browser_shared' && f.cause === 'ours')).toBe(true);
+        });
+
+        it('says the step the job waited for, and names no other job, title or person', () => {
+            expect(sharedBusyWhy('signin')).toBe("The computer stayed busy with other work, so I couldn't hand it to you to sign in.");
+            expect(sharedBusyWhy('pay')).toContain('to pay');
+            expect(sharedBusyWhy('upload')).toContain('for your document');
+            expect(sharedBusyWhy('details')).toContain('for your details');
+            expect(sharedBusyWhy('submit')).toContain('for your OK to submit');
+            expect(RUNNER_TIMING.sharedWaitMs).toBe(30_000);
+            expect(RUNNER_TIMING.sharedGiveUpMs).toBe(10 * 60_000);
+        });
+
+        it('still ends as the agent’s when, after shared answers, Orbit answers no every time (the shared answers took none of the tries)', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover pay | x | y]]')]);
+            answering(orbit, [SHARED, SHARED, ...Array.from({ length: 50 }, () => ({ ok: false, reason: 'not_running' }))]);
+            await runShared(orbit);
+            expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(2 + RUNNER_GUARDS.maxBadTurns);
+            expect(finished(seen)).toEqual([{ action: 'finish', outcome: 'failed', cause: 'agent' }]);
+        });
+
+        it('reads the job again, ending nothing, when the job moved on while it waited (stale)', async () => {
+            let stopped = false;
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')], () => ({ status: stopped ? 'stopped' : 'running', control: 'brick' }));
+            answering(orbit, [SHARED, { ok: false, reason: 'stale' }]);
+            const answer = orbit.action;
+            orbit.action = async (botId, jobId, body) => {
+                const said = await answer(botId, jobId, body);
+                // the person stopped the job while it waited: the next handover is stale, and the job is read as stopped
+                if (body.action === 'handover' && said.reason === 'stale') stopped = true;
+                return said;
+            };
+            await runShared(orbit);
+            expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(2);
+            expect(finished(seen)).toEqual([]);
+        });
+
+        it('sends no handover after the worker is stopped while it waits', async () => {
+            const { orbit, seen } = fakeOrbit([done('[[handover signin]]')]);
+            answering(orbit, Array.from({ length: 1000 }, () => SHARED));
+            await runShared(orbit, 2);
+            expect(seen.actions.filter((a) => a.action === 'handover')).toHaveLength(2);
+            expect(finished(seen)).toEqual([]);
+        });
     });
 
     it('reads a handover for a job Orbit no longer has (404) as a no, but a request of ours that does not fit (400), a key it does not accept (401), its own failure (500) and an Orbit that is down as ours', async () => {

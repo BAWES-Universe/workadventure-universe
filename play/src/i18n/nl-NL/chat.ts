@@ -296,6 +296,8 @@ const chat: DeepPartial<Translation["chat"]> = {
             screenControlRunningLine:
                 "Je typt op de computer van {name}. Een programma dat {name} heeft geïnstalleerd draait nog en kan zien wat je typt.",
             notReady: "De computer kon niet worden voorbereid. Er is niets gewijzigd. Probeer het opnieuw.",
+            takeOverShared:
+                "{name} doet meer dan één taak op deze computer. Je kunt overnemen zodra er nog één over is, of pauzeer eerst de andere.",
         },
         files: {
             artifactsMade: "{count} {{artefact|artefacten}} gemaakt",
