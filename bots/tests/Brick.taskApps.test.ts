@@ -400,6 +400,25 @@ describe('a ready-made App’s lookups in a goal or task', () => {
         expect(answer).not.toContain('GMAIL_DELETE_MESSAGE');
         expect(answer).not.toContain('GOOGLECALENDAR_DELETE_EVENT');
     });
+
+    it('shows the card of the App that asks first, does not ask that App, and answers the other Apps with the card', async () => {
+        const gmail: ToolServerEntry = { ...entry('COMPOSIO_SEARCH_TOOLS'), serverId: 'g1', serverName: 'Gmail', readyMade: true, orbitUrl: 'https://orbit.example' };
+        const calendar: ToolServerEntry = { ...gmail, serverId: 'cal1', serverName: 'Google Calendar' };
+        const decide = async (call: { serverId?: string }): Promise<GateDecision> => (call.serverId === 'g1' ? { kind: 'ask', heading: 'looksUp', notReviewed: false, policyRevision: 3, fingerprint: 'fp' } : RUN('looksUp'));
+        const call = vi.fn<TaskAppsDeps['call']>(async () => [{ type: 'text', text: '{"results":[{"tool_slug":"GOOGLECALENDAR_EVENTS_LIST"}]}' }]);
+        const { apps, propose } = setUp(
+            {},
+            { discover: async () => ({ tools: [tool('COMPOSIO_SEARCH_TOOLS')], servers: new Map([['COMPOSIO_SEARCH_TOOLS', { ...gmail, otherApps: [calendar] }]]) }), gate: { decide } as never, call }
+        );
+        const session = await apps.open(run());
+        const answer = await session!.call('COMPOSIO_SEARCH_TOOLS', {});
+        expect(propose).toHaveBeenCalledTimes(1);
+        expect(propose).toHaveBeenCalledWith(expect.objectContaining({ entry: expect.objectContaining({ serverId: 'g1' }) }));
+        expect(answer).toContain('waiting_for_ok');
+        expect(answer).toContain('GOOGLECALENDAR_EVENTS_LIST');
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
+    });
 });
 
 describe('a ready-made App’s batch of actions in a run', () => {
@@ -440,6 +459,18 @@ describe('a ready-made App’s batch of actions in a run', () => {
         expect(propose).not.toHaveBeenCalled();
     });
 
+    it('tells a batch whose tool answered with its own error that it may have run, never that nothing was done, and does not send it again', async () => {
+        const { apps, call } = withGate(gmail);
+        call.mockResolvedValue({ error: 'Tool error: Invalid session. Action 1 completed.', outcome: 'failed' } as never);
+        const session = (await apps.open(run()))!;
+        const told = JSON.parse(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS')));
+        expect(told).toMatchObject({ outcome: 'uncertain', hint: expect.stringContaining('Do not run them again') });
+        expect(call).toHaveBeenCalledTimes(1);
+        // A call that never reached the tool stays as it was: nothing ran
+        call.mockResolvedValue({ error: "Couldn't reach it. Nothing ran", outcome: 'not_sent' } as never);
+        expect(JSON.parse(await session.call(BATCH, actions('GMAIL_FETCH_EMAILS')))).toMatchObject({ outcome: 'not_sent' });
+    });
+
     it('never sends a batch with an action that is Off, and asks on a card for one that makes, sends or deletes', async () => {
         const { apps, call, propose } = withGate(gmail);
         const session = (await apps.open(run()))!;
@@ -471,6 +502,110 @@ describe('a ready-made App’s batch of actions in a run', () => {
         await session.call(LOOKUP, { queries: ['events'] });
         expect(call).toHaveBeenCalledTimes(1);
         expect(call.mock.calls[0][1]).toMatchObject({ serverId: 'cal1' });
+    });
+
+    it('asks a search of every App that lets it be used and joins what they find, so Calendar’s actions are found beside Gmail’s', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const found = (serverId: string) => [{ type: 'text', text: JSON.stringify({ data: { results: [{ index: 1, primary_tool_slugs: [serverId === 'cal1' ? 'GOOGLECALENDAR_FIND_EVENT' : 'GMAIL_FETCH_EMAILS'] }] } }) }];
+        const asked: string[] = [];
+        const { apps } = setUp({}, { discover: async () => ({ tools: [tool(LOOKUP)], servers: new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }]]) }), gate, call: async (_brick, app) => (asked.push(app.serverId), found(app.serverId)) });
+        const session = (await apps.open(run()))!;
+        const answer = await session.call(LOOKUP, { queries: ['events this week'] });
+        expect(answer).toContain('GOOGLECALENDAR_FIND_EVENT');
+        expect(answer).toContain('GMAIL_FETCH_EMAILS');
+        expect(asked).toEqual(['g1', 'cal1']);
+    });
+
+    it('gives each App’s lookup its own call id, and names an App that did not answer without losing what the other found', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const calls: string[] = [];
+        const { apps } = setUp({}, {
+            discover: async () => ({ tools: [tool(LOOKUP)], servers: new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }]]) }),
+            gate,
+            call: async (_brick, app, _name, _args, _owner, use) => {
+                calls.push(use.callId);
+                if (app.serverId === 'g1') throw new Error('down');
+                return [{ type: 'text', text: '{"data":{"results":[{"index":1,"primary_tool_slugs":["GOOGLECALENDAR_FIND_EVENT"]}]}}' }];
+            },
+        });
+        const session = (await apps.open(run()))!;
+        const answer = await session.call(LOOKUP, { queries: ['events'] });
+        expect(new Set(calls).size).toBe(2);
+        expect(answer).toContain('GOOGLECALENDAR_FIND_EVENT');
+        expect(answer).toContain('Gmail did not answer');
+    });
+
+    it('follows the App whose link gave the session id: with Gmail not answering, a step of Gmail gets none and Calendar’s keeps it', async () => {
+        const LOOKUP = 'COMPOSIO_SEARCH_TOOLS';
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const batches: Array<{ app: string; args: Record<string, unknown> }> = [];
+        const { apps } = setUp({}, {
+            discover: async () => ({ tools: [tool(LOOKUP), tool(BATCH)], servers: new Map([[LOOKUP, { ...gmail, otherApps: [calendar] }], [BATCH, { ...gmail, otherApps: [calendar] }]]) }),
+            gate,
+            call: async (_brick, app, name, args) => {
+                if (name === LOOKUP) {
+                    if (app.serverId === 'g1') return { error: 'down' };
+                    return [{ type: 'text', text: '{"successful":true,"data":{"results":[],"session":{"id":"sess-cal1"}}}' }];
+                }
+                batches.push({ app: app.serverId, args });
+                return [{ type: 'text', text: '{"successful":true,"data":{"ran":true}}' }];
+            },
+        });
+        const session = (await apps.open(run()))!;
+        await session.call(LOOKUP, { queries: ['events'] });
+        await session.call(BATCH, { ...actions('GMAIL_FETCH_EMAILS') as Record<string, unknown>, session_id: 'sess-cal1' });
+        await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-cal1' });
+        expect(batches.map((one) => [one.app, 'session_id' in one.args])).toEqual([['g1', false], ['cal1', true]]);
+    });
+
+    it('sends a step to another App without the session id of the first App’s link, once, and never tries it again', async () => {
+        const read = vi.fn(async (_bot: string, serverId: string) => (serverId === 'cal1' ? policyOf('cal1', CALENDAR_ROWS) : policyOf(serverId, GMAIL_ROWS)));
+        const gate = new ToolGate({ read } as never, { check: async () => ({ kind: 'allowed', allowed: true }) } as never, { canManageBotTools: async () => false });
+        const seen: Array<{ app: string; args: Record<string, unknown> }> = [];
+        const { apps } = setUp({}, {
+            discover: async () => ({ tools: [tool(BATCH)], servers: new Map([[BATCH, { ...gmail, otherApps: [calendar] }]]) }),
+            gate,
+            call: async (_brick, app, _name, args) => {
+                seen.push({ app: app.serverId, args });
+                return args.session_id ? { error: 'Invalid session id sess-g1' } : [{ type: 'text', text: '{"successful":true,"data":{"ran":true}}' }];
+            },
+        });
+        const session = (await apps.open(run()))!;
+        const answer = await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(seen).toHaveLength(1);
+        expect(seen[0].app).toBe(calendar.serverId);
+        expect('session_id' in seen[0].args).toBe(false);
+        expect(answer).toContain('successful');
+        // The first App's own step keeps the session id of its own link
+        seen.length = 0;
+        await session.call(BATCH, { ...actions('GMAIL_FETCH_EMAILS') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(seen).toHaveLength(1);
+        expect(seen[0].args.session_id).toBe('sess-g1');
+    });
+
+    it('never tries a step again that may have run some of its actions, even when the error says session', async () => {
+        const { apps, call } = withGate({ ...gmail, otherApps: [calendar] });
+        call.mockResolvedValue(JSON.parse(JSON.stringify({ successful: false, error: 'Invalid session for one action', data: { results: [{ index: 0, tool_slug: 'GOOGLECALENDAR_FIND_EVENT', response: { successful: true } }] } })) as never);
+        const session = (await apps.open(run()))!;
+        await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT', 'GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(call).toHaveBeenCalledTimes(1);
+    });
+
+    it('never tries a failure again that is not about the session, and never a write that asks first', async () => {
+        const { apps, call, propose } = withGate({ ...gmail, otherApps: [calendar] });
+        call.mockResolvedValue({ error: 'The link is not answering.' } as never);
+        const session = (await apps.open(run()))!;
+        await session.call(BATCH, { ...actions('GOOGLECALENDAR_FIND_EVENT') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(call).toHaveBeenCalledTimes(1);
+        call.mockClear();
+        await session.call(BATCH, { ...actions('GMAIL_REPLY_TO_THREAD') as Record<string, unknown>, session_id: 'sess-g1' });
+        expect(call).not.toHaveBeenCalled();
+        expect(propose).toHaveBeenCalled();
     });
 
     it('does not offer or run a link tool the Apps share when every one of them has it Off', async () => {

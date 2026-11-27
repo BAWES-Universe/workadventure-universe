@@ -290,6 +290,31 @@ export function withoutOff(result: unknown, isOff: (slug: string) => boolean): u
     return result;
 }
 
+/** What an answer that ran something looks like: results of actions, or a success, in words or in JSON. A refusal before anything ran has none of it. */
+export const SHOWS_ACTIONS_RAN = /tool_slug|"results"|"response"|"successful"\s*:\s*true/i;
+
+/**
+ * Whether a call's own failure may have come after some of its work ran: a tool that answered with an error (the connector's "Tool error: ...",
+ * for a tool's own failure or a protocol error), whose words can say anything. Only a call that never got to the tool (not sent, sign-in
+ * turned away, no answer) is known to have done nothing. Used for a batch of actions, in chat and on a card, where some may have run.
+ */
+export function toolErrorMayHaveRun(result: unknown): boolean {
+    return isObject(result) && result.outcome === 'failed' && typeof result.error === 'string' && result.error.startsWith('Tool error:');
+}
+
+/**
+ * A batch whose tool answered with its own error, as the model reads it where no summary is made (a goal or task): not "failed", which
+ * reads as nothing done, but "may have run", with what to do about it. Any other answer is returned as it is.
+ */
+export function asMayHaveRun(answer: unknown): unknown {
+    if (!toolErrorMayHaveRun(answer)) return answer;
+    return {
+        ...(answer as Record<string, unknown>),
+        outcome: 'uncertain',
+        hint: 'The App answered with an error, and some of these actions may have been done before it. Do not run them again. Say plainly that it may have worked and is worth checking.',
+    };
+}
+
 /** What happened to one action of a batch call, in the words of `outcomeOf`. */
 export type PartOutcome = 'succeeded' | 'failed' | 'notSent' | 'uncertain';
 
@@ -325,6 +350,8 @@ function answerData(answer: unknown): Record<string, unknown> | undefined {
  * call's own outcome for every action, as before. `slugs` are the actions as sent, in order.
  */
 export function batchOutcomes(answer: unknown, slugs: readonly string[], whole: PartOutcome): PartOutcome[] {
+    // A tool that answered with an error may have run some of the work before it failed (see `toolErrorMayHaveRun`): no action is known undone
+    if (toolErrorMayHaveRun(answer)) return slugs.map(() => 'uncertain');
     if (whole !== 'succeeded') return slugs.map(() => whole);
     const data = answerData(answer);
     const inner = data && isObject(data.data) ? data.data : data;
