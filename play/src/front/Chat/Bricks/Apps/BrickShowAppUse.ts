@@ -29,6 +29,20 @@ export function seedShowAppUse(botId: string, show: boolean): void {
 const saving = writable<Record<string, boolean>>({});
 export const showAppUseSaving: Readable<Record<string, boolean>> = { subscribe: saving.subscribe };
 
+/** The Bricks whose last change Orbit did not take: said under the switch, also on a screen opened again after it failed. */
+const notSaved = writable<Record<string, boolean>>({});
+export const showAppUseNotSaved: Readable<Record<string, boolean>> = { subscribe: notSaved.subscribe };
+
+function setNotSaved(botId: string, on: boolean): void {
+    notSaved.update((all) => {
+        if (on) return all[botId] ? all : { ...all, [botId]: true };
+        if (!all[botId]) return all;
+        const rest = { ...all };
+        delete rest[botId];
+        return rest;
+    });
+}
+
 function setSaving(botId: string, on: boolean): void {
     saving.update((all) => {
         if (on) return all[botId] ? all : { ...all, [botId]: true };
@@ -52,6 +66,7 @@ export function takeShowAppUse(botId: string, show: boolean): void {
 export function forgetShowAppUse(): void {
     states.set({});
     saving.set({});
+    notSaved.set({});
 }
 
 /**
@@ -62,13 +77,16 @@ export async function changeShowAppUse(botId: string, show: boolean): Promise<bo
     if (get(saving)[botId]) return false;
     const before = shownIn(get(states), botId);
     setSaving(botId, true);
+    setNotSaved(botId, false);
     seedShowAppUse(botId, show);
+    let saved = false;
     try {
-        const saved = await changeMyBrick(botId, { behaviorConfig: { showToolCalls: show } });
-        // What Orbit took stands, whatever a read in between said; what it did not take goes back
-        seedShowAppUse(botId, saved ? show : before);
+        saved = await changeMyBrick(botId, { behaviorConfig: { showToolCalls: show } });
         return saved;
     } finally {
+        // What Orbit took stands, whatever a read in between said; what it did not take goes back and is said
+        seedShowAppUse(botId, saved ? show : before);
+        setNotSaved(botId, !saved);
         setSaving(botId, false);
     }
 }

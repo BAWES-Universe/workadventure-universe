@@ -355,6 +355,30 @@ describe("a Brick's Apps on its own page", () => {
             expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
         });
 
+        it("a save that fails after the screen was left and opened again is still said, and the switch is back", async () => {
+            let finish: (saved: boolean) => void = () => {};
+            game.changeMyBrick.mockReturnValue(
+                new Promise<boolean>((resolve) => {
+                    finish = resolve;
+                })
+            );
+            view = new ShowAppUseRow({ target, props: { botId: "b1" } });
+            await settle();
+            const first = byId("showAppUseSwitch") as HTMLInputElement;
+            first.checked = false;
+            first.dispatchEvent(new Event("change"));
+            await settle();
+            view.$destroy();
+            view = new ShowAppUseRow({ target, props: { botId: "b1" } });
+            await settle();
+            finish(false);
+            await settle();
+            const again = byId("showAppUseSwitch") as HTMLInputElement;
+            expect(again.disabled).toBe(false);
+            expect(get(showAppUseStates).b1).toBe(true);
+            expect(words(byId("showAppUseFailed"))).toBe("Couldn't change Show app use. It is back to how it was.");
+        });
+
         it("the Apps screen has Show app use first, saves it at once, and the row line follows", async () => {
             seedShowAppUse("b1", false);
             view = new BrickAppsPage({ target, props: { botId: "b1", botName: "Stay Brick", onBack: () => {} } });
