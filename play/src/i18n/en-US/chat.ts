@@ -1943,12 +1943,12 @@ const chat: BaseTranslation = {
             // The Apps row on a Brick's own page and the screen it opens
             onBrick: {
                 title: "Apps",
-                none: "None yet",
+                none: "No apps yet",
                 // Apps the Brick has switched off: "Gmail · off", "Gmail and Notion · off", or after the ones that are on: "Gmail · Notion off"
                 // The row's line also says whether chat shows which app it used ("Show app use")
-                useShown: "app use shown",
-                useHidden: "app use hidden",
-                withUse: "{apps:string} · {use:string}",
+                useShown: "App use shown",
+                useHidden: "App use hidden",
+                withUse: "{use:string} · {apps:string}",
                 useNotSaved: "Couldn't change Show app use. It is back to how it was.",
                 allOff: "{names:string} · off",
                 someOff: "{on:string} · {off:string} off",

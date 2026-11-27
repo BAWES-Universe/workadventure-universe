@@ -5,10 +5,19 @@ import { changeMyBrick } from "../MyBricksStore";
 /**
  * "Show app use" of the person's Bricks: whether chat shows which app a Brick used (the quiet steps line). A Brick's page reads
  * it with the Brick and tells it here; its Apps row says it on its line and its Apps screen changes it, so both always say the
- * same. A Brick whose setting was never saved is off, as in chat.
+ * same. It is on unless the owner turned it off: a Brick whose setting was never saved shows it, as in chat (an unset value
+ * is never written back; only a tap on the switch saves).
  */
 const states = writable<Record<string, boolean>>({});
 export const showAppUseStates: Readable<Record<string, boolean>> = { subscribe: states.subscribe };
+
+/** Whether a Brick shows app use, from its saved behavior config: on unless explicitly turned off. */
+export function appUseShown(config: { showToolCalls?: unknown } | undefined | null): boolean {
+    return config?.showToolCalls !== false;
+}
+
+/** What is known of one Brick's setting; on when nothing is. */
+export const shownIn = (all: Record<string, boolean>, botId: string): boolean => all[botId] !== false;
 
 /** Takes what Orbit said of one Brick's setting. */
 export function seedShowAppUse(botId: string, show: boolean): void {
@@ -29,7 +38,7 @@ export function forgetShowAppUse(): void {
  */
 export async function changeShowAppUse(botId: string, show: boolean): Promise<boolean> {
     if (busy.has(botId)) return false;
-    const before = get(states)[botId] ?? false;
+    const before = shownIn(get(states), botId);
     busy.add(botId);
     seedShowAppUse(botId, show);
     try {

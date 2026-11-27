@@ -9,7 +9,7 @@ export interface BrickAppUse {
 
 /**
  * The apps one Brick can use, out of the person's own apps (what Orbit lists on the Apps page), in the order Orbit gave them.
- * Undefined until the apps were read once, so a row can say "Loading" instead of "None yet".
+ * Undefined until the apps were read once, so a row can say "Loading" instead of "No apps yet".
  */
 export function appsOfBrick(apps: MyApp[] | undefined, botId: string): BrickAppUse[] | undefined {
     if (!apps) return undefined;
@@ -22,18 +22,18 @@ export function appsOfBrick(apps: MyApp[] | undefined, botId: string): BrickAppU
 }
 
 /**
- * The line under "Apps" on a Brick's page: "Gmail and Google Calendar", "Gmail, Google Calendar and 2 more", "None yet". An app
+ * The line under "Apps" on a Brick's page: "Gmail and Google Calendar", "Gmail, Google Calendar and 2 more", "No apps yet". An app
  * whose sign-in ended leads the line, since that is the one thing the person has to do something about. An app the Brick has
- * turned off is said as off ("Gmail · off", "Gmail · Notion off") and never left out, so the row never says "None yet" while
+ * turned off is said as off ("Gmail · off", "Gmail · Notion off") and never left out, so the row never says "No apps yet" while
  * the Brick has apps.
  */
 export function appsBrief(uses: BrickAppUse[] | undefined, LL: TranslationFunctions, showAppUse?: boolean): string {
     const text = LL.chat.brick.apps;
     if (!uses) return "";
     const apps = appsLine(uses, LL);
-    // Which state "Show app use" is in is said after the apps, when the caller knows it
+    // Which state "Show app use" is in leads the line (a long list of apps may be cut at its end), when the caller knows it
     if (showAppUse === undefined) return apps;
-    return text.onBrick.withUse({ apps, use: showAppUse ? text.onBrick.useShown() : text.onBrick.useHidden() });
+    return text.onBrick.withUse({ use: showAppUse ? text.onBrick.useShown() : text.onBrick.useHidden(), apps });
 }
 
 function appsLine(uses: BrickAppUse[], LL: TranslationFunctions): string {

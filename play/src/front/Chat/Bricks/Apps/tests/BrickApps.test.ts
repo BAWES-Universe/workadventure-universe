@@ -51,7 +51,14 @@ import LL, { setLocale } from "../../../../../i18n/i18n-svelte";
 import { parseMyApps, type MyApp } from "../Apps";
 import { appPageStart } from "../AppLink";
 import { forgetMyApps } from "../AppsStore";
-import { changeShowAppUse, forgetShowAppUse, seedShowAppUse, showAppUseStates } from "../BrickShowAppUse";
+import {
+    appUseShown,
+    changeShowAppUse,
+    forgetShowAppUse,
+    seedShowAppUse,
+    shownIn,
+    showAppUseStates,
+} from "../BrickShowAppUse";
 import { appsBrief, appsOfBrick } from "../BrickApps";
 import BrickAppsPage from "../BrickAppsPage.svelte";
 import BrickAppsRow from "../BrickAppsRow.svelte";
@@ -122,13 +129,13 @@ describe("a Brick's Apps on its own page", () => {
             expect(appsOfBrick(parse([notion]), "b1")).toEqual([]);
         });
 
-        it("says the names, then 'and N more', and None yet when there are none", () => {
+        it("says the names, then 'and N more', and No apps yet when there are none", () => {
             const LLnow = get(LL);
             expect(appsBrief(appsOfBrick(parse([gmail]), "b1"), LLnow)).toBe("Gmail");
             expect(appsBrief(appsOfBrick(parse([gmail, calendar]), "b1"), LLnow)).toBe("Gmail and Google Calendar");
             const many = [gmail, calendar, app("n", "Notion", [brickOf("b1")]), app("s", "Slack", [brickOf("b1")])];
             expect(appsBrief(appsOfBrick(parse(many), "b1"), LLnow)).toBe("Gmail, Google Calendar and 2 more");
-            expect(appsBrief(appsOfBrick(parse([notion]), "b1"), LLnow)).toBe("None yet");
+            expect(appsBrief(appsOfBrick(parse([notion]), "b1"), LLnow)).toBe("No apps yet");
             expect(appsBrief(undefined, LLnow)).toBe("");
         });
 
@@ -142,7 +149,7 @@ describe("a Brick's Apps on its own page", () => {
             expect(appsBrief(appsOfBrick(parse([lost, lost2]), "b1"), LLnow)).toBe("2 apps need signing in again");
         });
 
-        it("says an app the Brick has turned off as off, never None yet", () => {
+        it("says an app the Brick has turned off as off, never No apps yet", () => {
             const LLnow = get(LL);
             const off = app("gmail", "Gmail", [brickOf("b1", { enabled: false })]);
             expect(appsBrief(appsOfBrick(parse([off]), "b1"), LLnow)).toBe("Gmail · off");
@@ -190,17 +197,18 @@ describe("a Brick's Apps on its own page", () => {
             view = new BrickAppsRow({ target, props: { botId: "b1", onOpen } });
             await settle();
             const row = byId("bot-page-group-apps");
-            expect(words(row)).toBe("Apps Gmail and Google Calendar · app use hidden");
+            expect(words(row)).toBe("Apps App use shown · Gmail and Google Calendar");
             row?.querySelector("button")?.click();
             expect(onOpen).toHaveBeenCalledTimes(1);
         });
 
-        it("the row says None yet for a Brick with no app", async () => {
+        it("the row says No apps yet for a Brick with no app, after the state", async () => {
             const { loadMyApps } = await import("../AppsStore");
             await loadMyApps();
+            seedShowAppUse("nobody", false);
             view = new BrickAppsRow({ target, props: { botId: "nobody", onOpen: () => {} } });
             await settle();
-            expect(words(byId("bot-page-group-apps"))).toBe("Apps None yet · app use hidden");
+            expect(words(byId("bot-page-group-apps"))).toBe("Apps App use hidden · No apps yet");
         });
 
         it("the screen lists this Brick's apps with what it may do, in the Apps page's own words", async () => {
@@ -282,10 +290,44 @@ describe("a Brick's Apps on its own page", () => {
             seedShowAppUse("b1", true);
             view = new BrickAppsRow({ target, props: { botId: "b1", onOpen: () => {} } });
             await settle();
-            expect(words(byId("bot-page-group-apps"))).toBe("Apps Gmail and Google Calendar · app use shown");
+            expect(words(byId("bot-page-group-apps"))).toBe("Apps App use shown · Gmail and Google Calendar");
             seedShowAppUse("b1", false);
             await settle();
-            expect(words(byId("bot-page-group-apps"))).toBe("Apps Gmail and Google Calendar · app use hidden");
+            expect(words(byId("bot-page-group-apps"))).toBe("Apps App use hidden · Gmail and Google Calendar");
+        });
+
+        it("an unset Show app use reads as shown, and only an explicit off reads as hidden", () => {
+            expect(appUseShown(undefined)).toBe(true);
+            expect(appUseShown({})).toBe(true);
+            expect(appUseShown({ showToolCalls: true })).toBe(true);
+            expect(appUseShown({ showToolCalls: "no" })).toBe(true);
+            expect(appUseShown({ showToolCalls: false })).toBe(false);
+            expect(shownIn({}, "b1")).toBe(true);
+            expect(shownIn({ b1: false }, "b1")).toBe(false);
+        });
+
+        it("the switch is a real switch for screen readers, named Show app use, and cannot be tapped while it saves", async () => {
+            let finish: (saved: boolean) => void = () => {};
+            game.changeMyBrick.mockReturnValue(
+                new Promise<boolean>((resolve) => {
+                    finish = resolve;
+                })
+            );
+            view = new ShowAppUseRow({ target, props: { botId: "b1" } });
+            await settle();
+            const input = byId("showAppUseSwitch") as HTMLInputElement;
+            expect(input.getAttribute("role")).toBe("switch");
+            expect(input.getAttribute("aria-label")).toBe("Show app use");
+            expect(input.getAttribute("aria-checked")).toBe("true");
+            input.checked = false;
+            input.dispatchEvent(new Event("change"));
+            await settle();
+            expect(input.disabled).toBe(true);
+            expect(input.getAttribute("aria-checked")).toBe("false");
+            finish(true);
+            await settle();
+            expect(input.disabled).toBe(false);
+            expect(game.changeMyBrick).toHaveBeenCalledTimes(1);
         });
 
         it("the Apps screen has Show app use first, saves it at once, and the row line follows", async () => {
@@ -302,7 +344,7 @@ describe("a Brick's Apps on its own page", () => {
             expect(words(byId("showAppUse"))).toBe("Show app use Shows which app it used in chat");
         });
 
-        it("puts the switch back and tells the person when Orbit did not take it", async () => {
+        it("puts the switch back and says so under it when Orbit did not take it", async () => {
             game.changeMyBrick.mockResolvedValue(false);
             seedShowAppUse("b1", false);
             view = new ShowAppUseRow({ target, props: { botId: "b1" } });
@@ -312,7 +354,14 @@ describe("a Brick's Apps on its own page", () => {
             input.dispatchEvent(new Event("change"));
             await settle();
             expect(get(showAppUseStates).b1).toBe(false);
-            expect(game.warn).toHaveBeenCalledWith("Couldn't change Show app use. It is back to how it was.");
+            expect(words(byId("showAppUseFailed"))).toBe("Couldn't change Show app use. It is back to how it was.");
+            expect(byId("showAppUseFailed")?.getAttribute("role")).toBe("alert");
+            // The next change clears it
+            game.changeMyBrick.mockResolvedValue(true);
+            input.checked = false;
+            input.dispatchEvent(new Event("change"));
+            await settle();
+            expect(byId("showAppUseFailed")).toBeNull();
         });
     });
 
@@ -322,7 +371,7 @@ describe("a Brick's Apps on its own page", () => {
             forgetShowAppUse();
         });
 
-        it("is off for a Brick nobody said anything about, and one Brick's setting is not another's", async () => {
+        it("a Brick nobody said anything about reads as shown, and one Brick's setting is not another's", async () => {
             game.changeMyBrick.mockResolvedValue(true);
             expect(get(showAppUseStates).b1).toBeUndefined();
             await changeShowAppUse("b1", true);

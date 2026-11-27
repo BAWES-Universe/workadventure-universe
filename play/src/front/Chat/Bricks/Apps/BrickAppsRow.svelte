@@ -4,7 +4,7 @@
     import PageGroup from "../../../external-modules/bots/components/page/PageGroup.svelte";
     import { loadMyApps, myAppsStore } from "./AppsStore";
     import { appsBrief, appsOfBrick } from "./BrickApps";
-    import { showAppUseStates } from "./BrickShowAppUse";
+    import { shownIn, showAppUseStates } from "./BrickShowAppUse";
     import { IconApps } from "@wa-icons";
 
     /**
@@ -13,7 +13,7 @@
     export let botId: string;
     export let onOpen: () => void;
 
-    $: brief = appsBrief(appsOfBrick($myAppsStore, botId), $LL, $showAppUseStates[botId] ?? false);
+    $: brief = appsBrief(appsOfBrick($myAppsStore, botId), $LL, shownIn($showAppUseStates, botId));
 
     onMount(() => {
         loadMyApps().catch((error) => console.error(error));
