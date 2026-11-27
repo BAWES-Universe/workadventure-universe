@@ -32,10 +32,18 @@
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
     import CodeView from "./FileViewer/CodeView.svelte";
     import {
+        fileNameOf,
+        markdownFile,
+        markdownTables,
+        saveFile,
+        spreadsheetFile,
+    } from "../../Artifacts/artifactDownload";
+    import {
         IconAlertTriangle,
         IconCheck,
         IconCode,
         IconCopy,
+        IconDownload,
         IconEye,
         IconHistory,
         IconLoader,
@@ -89,6 +97,17 @@
     let restoreFailed = false;
     /** The owner's Share list is open (one list drops down at a time). */
     let shareOpen = false;
+    /** The Download list is open: only a document with a table has one, any other downloads its file at once. */
+    let downloadOpen = false;
+    let downloadButton: HTMLButtonElement | undefined;
+    let downloadMenu: HTMLElement | undefined;
+    /** A file is being made; a second tap waits for it. */
+    let downloading = false;
+    /** The short line under the document after a download: the file's name, or that it could not be made. */
+    let downloadNote: { kind: "saved" | "failed"; name: string } | undefined;
+    let downloadNoteTimer: ReturnType<typeof setTimeout> | undefined;
+    /** How long the line stays. */
+    const DOWNLOAD_NOTE_MS = 3000;
     /** A choice the owner just made, showing at once while it is on its way to be saved. */
     let pendingShare: ArtifactOpenScope | undefined;
     let shareFailed = false;
@@ -229,6 +248,7 @@
         destroyed = true;
         if (copiedTimer) clearTimeout(copiedTimer);
         if (receiptTimer) clearTimeout(receiptTimer);
+        if (downloadNoteTimer) clearTimeout(downloadNoteTimer);
         renewIn(undefined);
     });
 
@@ -274,6 +294,10 @@
             : "";
     // A document is drawn from its text, a drawing as a picture, a page or app in the locked frame.
     $: needsText = codeOn || kind === "markdown";
+    // Download: of the version on show, made from its text. Dimmed until that text is here.
+    $: textReady = !!text && !!opened && text.number === opened.version.number;
+    $: documentTables = kind === "markdown" && textReady && text ? markdownTables(text.content) : [];
+    $: if (!textReady) downloadOpen = false;
 
     // Open when the window starts, and again whenever a version other than the one showing is asked for.
     $: syncVersion($versionStore, attempt);
@@ -384,6 +408,7 @@
         text = undefined;
         menuOpen = false;
         shareOpen = false;
+        downloadOpen = false;
         failure = why;
         phase = "failed";
     }
@@ -543,22 +568,75 @@
 
     // A tap anywhere else puts the list away. A tap inside the app does not reach the game, so it leaves the list open.
     function onPointerDown(event: PointerEvent) {
-        if (!menuOpen && !shareOpen) return;
+        if (!menuOpen && !shareOpen && !downloadOpen) return;
         const target = event.target;
         if (
             target instanceof Node &&
-            (menu?.contains(target) || versionsButton?.contains(target) || shareButton?.contains(target))
+            (menu?.contains(target) ||
+                downloadMenu?.contains(target) ||
+                versionsButton?.contains(target) ||
+                shareButton?.contains(target) ||
+                downloadButton?.contains(target))
         ) {
             return;
         }
         menuOpen = false;
         shareOpen = false;
+        downloadOpen = false;
+    }
+
+    // A document without a table has one file to give, so a tap on Download gives it. With a table the person chooses.
+    function toggleDownload() {
+        if (!textReady || downloading) return;
+        if (documentTables.length === 0) {
+            void download("markdown");
+            return;
+        }
+        downloadOpen = !downloadOpen;
+        if (!downloadOpen) return;
+        menuOpen = false;
+        shareOpen = false;
+    }
+
+    function showDownloadNote(kind: "saved" | "failed", name = "") {
+        downloadNote = { kind, name };
+        if (downloadNoteTimer) clearTimeout(downloadNoteTimer);
+        downloadNoteTimer = setTimeout(() => (downloadNote = undefined), DOWNLOAD_NOTE_MS);
+    }
+
+    /** The file is made from the version that was on show when it was asked for, which is named when it is not the latest. */
+    async function download(what: "markdown" | "spreadsheet") {
+        if (!text || !opened || downloading || kind !== "markdown") return;
+        const source = text.content;
+        const tables = documentTables;
+        const name = fileNameOf(
+            title ?? "",
+            what === "markdown" ? "md" : "xlsx",
+            isLatest ? undefined : opened.version.number
+        );
+        downloadOpen = false;
+        downloading = true;
+        try {
+            const blob =
+                what === "markdown"
+                    ? markdownFile(source)
+                    : await spreadsheetFile(tables, (number) => $LL.chat.artifacts.tableTab({ number }));
+            if (destroyed) return;
+            saveFile(blob, name);
+            showDownloadNote("saved", name);
+        } catch (error) {
+            console.warn("Could not make an artifact's file", error);
+            if (!destroyed) showDownloadNote("failed");
+        } finally {
+            downloading = false;
+        }
     }
 
     function toggleVersions() {
         menuOpen = !menuOpen;
         if (!menuOpen) return;
         shareOpen = false;
+        downloadOpen = false;
         roomAsked = false;
         menuRoom = undefined;
         void loadVersions();
@@ -578,6 +656,7 @@
         shareOpen = !shareOpen;
         if (!shareOpen) return;
         menuOpen = false;
+        downloadOpen = false;
         roomAsked = false;
         menuRoom = undefined;
         shareFailed = false;
@@ -782,6 +861,20 @@
                     data-testid="artifactShare"
                     bind:this={shareButton}
                     on:click={toggleShare}><IconShare font-size="22" /></button
+                >
+            {/if}
+            {#if kind === "markdown"}
+                <button
+                    type="button"
+                    class="open-here-action"
+                    class:picked={downloadOpen}
+                    title={$LL.chat.artifacts.download()}
+                    aria-label={$LL.chat.artifacts.download()}
+                    aria-expanded={documentTables.length > 0 ? downloadOpen : undefined}
+                    disabled={!textReady || downloading}
+                    data-testid="artifactDownload"
+                    bind:this={downloadButton}
+                    on:click={toggleDownload}><IconDownload font-size="22" /></button
                 >
             {/if}
             {#if !compact}
@@ -998,6 +1091,36 @@
             {/if}
         {/if}
     </div>
+
+    {#if downloadOpen}
+        <div class="menu download-menu" bind:this={downloadMenu} data-testid="artifactDownloadMenu">
+            <button type="button" class="menu-row" data-testid="artifactDownloadMarkdown" on:click={() => download("markdown")}>
+                <span class="menu-text">
+                    <b>{$LL.chat.artifacts.downloadDocument()}</b>
+                    <small>{$LL.chat.artifacts.downloadDocumentHelp()}</small>
+                </span>
+            </button>
+            <button type="button" class="menu-row" data-testid="artifactDownloadSheet" on:click={() => download("spreadsheet")}>
+                <span class="menu-text">
+                    <b>{$LL.chat.artifacts.downloadSheet()}</b>
+                    <small>{$LL.chat.artifacts.downloadSheetHelp()}</small>
+                </span>
+            </button>
+        </div>
+    {/if}
+
+    {#if downloadNote}
+        <div
+            class="download-note"
+            class:failed={downloadNote.kind === "failed"}
+            role={downloadNote.kind === "failed" ? "alert" : "status"}
+            data-testid="artifactDownloadNote"
+        >
+            {downloadNote.kind === "failed"
+                ? $LL.chat.artifacts.downloadFailed()
+                : $LL.chat.artifacts.downloadSaved({ name: downloadNote.name })}
+        </div>
+    {/if}
 
     {#if menuOpen || shareOpen}
         <div
@@ -1623,6 +1746,31 @@
         text-transform: uppercase;
         color: rgba(255, 255, 255, 0.6);
         padding: 6px 6px 2px;
+    }
+    .download-menu {
+        min-width: 240px;
+    }
+    .download-note {
+        position: absolute;
+        inset-inline: 12px;
+        bottom: max(16px, env(safe-area-inset-bottom));
+        z-index: 6;
+        margin-inline: auto;
+        width: fit-content;
+        max-width: calc(100% - 24px);
+        padding: 9px 14px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 999px;
+        background: rgba(42, 38, 64, 0.96);
+        color: #fff;
+        font-size: 13px;
+        text-align: center;
+        overflow-wrap: anywhere;
+        pointer-events: none;
+    }
+    .download-note.failed {
+        border-color: rgba(248, 113, 113, 0.6);
+        background: rgba(74, 31, 38, 0.97);
     }
     .menu-row {
         display: flex;
