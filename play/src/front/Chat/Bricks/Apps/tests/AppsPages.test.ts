@@ -1022,6 +1022,44 @@ describe("the Apps pages (#2001)", () => {
             expect(get(appBrickStart)).toBeUndefined();
         });
 
+        it("keeps the card's request when the read after the tap failed and the list held lacks the App, and opens it on the next read", async () => {
+            game.getMyApps.mockResolvedValueOnce({ apps: [tavily({ bricks: [] })], bricks: [] });
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            expect(byId("appsPage")).not.toBeNull();
+            game.getMyApps.mockRejectedValueOnce(new Error("down"));
+            const tapped = { botId: "b1", serverId: "s1" };
+            requestAppBrick(tapped);
+            await settle();
+            await settle();
+            warn.mockRestore();
+            expect(game.getMyApps).toHaveBeenCalledTimes(2);
+            expect(byId("appBrickScreen")).toBeNull();
+            expect(get(appBrickStart)).toBe(tapped);
+            // The next tap on a card reads again: now the list has the App
+            requestAppBrick({ botId: "b1", serverId: "s1" });
+            await settle();
+            await settle();
+            expect(game.getMyApps).toHaveBeenCalledTimes(3);
+            expect(game.getMyApp).toHaveBeenCalledWith("gmail");
+            expect(byId("appBrickScreen")).not.toBeNull();
+            expect(get(appBrickStart)).toBeUndefined();
+        });
+
+        it("still opens the card's App from the list held when the read after the tap failed", async () => {
+            page = new AppsPage({ target, props: { onBack: () => {} } });
+            await settle();
+            game.getMyApps.mockRejectedValueOnce(new Error("down"));
+            const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+            requestAppBrick({ botId: "b1", serverId: "s1" });
+            await settle();
+            await settle();
+            warn.mockRestore();
+            expect(byId("appBrickScreen")).not.toBeNull();
+            expect(get(appBrickStart)).toBeUndefined();
+        });
+
         it("reads the card's App afresh when the page already shows another App", async () => {
             requestAppPage("tavily");
             page = new AppsPage({ target, props: { onBack: () => {} } });

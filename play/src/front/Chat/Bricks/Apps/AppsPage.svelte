@@ -93,6 +93,10 @@
         const found = list.find((one) =>
             one.bricks.some((brick) => brick.botId === wanted.botId && brick.serverId === wanted.serverId)
         );
+        // The last read failed and the list held (from an earlier read) does not have the App: it may be there on Orbit. The
+        // request stays, and the next read (another tap on a card, or the page opened again) looks again. Used up only by a
+        // list that was read, or by an App the held list has.
+        if (!found && get(myAppsFailed)) return;
         takeAppBrickStart();
         if (found) {
             openUniverseId = undefined;
