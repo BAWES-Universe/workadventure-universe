@@ -181,7 +181,13 @@
     }
     $: payView = describePayLine(
         $payLine,
-        { copied: receiptCopied, locale: $locale, owner: opened?.you.owner ? { maker: makerName } : undefined },
+        {
+            copied: receiptCopied,
+            locale: $locale,
+            owner: opened?.you.owner ? { maker: makerName } : undefined,
+            // A receipt link kept on the line is not offered while the page's link opens nothing
+            linkOpens,
+        },
         $LL.chat.artifacts
     );
     function payAction(action: PayAction) {

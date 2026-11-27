@@ -36,10 +36,11 @@ export function shortDate(iso: string | null, locale = "en-GB"): string | null {
  * A pure function, so every screen of the mock is tested on its own. Order: a payment that ended well, then a problem, then a page that
  * cannot ask, then a payment on its way, then the quiet offers.
  * `owner` is set for the page's owner, who is told to ask the Brick for a new page; a buyer is told they can check their payment.
+ * `linkOpens` is false while the page's link opens nothing: a receipt link kept on the line then brings nothing back, so it is not offered.
  */
 export function describePayLine(
     line: PayLine,
-    state: { copied: boolean; locale?: string; owner?: { maker: string } },
+    state: { copied: boolean; locale?: string; owner?: { maker: string }; linkOpens?: boolean },
     LL: Words
 ): PayView | null {
     const check: PayAction = { kind: "check", label: LL.payCheckPayment(), style: "primary" };
@@ -70,7 +71,7 @@ export function describePayLine(
                 closable: false,
             };
         }
-        if (line.receipt) {
+        if (line.receipt && state.linkOpens !== false) {
             return state.copied
                 ? {
                       title: LL.payReceiptCopied(),

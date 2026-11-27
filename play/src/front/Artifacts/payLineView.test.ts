@@ -14,8 +14,10 @@ describe("the line under a paying page says what the approved mock says", () => 
     beforeAll(() => loadLocale("en-US"));
     const LL = () => i18nObject("en-US").chat.artifacts;
     const line = (over: Partial<PayLine>): PayLine => ({ ...NO_PAY_LINE, ...over });
-    const view = (over: Partial<PayLine>, state: { copied?: boolean; owner?: { maker: string } } = {}) =>
-        describePayLine(line(over), { copied: false, locale: "en-US", ...state }, LL());
+    const view = (
+        over: Partial<PayLine>,
+        state: { copied?: boolean; owner?: { maker: string }; linkOpens?: boolean } = {}
+    ) => describePayLine(line(over), { copied: false, locale: "en-US", ...state }, LL());
     const labels = (over: Partial<PayLine>, state = {}) =>
         view(over, state)?.actions.map((a) => `${a.kind}:${a.label}:${a.style}`);
 
@@ -74,6 +76,19 @@ describe("the line under a paying page says what the approved mock says", () => 
         expect(guest?.title).toBe("Paid. Thank you.");
         expect(guest?.sub).not.toContain("account");
         expect(guest?.actions).toEqual([]);
+    });
+
+    it("offers no receipt link to copy while the page's link opens nothing, even if one was kept on the line", () => {
+        const guest = {
+            paid: { test: false },
+            buyer: "guest",
+            receipt: "https://orbit.test/a/a1#receipt=abc",
+        } as Partial<PayLine>;
+        const none = view(guest, { linkOpens: false });
+        expect(none?.title).toBe("Paid. Thank you.");
+        expect(none?.sub).not.toContain("receipt link");
+        expect(none?.actions).toEqual([]);
+        expect(labels(guest, { linkOpens: true })).toEqual(["copy:Copy private receipt link:primary"]);
     });
 
     it("g3: paid, saved to the account", () => {
