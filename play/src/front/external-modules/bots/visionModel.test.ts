@@ -94,6 +94,7 @@ describe("visionMain", () => {
             sees: false,
             keyId: "key-1",
             group: "hosted",
+            addressTyped: false,
             sameKeyModels: ["deepseek-v4-flash-vision-exp"],
         });
         expect(visionMain(options(), "key-g")).toMatchObject({ sees: true, sameKeyModels: [] });
@@ -234,6 +235,38 @@ describe("visionState: nothing picked", () => {
     it("a text model on a hosted key with none goes to Universe AI", () => {
         const hosted = options({ keys: [key("key-h", { supportsVision: null, visionModels: [] })] });
         expect(visionState(hosted, "key-h", bot())!.effective).toEqual({ choice: "universe-ai" });
+    });
+
+    it("a text model on a hosted kind at an address the person typed (their own NIM) stays with this model too, as Orbit's default", () => {
+        const typed = options({ keys: [key("key-n", { supportsVision: null, visionModels: [], addressTyped: true })] });
+        expect(visionMain(typed, "key-n")).toMatchObject({ group: "hosted", addressTyped: true });
+        expect(visionState(typed, "key-n", bot())!.effective).toEqual({ choice: "this" });
+        expect(visionState(typed, "key-n", bot({ choice: "universe-ai" }))!.effective).toEqual({
+            choice: "universe-ai",
+        });
+        // The key the bot is on, when it is someone else's, says the same
+        const current = options({
+            keys: [],
+            current: "key-m",
+            currentKey: {
+                id: "key-m",
+                name: "Mishari’s NIM",
+                ownerName: "Mishari",
+                mine: false,
+                status: "working",
+                ifDown: "universe-ai",
+                group: "hosted",
+                addressTyped: true,
+                model: "text-model",
+                supportsVision: null,
+                visionModels: [],
+            },
+        });
+        expect(visionState(current, "key-m", bot())!.effective).toEqual({ choice: "this" });
+        // An older Orbit says nothing about it: as before
+        expect(
+            visionMain(options({ keys: [key("key-o", { supportsVision: null, visionModels: [] })] }), "key-o")
+        ).toMatchObject({ addressTyped: false });
     });
 
     it("a text model on a key on the person's own computer stays with this model: its images never leave that computer unless they pick Universe AI", () => {

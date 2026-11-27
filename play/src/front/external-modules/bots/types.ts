@@ -142,6 +142,8 @@ export interface BotAiOptions {
         logo?: string | null;
         plainIcon?: "plug" | "chip" | null;
         group: "own-computer" | "hosted" | null;
+        /** The person typed the key's address (their own computer, or their own server for a hosted kind such as their own NIM). Missing on an older Orbit. */
+        addressTyped?: boolean;
         universeName: string;
         status: "working" | "down";
         ifDown: "universe-ai" | "stop";
@@ -167,6 +169,7 @@ export interface BotAiOptions {
         status: "working" | "down";
         ifDown: "universe-ai" | "stop";
         group?: "own-computer" | "hosted" | null;
+        addressTyped?: boolean;
         supportsVision?: boolean | null;
         visionModels?: string[];
         logo?: string | null;

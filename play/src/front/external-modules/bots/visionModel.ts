@@ -40,6 +40,8 @@ export interface VisionMain {
     /** Set when the bot runs on a person's own key. */
     keyId: string | null;
     group: "own-computer" | "hosted" | null;
+    /** The person typed the key's address: an own computer, or their own server for a hosted kind (their own NIM, say). */
+    addressTyped: boolean;
     /** Models with Vision the same key could use for images, other than the one the bot runs (none while the key is Down: it isn't offered or defaulted to). */
     sameKeyModels: string[];
 }
@@ -64,6 +66,7 @@ export function visionMain(
             sees: resolveVisionSupport(universe.model ?? "", universe.supportsVision),
             keyId: null,
             group: null,
+            addressTyped: false,
             sameKeyModels: [],
         };
     }
@@ -75,6 +78,7 @@ export function visionMain(
                   model: key.model,
                   supportsVision: key.supportsVision,
                   group: key.group,
+                  addressTyped: key.addressTyped === true,
                   visionModels: key.status === "down" ? [] : key.visionModels,
               }
             : options.currentKey && options.currentKey.id === current && options.currentKey.model !== undefined
@@ -83,6 +87,7 @@ export function visionMain(
                   model: options.currentKey.model,
                   supportsVision: options.currentKey.supportsVision,
                   group: options.currentKey.group ?? null,
+                  addressTyped: options.currentKey.addressTyped === true,
                   visionModels: options.currentKey.status === "down" ? [] : options.currentKey.visionModels,
               }
             : null;
@@ -101,6 +106,7 @@ export function visionMain(
         sees: resolveVisionSupport(model ?? "", supportsVision),
         keyId: current,
         group: found.group,
+        addressTyped: found.addressTyped,
         sameKeyModels: (found.visionModels ?? []).filter((entry) => entry !== model),
     };
 }
@@ -223,8 +229,9 @@ export function visionState(
             candidates,
         };
     }
-    // A key on the person's own computer never sends images to Universe AI unless they pick it (Orbit's default says the same)
-    if (main.keyId && main.group === "own-computer") {
+    // A key on the person's own computer, or at an address they typed (their own NIM, say), never sends images to Universe AI unless they
+    // pick it (Orbit's default says the same)
+    if (main.keyId && (main.group === "own-computer" || main.addressTyped)) {
         return { main, effective: { choice: "this" }, picked: false, problem: false, candidates };
     }
     return { main, effective: { choice: "universe-ai" }, picked: false, problem: false, candidates };

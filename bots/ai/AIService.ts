@@ -14,7 +14,7 @@ import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCred
 import { KEY_NOT_LENT_LINE, reachFor } from '../server/AdminApiService';
 import { BotAccessGate } from '../server/BotAccessGate';
 import { BotClient } from '../client/BotClient';
-import type { AIProviderConfig, AIStreamChunk, AIUsageMetadata, BotLimits, ToolCall } from './types';
+import type { AIProviderConfig, AIResponse, AIStreamChunk, AIUsageMetadata, BotLimits, ToolCall } from './types';
 import { BOT_LIMIT_DEFAULTS, readBotLimits } from './types';
 import type { AIProvider } from './AIProvider';
 import { decryptApiKey } from './encryption';
@@ -232,7 +232,16 @@ function sentOnlyTo(options: TurnOptions | undefined, playerId: number | undefin
 
 /** A bot's provider, resolved by bot id (#374): the settings to call, where they came from, or "resting". */
 /** Where a reply was given and who it was for, sent with its usage (Orbit #491). */
-type UsageTalker = { channel: 'dm' | 'nearby' | 'task'; userId?: string; isGuest?: boolean; greeting?: boolean; runId?: string; eventId?: string };
+type UsageTalker = { channel: 'dm' | 'nearby' | 'task'; userId?: string; isGuest?: boolean; greeting?: boolean; runId?: string; eventId?: string; imageRead?: boolean };
+
+/**
+ * Whose look at an image Universe AI's vision takes (G7): the bot and the person who sent or opened it. The look is reported as that person's
+ * Universe AI use, which Orbit never counts as a reply.
+ */
+type ImageReadFor = { botId: string; talker: UsageTalker };
+
+/** One describe call, as it ended: what it ran on, what the provider said (nothing when it failed), and when it was sent. */
+type DescribeCall = { config: AIProviderConfig; response: AIResponse | null; sentAt: Date };
 
 type ResolvedProvider =
     | { resting: false; config: AIProviderConfig; source: 'provider' | 'universe-ai' | 'own-key'; forOthers?: boolean; vision?: ResolvedVision }
@@ -1120,7 +1129,9 @@ export class AIService {
      */
     private async describeImagesViaDefaultVision(
         images: string[],
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        /** Who the look is for: reported as their Universe AI use (never a reply), as Universe pays for it (G7). */
+        readFor?: ImageReadFor
     ): Promise<string> {
         try {
             const defaultConfig = await this.getDefaultVisionProviderConfig();
@@ -1128,7 +1139,8 @@ export class AIService {
                 console.warn('[AIService] No default vision provider configured; sending image URLs as text');
                 return '';
             }
-            return await this.describeImages(defaultConfig, images, abortSignal);
+            const report = readFor ? (call: DescribeCall) => this.trackImageRead(readFor, call, abortSignal) : undefined;
+            return await this.describeImages(defaultConfig, images, abortSignal, report);
         } catch (error) {
             console.error('[AIService] Vision describe failed:', error);
             return '';
@@ -1139,8 +1151,11 @@ export class AIService {
     private async describeImages(
         defaultConfig: AIProviderConfig,
         images: string[],
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        /** Told once about the call to the provider, however it ended; never when nothing was called. */
+        report?: (call: DescribeCall) => void
     ): Promise<string> {
+        let called: { config: AIProviderConfig; sentAt: Date } | null = null;
         try {
             // Use the provider's declared vision model when set (e.g.
             // deepseek-v4-flash-vision-exp on the DeepSeek entry). A declared
@@ -1180,6 +1195,7 @@ export class AIService {
                 ...images.map((url, i) => `${i + 1}. ${url}`),
             ].join('\n');
 
+            called = { config: effectiveConfig, sentAt: new Date() };
             const response = await provider.generate(
                 'You are an image description assistant. Respond only with the description.',
                 describePrompt,
@@ -1188,11 +1204,46 @@ export class AIService {
                 abortSignal,
                 images
             );
+            const sent = called;
+            called = null;
+            report?.({ ...sent, response });
 
             return (response.content || '').trim();
         } catch (error) {
             console.error('[AIService] Vision describe failed:', error);
+            // A call that was sent and failed is reported too (a real zero, as for a reply that failed); one never sent is not
+            if (called) report?.({ ...called, response: null });
             return '';
+        }
+    }
+
+    /**
+     * A look Universe AI's vision took at an image, reported as the person's Universe AI use (G7): priced from what the provider said, on the
+     * provider that looked, and marked so Orbit never counts it as a reply. A look that was stopped (the reply was cut short) is not reported,
+     * as a stopped reply is not. Never throws and never holds up the reply.
+     */
+    private trackImageRead(readFor: ImageReadFor, call: DescribeCall, abortSignal?: AbortSignal): void {
+        try {
+            if (abortSignal?.aborted) return;
+            const { response, config, sentAt } = call;
+            const failed = !response || response.error === true;
+            const ledger = new UsageLedger();
+            ledger.add(priceMetadata(config, response ? { tokensUsed: response.tokensUsed, ...(response.usage ?? {}), error: response.error } : { error: true }, sentAt));
+            this.trackUsage(
+                readFor.botId,
+                config.providerId,
+                {
+                    tokensUsed: response?.tokensUsed ?? 0,
+                    promptTokens: response?.usage?.promptTokens ?? 0,
+                    completionTokens: response?.usage?.completionTokens ?? 0,
+                    latency: response?.latency ?? Date.now() - sentAt.getTime(),
+                    error: failed,
+                },
+                ledger.summary(),
+                { ...readFor.talker, greeting: false, imageRead: true }
+            ).catch(() => {});
+        } catch (error) {
+            console.error('[AIService] Could not report a look at an image:', error);
         }
     }
 
@@ -1735,7 +1786,8 @@ export class AIService {
                         lookWith === 'another' && plan?.choice === 'another'
                             ? await this.describeImages(plan.config, visionImages, abortSignal)
                             : lookWith === 'universe-ai'
-                              ? await this.describeImagesViaDefaultVision(visionImages, abortSignal)
+                              ? // Universe pays for this look: it is reported as the person's Universe AI use, never as a reply (G7)
+                                await this.describeImagesViaDefaultVision(visionImages, abortSignal, { botId, talker: this.whoTalked(botId, playerId, channel) })
                               : '';
                     if (description) {
                         message = `${message}\n[The user sent an image. Description from a vision model: ${description}]`;
@@ -4877,15 +4929,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
     private lookAtOpened(
         vision: ResolvedVision | undefined,
         source: string | undefined,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        /** Whose look it is when Universe AI looks: reported as their Universe AI use, never a reply (G7). */
+        readFor?: ImageReadFor
     ): { look?: (url: string) => Promise<string> } {
         if (vision) {
             if (vision.choice === 'another') return { look: (url: string) => this.describeImages(vision.config, [url], abortSignal) };
-            if (vision.choice === 'universe-ai') return { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
+            if (vision.choice === 'universe-ai') return { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal, readFor) };
             // "This model", or a place that can't be used now: nothing else looks
             return {};
         }
-        return source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal) };
+        return source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal, readFor) };
     }
 
     /**
@@ -4907,6 +4961,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             vision?: ResolvedVision;
             /** Set when other people read the reply (#1993): everyone else who is there. */
             present?: readonly string[];
+            /** Where the reply is said, for whose use a look Universe AI takes at an opened image is. */
+            channel?: 'world' | 'dm';
         }
     ): Promise<Record<string, unknown>> {
         const { botClient, spaceName, botId, playerId, abortSignal, source, vision, present } = where;
@@ -4925,7 +4981,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
             linkOf: (store) => linkOfStore(store),
             // One look at an image it opened, by whoever looks at images people send it: what the owner picked, or, with nothing
             // picked, Universe AI's vision, never for a bot on a person's own key
-            ...this.lookAtOpened(vision, source, abortSignal),
+            ...this.lookAtOpened(vision, source, abortSignal, { botId, talker: this.whoTalked(botId, playerId, where.channel ?? 'world') }),
             send: async (file, url) =>
                 this.someoneCameSince(botClient, spaceName, playerId, present)
                     ? SOMEONE_CAME
@@ -5591,7 +5647,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         result = await this.runFileToolCall(
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
-                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present, vision }
+                            { botClient, adminApiService, spaceName, botId, playerId, abortSignal, source, present, vision, channel }
                         );
                         break;
 
