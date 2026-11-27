@@ -170,7 +170,12 @@ export class MatrixChatRoom
                     get(this.name)
                 )
             );
-        }
+        },
+        /**
+         * True for a chat this page has just made as a direct chat: it is direct from the start, while the account's list
+         * of direct chats (`m.direct`) can still be on its way. Without it the chat would show as a group until that list arrives.
+         */
+        private readonly knownDirect = false
     ) {
         this.id = matrixRoom.roomId;
         this.name = writable(matrixRoom.name);
@@ -956,6 +961,10 @@ export class MatrixChatRoom
     }
 
     private getMatrixRoomType(): "direct" | "multiple" {
+        if (this.knownDirect) {
+            return "direct";
+        }
+
         const dmInviter = this.matrixRoom.getDMInviter();
         if (dmInviter) {
             return "direct";
@@ -1006,6 +1015,15 @@ export class MatrixChatRoom
     }
 
     /**
+     * Sends one file the way `sendFiles` does, but says when it did not go: "Send to…" (a document's file, or a file passed on
+     * from another chat) tells the person so instead of leaving them to find out. No reply target comes with it.
+     */
+    async sendFileOrThrow(file: File): Promise<void> {
+        // Plain: a reply picked in another chat (the composer's reply target is global) is not this file's
+        await this.postFile(file, undefined, true);
+    }
+
+    /**
      * Sends a recorded voice note as an audio message with Element's voice flag, so Element shows it as a voice message
      * (and draws its shape) as it does ours. Unlike `sendFiles` it fails loudly: the composer keeps the note to retry.
      */
@@ -1013,7 +1031,7 @@ export class MatrixChatRoom
         await this.postFile(file, details);
     }
 
-    private async postFile(file: File, voice?: VoiceNoteDetails) {
+    private async postFile(file: File, voice?: VoiceNoteDetails, plain = false) {
         const uploadResponse = await this.matrixRoom.client.uploadContent(file);
         const content: Omit<MediaEventContent, "info"> & {
             info: Partial<MediaEventInfo>;
@@ -1048,7 +1066,7 @@ export class MatrixChatRoom
                 "org.matrix.msc3245.voice": {},
             });
         }
-        this.applyReplyContentIfReplyTo(content);
+        if (!plain) this.applyReplyContentIfReplyTo(content);
 
         return this.matrixRoom.client.sendMessage(this.matrixRoom.roomId, content);
     }

@@ -30,6 +30,8 @@ export interface FileViewerSource {
     audio?: FileViewerAudio;
     /** Fetches the file's bytes. Rejects when the file cannot be read. */
     load: (signal: AbortSignal) => Promise<ArrayBuffer>;
+    /** Opens "Send to…" for the file (a friend, a chat or a Brick). Only a chat's file has it: a map's file is not the person's to pass on. */
+    sendTo?: () => void;
     /** Saves the file under its real name. `bytes` is undefined when the file could not be read. */
     download: (bytes: ArrayBuffer | undefined) => Promise<void> | void;
     /** Saving needs the file read first: with Hide URL there is no link to fall back to when it could not be. */

@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { get, readable } from "svelte/store";
 
-const { saveMessageFiles } = vi.hoisted(() => ({ saveMessageFiles: vi.fn(() => Promise.resolve()) }));
-vi.mock("../../Chat/Components/Room/MessageActions/availableActions", () => ({ saveMessageFiles }));
+const { saveMessageFiles, sendFileTo } = vi.hoisted(() => ({
+    saveMessageFiles: vi.fn(() => Promise.resolve()),
+    sendFileTo: vi.fn(),
+}));
+vi.mock("../../Chat/Components/Room/MessageActions/availableActions", () => ({ saveMessageFiles, sendFileTo }));
 const { lowerChatSheet } = vi.hoisted(() => ({ lowerChatSheet: vi.fn() }));
 vi.mock("../../Chat/ChatSheetStore", () => ({ lowerChatSheet }));
 
@@ -110,6 +113,16 @@ describe("opening a chat file in the viewer", () => {
         await opened()[0].source.download(undefined);
 
         expect(saveMessageFiles).toHaveBeenCalledWith([{ url: "blob:http://play/abc", name: "plan.pdf" }]);
+    });
+
+    it("gives the window a Send to that opens the same pick of who and what as the card's menu", () => {
+        openChatFileInViewer({ url: "blob:http://play/abc", name: "Calendar notes.xlsx" });
+        const [viewer] = opened();
+        viewer.source.sendTo?.();
+        expect(sendFileTo).toHaveBeenCalledExactlyOnceWith({
+            url: "blob:http://play/abc",
+            name: "Calendar notes.xlsx",
+        });
     });
 
     it("says a file you sent is from you", () => {
@@ -231,6 +244,12 @@ describe("opening a map's file in the viewer", () => {
         expect(mapFileOpensInViewer("https://x.example.com/a.png?token=t")).toBe(true);
         expect(mapFileOpensInViewer("https://x.example.com/a.docx")).toBe(false);
         expect(mapFileOpensInViewer("https://x.example.com/page")).toBe(false);
+    });
+
+    it("has no Send to for a map's file: it is not the person's to pass on", () => {
+        expect(
+            createMapFileViewer({ link: "https://maps.test/files/plan.pdf?token=abc" }).source.sendTo
+        ).toBeUndefined();
     });
 
     it("names the panel after the file, never its address", () => {

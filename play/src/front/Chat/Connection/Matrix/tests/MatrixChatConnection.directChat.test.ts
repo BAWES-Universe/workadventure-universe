@@ -335,14 +335,20 @@ describe("MatrixChatConnection: the chat with one person", () => {
                 connection as unknown as { waitForNextSync: () => Promise<void> },
                 "waitForNextSync"
             ).mockResolvedValue();
-            vi.spyOn(
-                connection as unknown as { createAndAddNewRootRoom: (room: unknown) => unknown },
-                "createAndAddNewRootRoom"
-            ).mockReturnValue("the new chat");
+            const made = vi
+                .spyOn(
+                    connection as unknown as {
+                        createAndAddNewRootRoom: (room: unknown, knownDirect?: boolean) => unknown;
+                    },
+                    "createAndAddNewRootRoom"
+                )
+                .mockReturnValue("the new chat");
             sdkRooms.set("!new:matrix.test", { roomId: "!new:matrix.test" });
 
             await expect(connection.createDirectRoom(ALICE)).resolves.toBe("the new chat");
 
+            // Made as a direct chat, not left to the account's list of direct chats, which can still be on its way
+            expect(made).toHaveBeenCalledWith({ roomId: "!new:matrix.test" }, true);
             expect(createRoom).toHaveBeenCalledOnce();
             expect(createRoom).toHaveBeenCalledWith(expect.objectContaining({ is_direct: true, invite: [ALICE] }));
             expect(directMap).toEqual({ [ALICE]: ["!new:matrix.test"] });

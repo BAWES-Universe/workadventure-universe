@@ -8,7 +8,9 @@ import LL from "../../../../../i18n/i18n-svelte";
 import { showFloatingUi } from "../../../../Utils/svelte-floatingui-show";
 import LazyEmote from "../../../../Components/EmoteMenu/LazyEmote.svelte";
 import { pinActionOf, type PinAction } from "../Details/Pins";
-import { getCopyableText, getSaveableFiles, type SaveableFile } from "./messageActions";
+import { openSendTo } from "../../../../Artifacts/sendToStore";
+import { fileFromAddress } from "../../../../Artifacts/sendTo";
+import { getCopyableText, getSaveableFiles, sendableFile, type SaveableFile } from "./messageActions";
 import { saveFiles } from "./saveFiles";
 
 export interface AvailableActions {
@@ -16,6 +18,8 @@ export interface AvailableActions {
     reply: boolean;
     copyText: string | undefined;
     files: SaveableFile[];
+    /** The one file of a file card, which "Send to…" can pass on to another chat. */
+    sendTo: SaveableFile | undefined;
     edit: boolean;
     delete: boolean;
     /** Pin or Unpin, for someone who may pin in this chat. */
@@ -31,11 +35,17 @@ export function availableActions(message: ChatMessage): Readable<AvailableAction
             reply: $canReply,
             copyText: getCopyableText(message.type, $content),
             files: getSaveableFiles(message.type, $content),
+            sendTo: sendableFile(message.type, $content),
             edit: message.isMyMessage && message.type === "text",
             delete: $canDelete,
             pin: $pin,
         })
     );
+}
+
+/** Opens "Send to…" for a chat file: it is read when Send is pressed, the same way Save reads it. */
+export function sendFileTo(file: SaveableFile): void {
+    openSendTo({ fileName: file.name, makeFile: () => fileFromAddress(file.url, file.name) });
 }
 
 export function hasAnyAction(actions: AvailableActions): boolean {
@@ -44,6 +54,7 @@ export function hasAnyAction(actions: AvailableActions): boolean {
         actions.reply ||
         actions.copyText !== undefined ||
         actions.files.length > 0 ||
+        actions.sendTo !== undefined ||
         actions.edit ||
         actions.delete ||
         actions.pin !== undefined
