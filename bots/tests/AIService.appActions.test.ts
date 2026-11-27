@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AIService, sharedLineOf } from '../ai/AIService';
 import { MCPConnector, type ToolServerEntry } from '../mcp/MCPConnector';
 import { ToolGate } from '../mcp/ToolGate';
+import { brickAbilitiesNote } from '../ai/BrickYou';
 import type { PolicyTool, ServerPolicy, ToolSetting } from '../mcp/ToolPolicy';
 import type { ToolHeading } from '../mcp/ToolCatalog';
 import axios from 'axios';
@@ -644,6 +645,36 @@ describe('a Brick with several ready-made Apps', () => {
         const { service, servers } = twoApps(gmailPolicy(), calendarPolicy({ GOOGLECALENDAR_DELETE_EVENT: 'off' }));
         const note = await service['appsOffNote']('b1', servers);
         expect(note).toContain('Off in Google Calendar: Delete event.');
+    });
+});
+
+describe('an App turned all the way Off', () => {
+    const ALL_OFF = { looksUp: 'off', makesNew: 'off', changesThings: 'off', deletesOrSends: 'off' } as Record<ToolHeading, ToolSetting>;
+
+    it('is one the Brick does not have: named for the abilities note only when something is still on', async () => {
+        const off = brickService(gmailPolicy({}, ALL_OFF));
+        expect([...(await off.service['appsAllOff']('b1', SERVERS))]).toEqual(['gmail']);
+        // One heading still on, or one action put back on, and the App is still the Brick's
+        expect((await brickService(gmailPolicy({}, { ...ALL_OFF, looksUp: 'rightAway' })).service['appsAllOff']('b1', SERVERS)).size).toBe(0);
+        expect((await brickService(gmailPolicy({ GMAIL_FETCH_EMAILS: 'asksFirst' }, ALL_OFF)).service['appsAllOff']('b1', SERVERS)).size).toBe(0);
+        expect((await brickService(gmailPolicy()).service['appsAllOff']('b1', SERVERS)).size).toBe(0);
+    });
+
+    it('is not listed in the Apps it has, while the Off note still says it is off', async () => {
+        const { service } = brickService(gmailPolicy({}, ALL_OFF));
+        const off = await service['appsAllOff']('b1', SERVERS);
+        const note = brickAbilitiesNote({
+            apps: ['Gmail', 'Google Calendar'].filter((name) => !off.has(name.toLowerCase())),
+            appsKnown: true,
+            connectable: [],
+            computer: false,
+            reminders: false,
+            instant: false,
+            canOffer: false,
+        });
+        expect(note).toContain('Apps you have: Google Calendar.');
+        expect(note).not.toContain('Gmail');
+        expect(await service['appsOffNote']('b1', SERVERS)).toContain('Off in Gmail');
     });
 });
 

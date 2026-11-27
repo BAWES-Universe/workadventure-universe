@@ -29,7 +29,7 @@ import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDe
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, type JudgedPart } from '../mcp/ToolGate';
 import type { ToolHeading } from '../mcp/ToolCatalog';
-import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, toolErrorMayHaveRun, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
+import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, appIsAllOff, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, toolErrorMayHaveRun, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
 import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, SessionOwners, withoutSession } from '../mcp/AppLookups';
 import { AppActionSorter } from '../mcp/AppActionSorter';
@@ -145,7 +145,7 @@ import { COMPUTER_TOOL, ConfirmationQueue, computerToolDefinitions, computerTool
 import { pretendRunnerOn, runPretendJob } from './ComputerPretendRunner';
 import { callKeyApp, loadKeyAppList } from '../mcp/KeyApps';
 import { ASK_FOR_KEY_TOOL, PAYMENT_TOOL, isKeyTool, keyAppsNote, keyToolDefinitions, runKeyTool } from './KeyTools';
-import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, runAppTool } from './AppTools';
+import { OFFER_APP_TOOL, appToolDefinitions, appsNote, isAppTool, offerableApps, runAppTool, type AppsForBrick } from './AppTools';
 import { REPORT_TOOL, type ReportTurn, type StepSources, newReportTurn, noteWhatRan, reportToolDefinition, runReportTool } from './ReportTools';
 import {
     InstantOffers,
@@ -165,6 +165,8 @@ import {
     runInstantTool,
     stableJson,
 } from './InstantTools';
+import { brickFollowUpRules } from './brickRules';
+import { brickAbilitiesNote } from './BrickYou';
 import { MAKE_BRICK_TOOL, SUGGEST_BRICK_TOOL, brickToolDefinitions, brickToolsNote, isBrickTool, runBrickTool, type BrickNote } from './BrickTools';
 import { CHANGE_TASK_TOOL, KEEP_WORKDAYS_TOOL, MY_TASKS_TOOL, SET_BRIEFING_TOOL, SET_GOAL_TOOL, SET_REMINDER_TOOL, SET_WATCH_TOOL, isTaskTool, runTaskTool, taskSettingsFor, taskToolDefinitions, taskToolsNote, tasksAreOn, type TaskSettings } from './BrickTasks';
 import { linkOfStore } from '../services/ChatFiles';
@@ -1960,6 +1962,12 @@ export class AIService {
             // Instant Apps, in the owner's own Brick's direct messages: only what Orbit offers this Brick now (Apps its owner switched on for it), never to a visitor
             const instantListing = !forOthers && !options?.onlyForThem && channel === 'dm' && botId && playerId !== undefined ? await this.instantFor(botId, playerId, botClient, adminApiService) : null;
 
+            // A person's own Brick in its direct messages (not a guest's, not a visitor's, not an answer for one person alone): it is told it is
+            // theirs and what it can do, and gets the rules of a helper instead of a map character's (ai/brickRules.ts)
+            const brickChat = channel === 'dm' && !!botId && this.ownBricks.has(botId) && !forOthers && !options?.onlyForThem && talker.isGuest !== true;
+            // The Apps this Brick has and can offer, read once for the Apps note and for what it is told it can do
+            const brickApps = channel === 'dm' && botId && playerId !== undefined ? await this.appsForBrick(botId, playerId, botClient, adminApiService) : null;
+
             // Build system prompt. Order matters for provider prompt caching
             // (issue #1333): see ai/systemPrompt.ts.
             // The ends of the parts that stay the same from message to message are where the Claude provider marks its cache
@@ -1976,7 +1984,7 @@ export class AIService {
                     // A person's own first Brick, in their direct messages: it can make Bricks, and what it already suggested (#1996)
                     channel === 'dm' && botId && playerId !== undefined ? await this.brickNoteFor(botId, playerId, adminApiService) : '',
                     // A person's own Brick can lead them to connect an App (game #2001)
-                    channel === 'dm' && botId && playerId !== undefined ? await this.appsNoteFor(botId, playerId, botClient, adminApiService) : '',
+                    appsNote(brickApps?.apps ?? null, brickApps?.declined ?? []),
                     channel === 'dm' && botId && playerId !== undefined && !forOthers ? await this.keyAppsNoteFor(botId, botClient, adminApiService) : '',
                     // Any bot, in a direct message: what it remembers about the person, and forgetting it (#2003)
                     channel === 'dm' && this.memoryToolsOn(botId, botClient) ? memoryToolsNote() : '',
@@ -1992,6 +2000,7 @@ export class AIService {
                 channel,
                 // A direct message with a bot that lives in no room, a Brick (#1995)
                 noRoom: channel === 'dm' && !roomUrl,
+                brick: brickChat,
                 recentFiles: await recentFiles,
                 // A voice bot with others in the bubble tells, by its own judgement, when this person is done talking with it (#1670)
                 endFollowUp: channel === 'world' && !!spaceName && playerId !== undefined && !!botClient?.mayEndFollowUp?.(spaceName, playerId),
@@ -2052,7 +2061,24 @@ export class AIService {
             const neverAsk = botId && this.approvals?.asksQuestions && (await this.approvals.settings(botId)).askWhichWay === 'never' ? NEVER_ASK_RULE : '';
             // What is Off in each of the owner's ready-made Apps, so the Brick says so and offers what it may do instead of asking for it
             const appsOff = forOthers || options?.onlyForThem || !botId ? '' : await this.appsOffNote(botId, toolServerMap);
-            const systemPrompt = [basePrompt, nearbyRule, neverAsk, forOthers || options?.onlyForThem ? '' : toolIssueNote(toolIssues ?? []), appsOff, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers, forOthers && tools.some((tool) => !!toolServerMap.get(tool?.function?.name ?? '')?.sharedJob)) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
+            // An App its owner turned all the way Off is not one this Brick has: it is said in the Off note, never listed as an App it can use
+            const allOff = brickChat ? await this.appsAllOff(botId!, toolServerMap) : new Set<string>();
+            const brickAbilities = brickChat
+                ? brickAbilitiesNote({
+                      apps: [...(brickApps?.apps ?? []).filter((app) => app.usable).map((app) => app.name), ...tools.flatMap((tool) => {
+                          // Only the Apps whose tools it is really offered: a server the gate refuses every tool of is not one it has
+                          const entry = toolServerMap.get(tool?.function?.name ?? '');
+                          return entry ? appsOf(entry).map((app) => app.serverName ?? '') : [];
+                      })].filter((name) => !allOff.has(name.trim().toLowerCase())),
+                      appsKnown: !!brickApps?.apps,
+                      connectable: offerableApps(brickApps?.apps ?? null, brickApps?.declined ?? []),
+                      computer: computerOn,
+                      reminders: !!taskSettings,
+                      instant: !!instantListing,
+                      canOffer: !!brickApps?.apps && this.appToolsOn(botId, botClient, adminApiService),
+                  })
+                : '';
+            const systemPrompt = [basePrompt, brickAbilities, nearbyRule, neverAsk, forOthers || options?.onlyForThem ? '' : toolIssueNote(toolIssues ?? []), appsOff, visit || forOthers ? visitingRule(visit?.ownerName ?? null, forOthers, forOthers && tools.some((tool) => !!toolServerMap.get(tool?.function?.name ?? '')?.sharedJob)) : '', ...(options?.rules ?? [])].filter(Boolean).join('\n\n');
             if (turn) turn.artifactTools = tools.some((tool) => writesArtifact(tool?.function?.name ?? ''));
 
             // Generate stream with tools
@@ -2663,7 +2689,7 @@ export class AIService {
                             }
 
                             // Continue the reply after its steps, with how to carry on as the last line
-                            const followUpRules = `Continue this reply from the tool results above. Do NOT restate your intent or repeat anything you already said.\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n${channel === 'dm' ? (roomUrl ? DM_NAVIGATION_FOLLOW_UP : DM_NO_ROOM_FOLLOW_UP) : WORLD_NAVIGATION_FOLLOW_UP}\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
+                            const followUpRules = brickChat ? brickFollowUpRules(!!roomUrl) : `Continue this reply from the tool results above. Do NOT restate your intent or repeat anything you already said.\n\nCRITICAL RESPONSE RULES:\n- Continue naturally — do NOT re-introduce yourself, re-greet, apologize, or repeat anything you already said\n- This is the same conversation turn — just keep answering\n- Use ONLY information from tool results above - never invent or make up details\n- **CRITICAL: Do NOT repeat location (universe/world/room) if you already said it in this conversation - check "Recent conversation" first!**\n- Only mention location if this is the FIRST time they ask "where are we" - otherwise just answer the question directly\n- For "what areas" questions: Just list the areas (e.g., "There's a Social Area and Meeting Room here") - do NOT say the location again\n${channel === 'dm' ? (roomUrl ? DM_NAVIGATION_FOLLOW_UP : DM_NO_ROOM_FOLLOW_UP) : WORLD_NAVIGATION_FOLLOW_UP}\n- Use actual names from results - never placeholders or made-up text\n- Be conversational and natural - avoid repetitive responses`;
 
                             // Add /no_think for Qwen models in follow-up message
                             // The whole turn's list every round: a song made two steps back must still be one it can put in a page
@@ -4840,17 +4866,17 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return !botClient && !!botId && this.ownBricks.has(botId) && !!admin?.isConfigured?.();
     }
 
-    /** What such a Brick is told about the Apps it may offer, with what was already offered. Empty when there is nothing to offer or Orbit cannot say. */
-    private async appsNoteFor(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<string> {
-        if (!this.appToolsOn(botId, botClient, adminApiService)) return '';
+    /** The Apps this Brick has and may offer, with the ones the person said "not now" to. Null when this is no Brick of theirs, or Orbit cannot say. */
+    private async appsForBrick(botId: string, playerId: number, botClient?: BotClient, adminApiService?: AdminApiService): Promise<AppsForBrick | null> {
+        if (!this.appToolsOn(botId, botClient, adminApiService)) return null;
         const admin = adminApiService ?? this.adminApiService;
         const userId = this.conversationMemory?.getMemory(botId, playerId)?.userUuid;
-        if (!admin || !userId) return '';
+        if (!admin || !userId) return null;
         const [apps, offers] = await Promise.all([
             admin.appsOfferableFor(botId, userId).catch(() => null),
             admin.brickOffersFor(botId, userId).catch(() => null),
         ]);
-        return appsNote(apps, offers?.topics ?? []);
+        return apps ? { apps, declined: offers?.topics ?? [] } : null;
     }
 
     /** What such a Brick is told about Apps with a key: the services it can lead them to set up, and the ones they have. Empty when Orbit cannot say. */
@@ -6005,6 +6031,23 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         });
         // In a bubble the line everyone reads is the bot's whole reply (see the follow-up)
         return asked.kind === 'waiting' && asked.line ? { ...asked.result, [SHARED_LINE]: asked.line } : asked.result;
+    }
+
+    /**
+     * The names (lower case) of this Brick's ready-made Apps that have nothing left on: every heading Off and no action put back on. Such an
+     * App is not one the Brick "has", so it is never listed as one. An App whose actions could not be read is left out of this set.
+     */
+    private async appsAllOff(botId: string, toolServerMap: ReadonlyMap<string, ToolServerEntry>): Promise<Set<string>> {
+        const apps = new Map<string, string>();
+        for (const first of toolServerMap.values()) {
+            for (const entry of appsOf(first)) if (entry.readyMade && !apps.has(entry.serverId)) apps.set(entry.serverId, entry.serverName || '');
+        }
+        const off = new Set<string>();
+        await Promise.all([...apps].map(async ([serverId, name]) => {
+            const policy = await this.toolGate.appPolicy(botId, serverId);
+            if (name && policy && appIsAllOff(policy)) off.add(name.trim().toLowerCase());
+        }));
+        return off;
     }
 
     /**

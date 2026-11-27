@@ -17,6 +17,7 @@
  */
 
 import { fileNote, type FileKind } from '../services/ChatFiles';
+import { BRICK_CLOSING_REMINDER, BRICK_PERSONALITY_WRAPPER, BRICK_WORK_RULES, brickInRoomRules, brickNoRoomRules } from './brickRules';
 
 const PERSONALITY_WRAPPER = `\n\n**YOUR PERSONALITY:**
 The instructions above define your personality and behavior. Follow them strictly. Your personality should be reflected in ALL responses.
@@ -61,7 +62,7 @@ const DM_PLACE_RULES = `**DIRECT MESSAGE (You are chatting by direct message, no
 `;
 
 /**
- * The same for a bot that has no room at all: a Brick (game #1995), which lives in its owner's chats. Nothing here speaks
+ * The same for a bot that has no room at all: a guest's Brick (game #1995), which lives in its owner's chats. A person's own Brick has its own rules (brickRules.ts). Nothing here speaks
  * of a room, so the bot never names one, invites anyone to one or sends the card to one.
  */
 const DM_NO_ROOM_RULES = `**DIRECT MESSAGE (You are chatting by direct message):**
@@ -202,8 +203,13 @@ export interface SystemPromptParts {
     pendingMediaNotice?: string;
     /** In a bubble on the map (default) or a direct message; picks the media and place rules. */
     channel?: PromptChannel;
-    /** A direct message with a bot that has no room, a Brick (#1995): its place rules speak of no room. The same for every message of that bot. */
+    /** A direct message with a bot that has no room, a guest's Brick (#1995): its place rules speak of no room. The same for every message of that bot. */
     noRoom?: boolean;
+    /**
+     * A direct message with a person's own Brick (not a guest's): it gets the rules of a helper that acts first and knows where it is
+     * (ai/brickRules.ts) instead of a map character's. `noRoom` then says whether it stands in a room. The same for every message of that Brick.
+     */
+    brick?: boolean;
     /** Clock for the Now line; injectable for tests. */
     now?: Date;
     /** The newest files in this person's chats with the bot (buildRecentFilesLine); empty when there are none. */
@@ -312,6 +318,8 @@ function oneLine(text: string): string {
 
 export function buildSystemPromptWithEnds(parts: SystemPromptParts): BuiltSystemPrompt {
     const { chatInstructions, mapContextInfo, conversationContext, pendingMediaNotice, now, channel = 'world', recentFiles, endFollowUp, noRoom } = parts;
+    // Only a person's own Brick in a direct message: every other bot keeps the rules it always had
+    const brick = parts.brick === true && channel === 'dm';
 
     // CRITICAL: Chat instructions define the bot's personality and MUST be followed
     let systemPrompt = '';
@@ -321,15 +329,20 @@ export function buildSystemPromptWithEnds(parts: SystemPromptParts): BuiltSystem
         // The rules below are technical guidelines (formatting, tool usage, etc.),
         // but instructions about HOW to act (greeting style, helpfulness, etc.)
         // come from the chat instructions above — use them as your guide.
-        systemPrompt += PERSONALITY_WRAPPER;
+        systemPrompt += brick ? BRICK_PERSONALITY_WRAPPER : PERSONALITY_WRAPPER;
     } else {
         systemPrompt = 'You are a friendly bot.';
     }
 
     // Fixed rules, always included. NOTE: personality from chat instructions
     // takes precedence — these are guidelines for natural conversation.
-    systemPrompt += HUMAN_LIKE_RULES;
-    systemPrompt += naturalConversationRules(channel, channel === 'dm' && noRoom === true);
+    if (brick) {
+        systemPrompt += BRICK_WORK_RULES;
+        systemPrompt += noRoom === true ? brickNoRoomRules(ROOM_CARD_MARK) : brickInRoomRules(ROOM_CARD_MARK);
+    } else {
+        systemPrompt += HUMAN_LIKE_RULES;
+        systemPrompt += naturalConversationRules(channel, channel === 'dm' && noRoom === true);
+    }
     const cacheEnds = [systemPrompt.length];
 
     if (mapContextInfo) {
@@ -343,6 +356,6 @@ export function buildSystemPromptWithEnds(parts: SystemPromptParts): BuiltSystem
     // After the Now line: it changes as files come, so the cached part above stays the same
     if (recentFiles) systemPrompt += recentFiles;
     if (endFollowUp) systemPrompt += END_FOLLOW_UP_RULE;
-    systemPrompt += CLOSING_REMINDER;
+    systemPrompt += brick ? BRICK_CLOSING_REMINDER : CLOSING_REMINDER;
     return { prompt: systemPrompt, cacheEnds };
 }
