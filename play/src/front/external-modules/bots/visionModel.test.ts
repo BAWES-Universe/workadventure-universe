@@ -231,8 +231,20 @@ describe("visionState: nothing picked", () => {
         expect(visionState(current, "key-9", bot())!.effective).toEqual({ choice: "universe-ai" });
     });
 
-    it("a text model on a key with none goes to Universe AI", () => {
-        expect(visionState(options(), "key-l", bot())!.effective).toEqual({ choice: "universe-ai" });
+    it("a text model on a hosted key with none goes to Universe AI", () => {
+        const hosted = options({ keys: [key("key-h", { supportsVision: null, visionModels: [] })] });
+        expect(visionState(hosted, "key-h", bot())!.effective).toEqual({ choice: "universe-ai" });
+    });
+
+    it("a text model on a key on the person's own computer stays with this model: its images never leave that computer unless they pick Universe AI", () => {
+        const state = visionState(options(), "key-l", bot())!;
+        expect(state.effective).toEqual({ choice: "this" });
+        expect(state.picked).toBe(false);
+        // Picking Universe AI is still there to tap
+        expect(canPickVision(options(), state, "universe-ai")).toBe(true);
+        expect(visionState(options(), "key-l", bot({ choice: "universe-ai" }))!.effective).toEqual({
+            choice: "universe-ai",
+        });
     });
 
     it("the same for the maker and for someone else who manages the bot", () => {
@@ -268,8 +280,9 @@ describe("visionState: nothing picked", () => {
     });
 
     it("follows the Runs on card the person has tapped, saved or not", () => {
-        const base = options();
-        expect(visionState(base, "key-l", bot())!.effective.choice).toBe("universe-ai");
+        const base = options({ keys: [key("key-h", { supportsVision: null, visionModels: [] }), gemini, lmStudio] });
+        expect(visionState(base, "key-h", bot())!.effective.choice).toBe("universe-ai");
+        expect(visionState(base, "key-l", bot())!.effective.choice).toBe("this");
         expect(visionState(base, "key-g", bot())!.effective.choice).toBe("this");
         expect(visionState(base, "universe-ai", bot())!.main.name).toBe("Universe AI");
     });
