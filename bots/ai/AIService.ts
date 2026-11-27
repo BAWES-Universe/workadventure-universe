@@ -29,8 +29,9 @@ import { ToolSignInShown, toolSignInCard, type ToolSignInCard, type ToolSignInDe
 import type { ToolSuggester } from '../mcp/ToolCatalog';
 import { CANNOT_CHECK_TOOL_LINE, ToolGate, type GateCall, type GateDecision, type JudgedPart } from '../mcp/ToolGate';
 import type { ToolHeading } from '../mcp/ToolCatalog';
-import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
+import { APP_BATCH_TOOL, ownCopyLine, ownCopyOf, SCRUBBED_LOOKUPS, appActionEntry, batchOf, batchOutcomes, batchParts, isBatchTool, isOffRow, offNote, ownerOfAction, slugKey, strictestOf, toolErrorMayHaveRun, whichAppLine, withoutOff, type BatchPart, type PartOutcome } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, SessionOwners, withoutSession } from '../mcp/AppLookups';
 import { AppActionSorter } from '../mcp/AppActionSorter';
 import { ToolPolicySource } from '../mcp/ToolPolicy';
 import type { ToolApprovals } from '../mcp/ToolApprovals';
@@ -520,7 +521,28 @@ export class AIService {
     ): Promise<unknown> {
         // One action of a ready-made App runs as its App's batch of one, as the link expects
         const call = entry.appAction && toolName === entry.appAction.slug ? { name: entry.appAction.batchTool, args: { tools: [{ tool_slug: toolName, arguments: args }] } } : { name: toolName, args };
-        return this.callMcpTool(entry, call.name, call.args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
+        return this.callWithSessionFallback(entry, call.name, call.args, playerUuid, undefined, toolTimeoutSeconds, use ? { botId, requesterKey: playerUuid, ...use } : undefined);
+    }
+
+    /**
+     * One call to an App's link tool, tried once more without the session id it carried when its link refused that session. With several
+     * Apps the model carries the session id one App's link gave (a joined search keeps the oldest App's) to another App's link, which may
+     * not know it. Only a ready-made App's lookups (search, schemas: they change nothing), only a refusal that names the session and says nothing
+     * more, and only once, as its own try (its own call id). Never the batch that runs actions: a repeated write is worse than a refused one.
+     */
+    private async callWithSessionFallback(
+        entry: ToolServerEntry,
+        toolName: string,
+        args: Record<string, unknown>,
+        playerUuid: string | undefined,
+        abortSignal: AbortSignal | undefined,
+        toolTimeoutSeconds: number | null | undefined,
+        use: (AppUseRequest & { botId: string; forOthers?: boolean }) | undefined
+    ): Promise<any> {
+        const answer = await this.callMcpTool(entry, toolName, args, playerUuid, abortSignal, toolTimeoutSeconds, use);
+        const bare = use ? retryWithoutSession(entry, toolName, args, answer) : undefined;
+        if (!bare || !use) return answer;
+        return this.callMcpTool(entry, toolName, bare, playerUuid, abortSignal, toolTimeoutSeconds, { ...use, callId: `${use.callId}:no-session` });
     }
 
     /** One call to a tool server's tool, and what comes back made ready for the bot: blobs uploaded, errors as results. */
@@ -677,7 +699,9 @@ export class AIService {
      * The App a link tool (search, schemas, connections) goes through when a Brick has several under its name: each App's link has the same
      * tools under the same names, so the first App whose heading and the person's permissions allow it is the one offered and called. The
      * person's own App comes first (own Apps first), and an Off there never takes the tool from the ready-made Apps beside it. With none,
-     * the first App's own refusal stands. A batch is never chosen here: its actions go to their own Apps (splitAppBatch).
+     * the first App's own refusal stands. A batch is never chosen here: its actions go to their own Apps (splitAppBatch). A search or a
+     * schemas request is not chosen here either when it is called: it is asked of every App that allows it (runJoinedLookup). Here it
+     * only decides whether the tool is offered.
      */
     private async appForLinkTool(botId: string, toolName: string, entry: ToolServerEntry, person: BotAccessPerson, botClient?: BotClient, args?: unknown): Promise<ToolServerEntry> {
         if (!entry.otherApps?.length || isBatchTool(toolName)) return entry;
@@ -686,6 +710,108 @@ export class AIService {
             if (await this.toolGate.offers(this.gateCallFor(botId, toolName, app, person, botClient, args))) return app;
         }
         return entry;
+    }
+
+    /**
+     * What a ready-made App's own lookups answer (its search, its schemas) never shows the Brick an action that is Off for it. Every
+     * ready-made App under this name counts, not only the one that answered: an action Off in its own App is taken out, whichever link
+     * or server answered. Any other tool's answer is returned as it is.
+     */
+    private async withoutOffActions(botId: string, toolName: string, entry: ToolServerEntry, answer: unknown): Promise<unknown> {
+        const lookupApps = appsOf(entry).filter((app) => app.readyMade);
+        if (lookupApps.length === 0 || !SCRUBBED_LOOKUPS.has(toolName.trim().toUpperCase())) return answer;
+        const policies = (await Promise.all(lookupApps.map((app) => this.toolGate.appPolicy(botId, app.serverId)))).filter((policy) => !!policy);
+        return policies.length > 0 ? withoutOff(answer, (slug) => policies.some((policy) => isOffRow(policy!, slug))) : answer;
+    }
+
+    /**
+     * A search or a schemas request on a Brick with several Apps: each App's link has the same tools and only knows its own actions, so
+     * it is asked of every App that allows it (a schemas request only of the Apps that own the actions it names) and the answers are
+     * joined, oldest App first. Each App is judged by its own settings, so an Off in one never hides the other's actions, and what is
+     * Off in any App is taken out of the joined answer. An App that asks first for lookups shows its card before anything runs, and the
+     * reply ends there, as for any card. Never throws: a failed App is named in the answer, and when none answered the first failure is.
+     */
+    /** Which App's link gave each session id a lookup handed out, so a batch never carries one App's session id to another App's link. */
+    private readonly sessionOwners = new SessionOwners();
+
+    private async runJoinedLookup(input: {
+        botId: string;
+        callId: string;
+        toolName: string;
+        entry: ToolServerEntry;
+        args: Record<string, unknown>;
+        playerId?: number;
+        playerUuid?: string;
+        botClient?: BotClient;
+        spaceName?: string;
+        abortSignal?: AbortSignal;
+        toolTimeoutSeconds?: number | null;
+    }): Promise<unknown> {
+        const { botId, toolName, entry, playerId, botClient, spaceName } = input;
+        const person = this.gatePerson(botId, playerId, botClient, spaceName);
+        const apps = appsOf(entry);
+        const policies = await Promise.all(apps.map((app) => this.toolGate.appPolicy(botId, app.serverId)));
+        const requests = lookupRequests(toolName, input.args, apps, policies);
+        const decided = await Promise.all(
+            requests.map(async ({ app, args }) => ({ app, args, verdict: await this.toolGate.decide(this.gateCallFor(botId, toolName, app, person, botClient, args)) }))
+        );
+        const refused = decided.find(({ verdict }) => verdict.kind === 'refuse');
+        const usable = decided.filter(({ verdict }) => verdict.kind !== 'refuse');
+        // No App allows it: the first App's refusal stands
+        if (usable.length === 0) return this.toolNotRun(refused!.verdict as Extract<GateDecision, { kind: 'refuse' }>);
+        // An App that asks first shows its card, one after another; the first card shown ends the reply. What the person's approval runs is that
+        // App's own lookup, so the Apps that need no OK are asked now and their joined answer travels with the card (the model never has to ask them again)
+        let card: unknown;
+        // An App that asks first whose OK is already given (a remembered approval) is asked like one that needs none
+        const approved = new Set<string>();
+        for (const { app, args, verdict } of usable) {
+            if (verdict.kind !== 'ask') continue;
+            // eslint-disable-next-line no-await-in-loop
+            const asked = await this.askForOk(botId, toolName, app, args, verdict, playerId, botClient, spaceName);
+            if (asked.kind === 'result') {
+                card = asked.result;
+                break;
+            }
+            approved.add(app.serverId);
+        }
+        const waiting = card !== undefined;
+        const going = waiting ? usable.filter(({ app, verdict }) => verdict.kind === 'run' || approved.has(app.serverId)) : usable;
+        if (waiting && going.length === 0) return card;
+        // A lookup that makes new things (a person's own link whose search was reviewed as such) counts toward the Brick's limit, as on the
+        // ordinary path; the one that would pass it asks first, and a call that proves it made nothing gives its count back
+        const releases = new Map<string, () => void>();
+        for (const { app, args, verdict } of going) {
+            if (verdict.kind !== 'run' || verdict.heading !== 'makesNew') continue;
+            // eslint-disable-next-line no-await-in-loop
+            const counted = await this.checkHowMany(botId, toolName, app, args, verdict, playerId, botClient, spaceName);
+            if (counted.kind === 'result') {
+                for (const give of releases.values()) give();
+                // A card already shown for another App is the reply, whatever else is asked
+                return waiting ? card : counted.result;
+            }
+            if (counted.release) releases.set(app.serverId, counted.release);
+        }
+        const asker = this.gatePerson(botId, playerId, botClient, spaceName);
+        const answers = await Promise.all(
+            going.map(async ({ app, args, verdict }) => ({
+                app: app.serverName ?? '',
+                answer: await this.callWithSessionFallback(app, toolName, args, input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
+                    botId,
+                    // Each App's call is its own try
+                    callId: requests.length === 1 ? input.callId : `${input.callId}:${app.serverId}`,
+                    ...(verdict.kind !== 'refuse' && verdict.heading ? { heading: verdict.heading } : {}),
+                    ...(asker.signedIn && asker.identifier ? { requesterKey: asker.identifier } : {}),
+                }),
+            }))
+        );
+        for (const { app, answer } of answers.map((one, at) => ({ app: going[at].app, answer: one.answer }))) if (['failed', 'notSent'].includes(outcomeOf(answer))) releases.get(app.serverId)?.();
+        for (const [at, one] of answers.entries()) this.sessionOwners.note(botId, one.answer, going[at].app.serverId);
+        // What is Off in any App is taken out of each App's answer before they are joined, so a label put in front of one can't hide it
+        const scrubbed = await Promise.all(answers.map(async (one) => ({ ...one, answer: await this.withoutOffActions(botId, toolName, entry, one.answer) })));
+        const joined = joinLookupAnswers(scrubbed);
+        if (!waiting) return joined;
+        // The card is the reply; what the other Apps answered comes with it
+        return { ...(card !== null && typeof card === 'object' && !Array.isArray(card) ? (card as Record<string, unknown>) : { result: card }), alsoAnswered: joined };
     }
 
     private gateCallFor(botId: string, toolName: string, entry: ToolServerEntry, person: BotAccessPerson, botClient?: BotClient, args?: unknown): GateCall {
@@ -5562,6 +5688,12 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                         const parsedArgs = typeof toolCall.arguments === 'string'
                             ? this.safeParseToolArgs(toolCall.arguments)
                             : toolCall.arguments || {};
+                        // A search or a schemas request on a Brick with several Apps is asked of every App that allows it, and the answers are one
+                        // (each App's link only knows its own actions: Calendar's are never found by asking Gmail's link)
+                        if (shareable && botId && !forOthers && shareable.otherApps?.length && isJoinedLookup(toolCall.name)) {
+                            result = await this.runJoinedLookup({ botId, callId: toolCall.id, toolName: toolCall.name, entry: shareable, args: parsedArgs, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds });
+                            break;
+                        }
                         // A link tool of several ready-made Apps goes through the App that allows it, as it was offered
                         const mcpServerConfig = shareable && botId && !forOthers
                             ? await this.appForLinkTool(botId, toolCall.name, shareable, this.gatePerson(botId, playerId, botClient, spaceName), botClient, parsedArgs)
@@ -5585,7 +5717,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                         ranOn.set(toolCall.id, ran.size === 1 ? [...ran][0] : ran.size === 0 ? null : [...ran].map((id) => id ?? '').sort());
                                     };
                                     apps(split.parts.filter((part) => part.decision.kind !== 'refuse').map((part) => part.entry.connectionId ?? null));
-                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds, sentTo: apps });
+                                    result = await this.runAppBatch({ botId, callId: toolCall.id, toolName: toolCall.name, args: parsedArgs, parts: split.parts, sessionFrom: this.sessionOwners.ownerOf(botId, parsedArgs) ?? shareable?.serverId, playerId, playerUuid, botClient, spaceName, abortSignal, toolTimeoutSeconds, sentTo: apps });
                                     break;
                                 }
                             }
@@ -5645,7 +5777,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                                 result = await alongside;
                                 break;
                             }
-                            const running = this.callMcpTool(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
+                            const running = this.callWithSessionFallback(mcpServerConfig, toolCall.name, parsedArgs, playerUuid, abortSignal, toolTimeoutSeconds, {
                                 botId: botId!,
                                 callId: toolCall.id,
                                 ...(verdict.heading ? { heading: verdict.heading } : {}),
@@ -5669,14 +5801,10 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             }
                             // A call that proved it made nothing doesn't count toward the limit
                             if (release && ['failed', 'notSent'].includes(outcomeOf(result))) release();
+                            if (botId && !forOthers && mcpServerConfig.readyMade && isJoinedLookup(toolCall.name)) this.sessionOwners.note(botId, result, mcpServerConfig.serverId);
                             // What a ready-made App's own lookups answer (its search, its schemas) never shows the Brick an action that is Off for it
                             // Every App under this name counts, not only the one that answered: the first entry holds them all
-                            const lookupApps = appsOf(shareable ?? mcpServerConfig).filter((app) => app.readyMade);
-                            if (!forOthers && botId && lookupApps.length > 0 && SCRUBBED_LOOKUPS.has(toolCall.name.trim().toUpperCase())) {
-                                // Any of the Brick's ready-made Apps: an action Off in its own App is taken out, whichever link or server answered
-                                const policies = (await Promise.all(lookupApps.map((app) => this.toolGate.appPolicy(botId, app.serverId)))).filter((policy) => !!policy);
-                                if (policies.length > 0) result = withoutOff(result, (slug) => policies.some((policy) => isOffRow(policy!, slug)));
-                            }
+                            if (!forOthers && botId) result = await this.withoutOffActions(botId, toolCall.name, shareable ?? mcpServerConfig, result);
                         } else {
                             // Log unknown tool for debugging
                             if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
@@ -5917,6 +6045,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         toolName: string;
         args: Record<string, unknown>;
         parts: AppPart[];
+        /** The App whose link gave the session id the model carries (the one first under the link's tool names): the others' links do not know it. */
+        sessionFrom?: string;
         playerId?: number;
         playerUuid?: string;
         botClient?: BotClient;
@@ -5927,6 +6057,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         sentTo?: (connections: Array<string | null>) => void;
     }): Promise<unknown> {
         const { botId, args, playerId, botClient, spaceName } = input;
+        // One batch of one App's actions, as it is shown on a card and sent. The session id of another App's link is taken out of it, so the
+        // link is never sent one it does not know: a write is sent once and never tried again, so a refusal of the session must not happen
+        const batchFor = (group: AppPart[]): Record<string, unknown> => {
+            const batch = batchOf(args, group);
+            const entry = group[0]?.entry;
+            return input.sessionFrom && entry?.readyMade && entry.serverId !== input.sessionFrom ? (withoutSession(batch) ?? batch) : batch;
+        };
         const byIndex = (a: AppPart, b: AppPart) => a.index - b.index;
         const notDone: string[] = [];
         const asking: AppPart[] = [];
@@ -5970,7 +6107,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                           botId,
                           input.toolName,
                           first.entry,
-                          batchOf(args, group),
+                          batchFor(group),
                           { ...(first.decision as Extract<GateDecision, { kind: 'ask' }>), heading: strictestOf(group.map((part) => part.heading)) },
                           playerId,
                           botClient,
@@ -6019,7 +6156,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const results: Array<{ group: AppPart[]; answer: Awaited<ReturnType<AIService['callMcpTool']>>; outcomes: PartOutcome[] }> = [];
         for (const group of groups.values()) {
             const { entry, heading } = group[0];
-            const answer = await this.callMcpTool(entry, input.toolName, batchOf(args, group), input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
+            const answer = await this.callWithSessionFallback(entry, input.toolName, batchFor(group), input.playerUuid, input.abortSignal, input.toolTimeoutSeconds, {
                 botId,
                 callId: groups.size === 1 ? input.callId : oneApp ? `${input.callId}:${heading}` : `${input.callId}:${entry.serverId}:${heading}`,
                 heading,
@@ -6033,7 +6170,8 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         for (const { group, outcomes } of results) group.forEach((part, at) => outcomeOfPart.set(part, outcomes[at]));
         // The things it made go back to the limit when the call that would have made them proved it made nothing
         for (const [part, outcome] of outcomeOfPart) if (outcome === 'failed' || outcome === 'notSent') releases.get(part)?.();
-        if (asked.length === 0 && heldBack.length === 0 && notDone.length === 0 && results.length === 1) return results[0].answer;
+        // A tool's own error is no plain failure: some of its actions may have run, so it is told in the summary below, not handed over as "failed"
+        if (asked.length === 0 && heldBack.length === 0 && notDone.length === 0 && results.length === 1 && !toolErrorMayHaveRun(results[0].answer)) return results[0].answer;
         // A card that could not be shown is a part not done, never the whole call failing when other parts ran
         const cardProblem = (value: Record<string, unknown> | undefined) => (value && typeof value.error === 'string' ? value.error : undefined);
         const shownAsks = asked.filter(({ result }) => !cardProblem(result));
@@ -6050,7 +6188,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const waitingParts = shownAsks.flatMap(({ parts }) => parts).sort(byIndex);
         const summary = [
             doneParts.length > 0 ? `Done now: ${titles(doneParts)}.` : '',
-            unsureParts.length > 0 ? `Not sure it was done, the App answered with an error: ${titles(unsureParts)}. Check before you ask for it again.` : '',
+            unsureParts.length > 0 ? `Not sure it was done, the App gave an error or no answer: ${titles(unsureParts)}. Check before you ask for it again.` : '',
             failedParts.length > 0 ? `Did not work, nothing was done: ${titles(failedParts)}.` : '',
             waitingParts.length > 0 ? `Waiting for the person's OK on a card: ${titles(waitingParts)}. Nothing of it was done yet.` : '',
             problems.length > 0 ? `Not done, it needs the person's OK: ${problems.join(' ')}` : '',

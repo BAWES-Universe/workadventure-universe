@@ -603,6 +603,29 @@ describe('MCPConnector', () => {
             };
             const data = { temperature: 22.5, conditions: 'Partly cloudy' };
 
+            it('keeps the data of a failed call in its error, so a call that partly ran is never taken for one that did not', async () => {
+                const failed = await callWith({ isError: true, content: [{ type: 'text', text: 'Invalid session' }], structuredContent: { results: [{ index: 0, tool_slug: 'A', response: { successful: true } }] } });
+                expect((failed as { error: string }).error).toContain('Invalid session');
+                expect((failed as { error: string }).error).toContain('tool_slug');
+                expect((failed as { outcome: string }).outcome).toBe('failed');
+            });
+
+            it('gives a batch whose tool answered with an isError result no action counted as nothing done, whatever words it uses', async () => {
+                const { batchOutcomes } = await import('../AppActions');
+                const failed = await callWith({ isError: true, content: [{ type: 'text', text: 'Invalid session. Action 1 completed.' }] });
+                expect(batchOutcomes(failed, ['A_ONE', 'A_TWO'], (failed as { outcome: 'failed' }).outcome)).toEqual(['uncertain', 'uncertain']);
+            });
+
+            it('keeps the data of a protocol error in the error too', async () => {
+                mockedAxios.post.mockImplementation(async (_url: string, body: any) =>
+                    body?.method === 'initialize' ? MOCK_INIT_RESPONSE : { data: { jsonrpc: '2.0', id: '2', error: { code: -32000, message: 'Invalid session', data: { results: [{ tool_slug: 'A' }] } } } }
+                );
+                const failed = (await MCPConnector.executeToolCall('server-1', 'https://weather.example.com/mcp', 'get_weather', {}, 'none')) as { error: string; outcome: string };
+                expect(failed.error).toContain('Invalid session');
+                expect(failed.error).toContain('tool_slug');
+                expect(failed.outcome).toBe('failed');
+            });
+
             it('adds the data as text when content holds no text', async () => {
                 expect(await callWith({ content: [], structuredContent: data })).toEqual([
                     { type: 'text', text: JSON.stringify(data) },
@@ -970,6 +993,34 @@ describe('MCPConnector', () => {
             expect([...ids].sort()).toEqual(['calendar', 'gmail']);
             expect(entry?.otherApps?.every((other) => other.readyMade === true && other.orbitUrl === 'https://admin.example.com')).toBe(true);
             expect(result.tools.filter((tool: any) => tool.function.name === 'COMPOSIO_MULTI_EXECUTE_TOOL')).toHaveLength(1);
+            vi.unstubAllEnvs();
+        });
+
+        it('gives a name every App has to the oldest App, whichever App answers first', async () => {
+            vi.stubEnv('BOT_SERVICE_TOKEN', 'svc');
+            const app = (id: string, name: string) => ({ id, botId: 'bot-order', name, serverUrl: `https://${id}.link/mcp`, authType: 'none' as const, enabled: true, readyMade: true, connectionId: `conn-${id}` });
+            const search = { name: 'COMPOSIO_SEARCH_TOOLS', description: 'Search tools', inputSchema: { type: 'object', properties: {} } };
+            // Orbit lists the oldest App first: Gmail. Calendar answers first, Gmail last
+            for (const slowest of ['gmail', 'calendar']) {
+                mockedAxios.get.mockResolvedValueOnce({ data: [app('gmail', 'Gmail'), app('calendar', 'Calendar')] });
+                // The slowest App's list is held back until the other App has answered
+                let fastAnswered!: () => void;
+                const fast = new Promise<void>((resolve) => (fastAnswered = resolve));
+                mockedAxios.post.mockImplementation(async (_url: string, body: any) => {
+                    const sent = body?.message?.method ?? body?.method;
+                    if (sent === 'tools/list') {
+                        if (String(body?.serverId ?? '') === slowest) await fast;
+                        else void Promise.resolve().then(fastAnswered);
+                    }
+                    const list = { jsonrpc: '2.0', id: '1', result: { tools: [search] } };
+                    return { data: { status: 200, contentType: 'application/json', sessionId: sent === 'initialize' ? 's' : null, body: sent === 'tools/list' ? JSON.stringify(list) : '{}' } };
+                });
+                // eslint-disable-next-line no-await-in-loop
+                const result = await MCPConnector.discoverToolsWithMapping(`bot-order-${slowest}`, 'https://admin.example.com', 'admin-token', 'bot-service-token');
+                const entry = result.toolServerMap.get('COMPOSIO_SEARCH_TOOLS');
+                expect(entry?.serverId).toBe('gmail');
+                expect((entry?.otherApps ?? []).map((other) => other.serverId)).toEqual(['calendar']);
+            }
             vi.unstubAllEnvs();
         });
 

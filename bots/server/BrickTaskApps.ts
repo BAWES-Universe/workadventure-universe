@@ -14,8 +14,9 @@
  * Pure of the AI and of the chat: the tools, the gate, the cards and the call are somebody else's (injected).
  */
 import { createHash } from 'crypto';
-import { SCRUBBED_LOOKUPS, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
+import { SCRUBBED_LOOKUPS, asMayHaveRun, batchOf, batchParts, isBatchTool, isOffRow, ownCopyLine, ownCopyOf, ownerOfAction, whichAppLine, withoutOff } from '../mcp/AppActions';
 import { actionName } from '../mcp/AppBatch';
+import { isJoinedLookup, joinLookupAnswers, lookupRequests, retryWithoutSession, SessionOwners, withoutSession } from '../mcp/AppLookups';
 import type { ToolServerEntry } from '../mcp/MCPConnector';
 import type { GateCall, GateDecision, ToolGate } from '../mcp/ToolGate';
 import { TASK_ALWAYS_ASK, type ProposeInput, type Proposed } from '../mcp/ToolApprovals';
@@ -68,6 +69,9 @@ const refused = (line: string): string => JSON.stringify({ error: `${line} This 
 const stepId = (runId: string, toolName: string, args: Record<string, unknown>): string => `${runId}:${createHash('sha256').update(JSON.stringify([toolName, args])).digest('hex').slice(0, 24)}`;
 
 export class TaskApps {
+    /** Which App's link gave each session id a lookup handed out, so a step of another App is never sent it. */
+    private readonly sessionOwners = new SessionOwners();
+
     constructor(private readonly deps: TaskAppsDeps) {}
 
     /** The Apps this run may use: every tool the gate does not refuse for the owner, and none an unreviewed App gives. Null when there are none. */
@@ -174,6 +178,8 @@ export class TaskApps {
                 if ('line' in routed) return refused(routed.line);
                 ({ app: entry, args } = routed);
             }
+            // A search or a schemas request on a Brick with several Apps is asked of every App that allows it, and the answers are one
+            if (isJoinedLookup(name) && entry.otherApps?.length) return await this.joinedLookup(run, name, args, entry, state);
             // The check right before the call: the tool, the person and the settings as they are now
             const decided = await this.decideFor(run, name, entry, args);
             entry = decided.app;
@@ -184,8 +190,10 @@ export class TaskApps {
             const heading = verdict.heading!;
             const asks = verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading);
             if (!asks) {
-                const answer = await this.deps.call(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) });
-                return asText(await this.withoutOffActions(run.brickId, name, listed, answer), isMailTool(name, entry.serverName));
+                const answer = await this.callWithSessionFallback(run.brickId, entry, name, args, run.userId, { heading, callId: stepId(run.runId, name, args) });
+                if (entry.readyMade && isJoinedLookup(name)) this.sessionOwners.note(run.brickId, answer, entry.serverId);
+                // A batch whose tool answered with its own error may have run some of its actions: it is never read as "nothing was done"
+                return asText(await this.withoutOffActions(run.brickId, name, listed, isBatchTool(name) ? asMayHaveRun(answer) : answer), isMailTool(name, entry.serverName));
             }
             return await this.askFor(
                 run,
@@ -199,6 +207,69 @@ export class TaskApps {
             console.warn(`[TaskApps] A step of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
             return JSON.stringify({ error: 'That did not work just now.' });
         }
+    }
+
+    /**
+     * One call to an App's tool, tried once more without the session id it carried when its link refused that session (the model carries the
+     * session one App's link gave to another App's link). Only a ready-made App's lookups (search, schemas: they change nothing), and only a refusal that names the session and says nothing
+     * more, is tried again, only without the session, and as its own try (its own call id). Never the batch that runs actions.
+     */
+    private async callWithSessionFallback(brickId: string, entry: ToolServerEntry, name: string, args: Record<string, unknown>, ownerId: string, use: { heading: ToolHeading; callId: string }): Promise<unknown> {
+        const answer = await this.deps.call(brickId, entry, name, args, ownerId, use);
+        const bare = retryWithoutSession(entry, name, args, answer);
+        return bare ? this.deps.call(brickId, entry, name, bare, ownerId, { ...use, callId: `${use.callId}:no-session` }) : answer;
+    }
+
+    /**
+     * A search or a schemas request of a Brick with several Apps, as in chat: each App's link only knows its own actions, so it is asked of
+     * every App the gate lets it be used through (a schemas request only of the Apps that own the actions it names) and the answers are
+     * joined, oldest App first, with what is Off in any App taken out. An App that must ask first shows its card before anything is asked,
+     * and the check ends with it.
+     */
+    private async joinedLookup(run: DueRun, name: string, args: Record<string, unknown>, first: ToolServerEntry, state: { waiting: boolean }): Promise<string> {
+        const apps = [first, ...(first.otherApps ?? [])];
+        const readPolicy = this.deps.gate.appPolicy?.bind(this.deps.gate);
+        const policies = readPolicy ? await Promise.all(apps.map((app) => readPolicy(run.brickId, app.serverId))) : apps.map(() => null);
+        const requests = lookupRequests(name, args, apps, policies);
+        const decided = await Promise.all(requests.map(async ({ app, args: own }) => ({ app, args: own, verdict: await this.deps.gate.decide(this.gateCall(run, name, app, own)) })));
+        const usable = decided.filter(({ verdict }) => this.refusal(verdict, name) === null);
+        // No App lets it be used: the first App's refusal stands
+        if (usable.length === 0) return refused(this.refusal(decided[0].verdict, name) ?? `${name} cannot be used.`);
+        // The first App that asks shows its card and the check ends with it; the person's approval runs only that App's lookup, so the Apps that
+        // need no OK are asked now and their joined answer travels with the card
+        let card: string | undefined;
+        const asking = new Set<string>();
+        for (const { app, args: own, verdict } of usable) {
+            const heading = verdict.kind === 'refuse' ? undefined : verdict.heading;
+            if (verdict.kind === 'refuse' || !heading) continue;
+            if (verdict.kind === 'ask' || TASK_ALWAYS_ASK.includes(heading)) {
+                asking.add(app.serverId);
+                if (card === undefined) {
+                    // eslint-disable-next-line no-await-in-loop
+                    card = await this.askFor(run, name, app, own, { kind: 'ask', heading, notReviewed: false, policyRevision: verdict.policyRevision!, fingerprint: verdict.fingerprint! }, state);
+                }
+            }
+        }
+        const going = card === undefined ? usable : usable.filter(({ app }) => !asking.has(app.serverId));
+        if (card !== undefined && going.length === 0) return card;
+        const step = stepId(run.runId, name, args);
+        const answers = await Promise.all(
+            going.map(async ({ app, args: own, verdict }) => {
+                let answer: unknown;
+                try {
+                    answer = await this.callWithSessionFallback(run.brickId, app, name, own, run.userId, { heading: (verdict as { heading: ToolHeading }).heading, callId: requests.length === 1 ? step : `${step}:${app.serverId}` });
+                } catch (error) {
+                    console.warn(`[TaskApps] A lookup of a goal or task failed (${name}):`, error instanceof Error ? error.message : error);
+                    answer = { error: 'That did not work just now.' };
+                }
+                this.sessionOwners.note(run.brickId, answer, app.serverId);
+                return { app: app.serverName ?? '', answer };
+            })
+        );
+        // What is Off in any App is taken out of each App's answer before they are joined, so a label put in front of one can't hide it
+        const scrubbed = await Promise.all(answers.map(async (one) => ({ ...one, answer: await this.withoutOffActions(run.brickId, name, first, one.answer) })));
+        const joined = asText(joinLookupAnswers(scrubbed), isMailTool(name, first.serverName));
+        return card === undefined ? joined : `${card}\n\nAnswered now by the other Apps: ${joined}`;
     }
 
     /**
@@ -231,7 +302,12 @@ export class TaskApps {
             owners.set(app.serverId, app);
         }
         if (owners.size > 1) return { line: `That asked for actions of ${[...owners.values()].map((app) => app.serverName || 'an App').join(' and ')} at once. Ask for each App's actions in a step of its own.` };
-        return { app: [...owners.values()][0], args: batchOf(args, parts) };
+        const app = [...owners.values()][0];
+        const batch = batchOf(args, parts);
+        // The session id the model carries is the one the link of the App that answered its lookup gave (the first App when that is not known):
+        // another App's link does not know it, and a write is sent once
+        const from = this.sessionOwners.ownerOf(run.brickId, args) ?? first.serverId;
+        return { app, args: app.readyMade && app.serverId !== from ? (withoutSession(batch) ?? batch) : batch };
     }
 
     /** The card for this step, in the person's own chat: it waits there, and the run only ends. */
