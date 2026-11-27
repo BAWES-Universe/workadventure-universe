@@ -4749,6 +4749,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 for await (const chunk of this.meteredStream(ledger, config.providerId, opts.system, user, config, opts.tools, opts.signal, undefined, rounds.steps.length > 0 ? rounds : undefined)) {
                     if (chunk.content) content += chunk.content;
                     for (const call of chunk.toolCalls ?? []) {
+                        // A call that only began (its arguments are still being written) is not a call: nothing here shows a steps line, and a
+                        // stream that broke before its complete call must run nothing, an empty-input App included
+                        if (call.began) continue;
                         const known = call.id ? calls.get(call.id) : Array.from(calls.values()).pop();
                         if (known) {
                             // Every continuation is part of the arguments, a `{}` among them; only the placeholder a call is opened with is skipped
