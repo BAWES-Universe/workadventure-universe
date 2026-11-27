@@ -243,6 +243,17 @@ describe('a spreadsheet file', () => {
         expect((await failed({ name: 'x', format: 'xlsx', rows })).reason).toBe('too_big');
     }, 60_000);
 
+    it('takes a null for what it does not need as not sent, as a model often writes it', async () => {
+        const one = await built({ name: 'n', format: 'xlsx', rows: [['a']], sheets: null, content: null });
+        expect(readBook(one).SheetNames).toEqual(['n']);
+        const many = await built({ name: 'n', format: 'xlsx', rows: null, sheets: [{ name: 'T', rows: [['a']] }] });
+        expect(readBook(many).SheetNames).toEqual(['T']);
+        expect((await built({ name: 'n', format: 'csv', rows: [['a']], sheets: null })).format).toBe('csv');
+        expect((await built({ name: 'n', format: 'md', content: '# x', rows: null, sheets: null })).format).toBe('md');
+        expect((await failed({ name: 'n', format: 'xlsx', rows: null, sheets: null })).message).toMatch(/needs rows/);
+        expect((await failed({ name: 'n', format: 'csv', rows: null, sheets: [{ name: 'a', rows: [['1']] }] })).message).toMatch(/spreadsheet file/);
+    });
+
     it('is told its format', async () => {
         expect((await failed({ name: 'x', format: 'docx', content: 'a' })).message).toMatch(/md, csv or xlsx/);
         expect((await failed({ name: 'x', content: 'a' })).reason).toBe('invalid');

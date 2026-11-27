@@ -257,6 +257,9 @@ async function buildWorkbook(tabs: Array<{ name: string; rows: Cell[][] }>): Pro
     return Buffer.from(XLSX.write(book, { type: 'buffer', bookType: 'xlsx', compression: true }) as Uint8Array);
 }
 
+/** An argument the model sent: one it left out, or sent as null for "none", was not sent. */
+const given = (value: unknown): boolean => value !== undefined && value !== null;
+
 /** Builds the file a call asks for. Pure: nothing is sent or stored. */
 export async function buildFile(args: Record<string, unknown>): Promise<BuildResult> {
     const format = typeof args.format === 'string' ? (args.format.trim().toLowerCase() as MadeFileFormat) : undefined;
@@ -272,7 +275,7 @@ export async function buildFile(args: Record<string, unknown>): Promise<BuildRes
     }
 
     if (format === 'csv') {
-        if (args.sheets !== undefined && args.rows === undefined) return invalid('A CSV file is one table: send rows. For several tabs make a spreadsheet file (xlsx).');
+        if (given(args.sheets) && !given(args.rows)) return invalid('A CSV file is one table: send rows. For several tabs make a spreadsheet file (xlsx).');
         const table = rowsOf(args.rows, 'A CSV file');
         if ('error' in table) return invalid(table.error);
         if (cellCount(table.rows) > MAX_MADE_FILE_CELLS) return tooBig('The table has more cells than one chat file takes.');
@@ -282,9 +285,9 @@ export async function buildFile(args: Record<string, unknown>): Promise<BuildRes
     }
 
     // xlsx: rows for one tab, or sheets for several
-    if (args.rows !== undefined && args.sheets !== undefined) return invalid('Send rows for one tab or sheets for several tabs, not both.');
+    if (given(args.rows) && given(args.sheets)) return invalid('Send rows for one tab or sheets for several tabs, not both.');
     let raw: Array<{ name: unknown; rows: unknown }>;
-    if (args.sheets !== undefined) {
+    if (given(args.sheets)) {
         if (!Array.isArray(args.sheets) || args.sheets.length === 0) return invalid('sheets must be a list of tabs, each with a name and rows.');
         if (args.sheets.length > MAX_MADE_FILE_TABS) return tooBig(`A spreadsheet file takes at most ${MAX_MADE_FILE_TABS} tabs.`);
         raw = [];
