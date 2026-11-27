@@ -381,6 +381,22 @@ describe("when the chat takes too long or cannot be made", () => {
         expect(room.failed).toBe(true);
     });
 
+    it("hands over every word it still holds, once: the ones given back and the ones still waiting, in order", () => {
+        const { room, pass } = screen();
+        room.begin();
+        room.sendMessage("first");
+        pass(SETUP_WAIT_MS);
+        expect(get(room.textBack)).toBe("first");
+        // Written after the failed try: waiting to go
+        room.sendMessage("second");
+        room.sendMessage("third");
+        expect(room.takeUnsentWords()).toEqual(["first", "second", "third"]);
+        expect(get(room.textBack)).toBeUndefined();
+        expect(get(room.messages)).toEqual([]);
+        expect(room.unsentWords()).toEqual([]);
+        expect(room.takeUnsentWords()).toEqual([]);
+    });
+
     it("says so once for one try, however many things report it", () => {
         const { room, deps, pass } = screen();
         room.begin();
