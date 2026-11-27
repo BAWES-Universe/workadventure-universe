@@ -2130,6 +2130,11 @@ export class AIService {
             const playerUuid = playerMemory?.userUuid || `temp-${playerId}`;
             // Map to accumulate tool call arguments by ID (for streaming tool calls where arguments come in chunks)
             const toolCallAccumulator: Map<string, { id: string; name: string; arguments: string; announced?: boolean }> = new Map();
+            // Calls a provider said have begun (their arguments are still being written): the steps line started for them, and
+            // their complete calls, when they come, are not announced again
+            const begunCallIds = new Set<string>();
+            // Of those, the ones whose complete call has not come yet
+            const begunOpen = new Set<string>();
 
             // For Qwen models, add /no_think to user message instead of system prompt
             const userMessageForQwen = isQwenModel 
@@ -2279,7 +2284,12 @@ export class AIService {
                         // Accumulate tool call arguments by ID (arguments may come in multiple chunks)
                         // Note: In streaming mode, tool calls may come with undefined ID in some chunks
                         // We need to handle both cases: with ID (proper streaming) and without ID (fallback)
+                        const beganNow: ToolCall[] = [];
                         for (const toolCall of chunk.toolCalls) {
+                            if (toolCall.began) {
+                                beganNow.push(toolCall);
+                                continue;
+                            }
                             if (toolCall.id) {
                                 // Proper streaming with ID - accumulate by ID
                                 const existing = toolCallAccumulator.get(toolCall.id);
@@ -2300,8 +2310,10 @@ export class AIService {
                                     toolCallAccumulator.set(toolCall.id, {
                                         id: toolCall.id,
                                         name: toolCall.name || '',
-                                        arguments: initArgs
+                                        arguments: initArgs,
+                                        ...(begunCallIds.has(toolCall.id) ? { announced: true } : {}),
                                     });
+                                    begunOpen.delete(toolCall.id);
                                 }
                             } else if (toolCall.arguments) {
                                 // No ID but has arguments - this is a continuation chunk
@@ -2330,7 +2342,10 @@ export class AIService {
                                 }
                             }
                         }
+                        const early = this.beginEarly(beganNow, begunCallIds, begunOpen, toolServerMap);
+                        if (early.length) yield {content: '', done: false, toolSteps: early};
                     }
+                    if (chunk.done && begunOpen.size > 0) yield {content: '', done: false, toolStepResults: this.endUnfinished(begunOpen)};
 
                     // A call whose name is known has begun, though its arguments are still coming in (an artifact's whole
                     // page can take a minute): the steps line starts now instead of when they are complete.
@@ -2761,7 +2776,12 @@ export class AIService {
                                         if (process.env.NODE_ENV === 'development' || process.env.ENABLE_BOT_DEBUG === 'true') {
                                             console.log(`[AIService] Received tool calls from follow-up:`, resultChunk.toolCalls.map(tc => ({ name: tc.name, id: tc.id, argsLength: tc.arguments?.length || 0 })));
                                         }
+                                        const beganNext: ToolCall[] = [];
                                         for (const toolCall of resultChunk.toolCalls) {
+                                            if (toolCall.began) {
+                                                beganNext.push(toolCall);
+                                                continue;
+                                            }
                                             if (toolCall.id) {
                                                 const existing = toolCallAccumulator.get(toolCall.id);
                                                 if (existing) {
@@ -2777,7 +2797,9 @@ export class AIService {
                                                         id: toolCall.id,
                                                         name: toolCall.name || '',
                                                         arguments: initArgs,
+                                                        ...(begunCallIds.has(toolCall.id) ? { announced: true } : {}),
                                                     });
+                                                    begunOpen.delete(toolCall.id);
                                                 }
                                             } else if (toolCall.arguments) {
                                                 if (toolCallAccumulator.size > 0) {
@@ -2789,7 +2811,10 @@ export class AIService {
                                                 }
                                             }
                                         }
+                                        const earlyNext = this.beginEarly(beganNext, begunCallIds, begunOpen, toolServerMap);
+                                        if (earlyNext.length) yield {content: '', done: false, toolSteps: earlyNext};
                                     }
+                                    if (resultChunk.done && begunOpen.size > 0) yield {content: '', done: false, toolStepResults: this.endUnfinished(begunOpen)};
                                     const begunNext = this.beginSteps(toolCallAccumulator, toolServerMap);
                                     if (begunNext.length) yield {content: '', done: false, toolSteps: begunNext};
                                     if (resultChunk.done) {
@@ -7043,6 +7068,34 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         const fresh = Array.from(calls.values()).filter((call) => call.name && !call.announced);
         for (const call of fresh) call.announced = true;
         return this.stepsOf(fresh, toolServerMap);
+    }
+
+    /**
+     * The calls a provider said have begun (#1545): steps for those not announced yet, marked so the complete calls that follow
+     * are not announced again. These calls are not kept: a stream that breaks before its complete call leaves nothing to run.
+     */
+    private beginEarly(
+        calls: ToolCall[],
+        announcedIds: Set<string>,
+        openIds: Set<string>,
+        toolServerMap: Map<string, { title?: string; serverName?: string }>
+    ): ToolStep[] {
+        const fresh = calls.filter((call) => call.id && call.name && !announcedIds.has(call.id));
+        for (const call of fresh) {
+            announcedIds.add(call.id);
+            openIds.add(call.id);
+        }
+        return this.stepsOf(fresh, toolServerMap);
+    }
+
+    /**
+     * A provider's stream ended: the calls it said had begun that never came complete did not run, so their steps end as not done
+     * (otherwise the reply's end would count them as done, since a running step's result is taken as used).
+     */
+    private endUnfinished(openIds: Set<string>): Array<{ id: string; ok: false; note: string }> {
+        const ended = Array.from(openIds, (id) => ({ id, ok: false as const, note: 'Not run: the reply was cut off before it was ready' }));
+        openIds.clear();
+        return ended;
     }
 
     /** The calls a reset starts, as the steps line shows them: tool servers' tools and our own work tools (#1545). */
