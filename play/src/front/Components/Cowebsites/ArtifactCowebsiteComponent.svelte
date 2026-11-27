@@ -1427,6 +1427,40 @@
     .document :global(a) {
         color: #c4b5fd;
     }
+    /*
+     * A table: the document's "break anywhere" rule would shrink every column to one letter and make each row thousands of
+     * pixels tall, so a cell keeps to one line and a table wider than the window scrolls sideways inside the document. The
+     * page's own table style (outer space, stretched rows, centred headings) never applies.
+     */
+    .document :global(table) {
+        display: block;
+        max-width: 100%;
+        height: auto;
+        margin: 0 0 0.8em;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border: 0;
+        border-radius: 0;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+    .document :global(th),
+    .document :global(td) {
+        height: auto;
+        padding: 5px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        text-align: left;
+        text-transform: none;
+        letter-spacing: normal;
+        vertical-align: top;
+        white-space: nowrap;
+        overflow-wrap: normal;
+        word-break: normal;
+    }
+    .document :global(th) {
+        background: rgba(255, 255, 255, 0.08);
+        font-weight: 700;
+    }
     .state {
         height: 100%;
         min-height: 160px;
