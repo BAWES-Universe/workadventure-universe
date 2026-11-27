@@ -660,6 +660,126 @@ describe("opening a Brick's chat on a screen of its own, before the chat exists"
         error.mockRestore();
     });
 
+    /** A screen the person wrote on and left while its chat was being made: the setup is answered (or timed out) after they went. */
+    async function leftWithWords(options: { typed?: string; timeOut?: boolean } = {}) {
+        const { connection, directRooms } = fakeConnection();
+        game.connection = connection;
+        let answer: (value: unknown) => void = () => undefined;
+        game.askDirectChat.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        game.openDirectChatRoom.mockImplementation((_chatId, opened) => {
+            opened?.onFailure?.(new Error("chat server down"));
+            return Promise.resolve(undefined);
+        });
+        const opening = openBrickChat(NEW);
+        await vi.advanceTimersByTimeAsync(0);
+        const first = game.showRoom.mock.calls[0][0] as PendingBrickChatRoom;
+        first.sendMessage("brief at 8 < 9 & more?");
+        first.sendMessage("and at 5");
+        if (options.typed) first.readTypedFrom(() => options.typed ?? "");
+        first.screenLeft();
+        selected.set(undefined);
+        if (options.timeOut) await vi.advanceTimersByTimeAsync(15_000);
+        answer({ create: true, botChatId: chatIdOf(NEW) });
+        await opening;
+        game.showRoom.mockClear();
+        game.warn.mockClear();
+        return { first, directRooms };
+    }
+
+    it("gives the lines written on a screen the person left to the new screen when the setup failed while they were away", async () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const { first } = await leftWithWords();
+        // The setup failed with nobody looking: the words were given back for a box nobody reads
+        expect(get(first.textBack)).toBe("brief at 8 < 9 & more?\nand at 5");
+        await openBrickChat(NEW);
+        const second = game.showRoom.mock.calls[0][0] as PendingBrickChatRoom;
+        expect(second).not.toBe(first);
+        // In the box as the box holds words: in order, as written, and never read as markup
+        expect(second.takeLeftTyped()).toBe("brief at 8 &lt; 9 &amp; more?<br>and at 5");
+        expect(get(first.textBack)).toBeUndefined();
+        expect(get(second.textBack)).toBeUndefined();
+        expect(game.saveDraft).not.toHaveBeenCalled();
+        error.mockRestore();
+    });
+
+    it("gives the lines back too when the wait ran out while the person was away and the setup failed after it", async () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const { first } = await leftWithWords({ timeOut: true });
+        expect(get(first.textBack)).toBe("brief at 8 < 9 & more?\nand at 5");
+        await openBrickChat(NEW);
+        const second = game.showRoom.mock.calls[0][0] as PendingBrickChatRoom;
+        expect(second.takeLeftTyped()).toBe("brief at 8 &lt; 9 &amp; more?<br>and at 5");
+        error.mockRestore();
+    });
+
+    it("keeps the lines first and then what was typed, each once", async () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        await leftWithWords({ typed: "and what about<br>Friday" });
+        await openBrickChat(NEW);
+        const second = game.showRoom.mock.calls[0][0] as PendingBrickChatRoom;
+        expect(second.takeLeftTyped()).toBe("brief at 8 &lt; 9 &amp; more?<br>and at 5<br>and what about<br>Friday");
+        expect(second.takeLeftTyped()).toBe("");
+        error.mockRestore();
+    });
+
+    it("puts the lines and the typed words into the chat's message box once when the chat is there at the next tap", async () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const { directRooms } = await leftWithWords({ typed: "and what about Friday" });
+        directRooms.set([fakeRoom("!there:chat.test", [ME, chatIdOf(NEW)])]);
+        game.openDirectChatRoom.mockImplementation(async (chatId, options) => {
+            const room = { id: `chat with ${chatId}` };
+            if (options?.show) await options.show(room);
+            else game.showRoom(room);
+            return room;
+        });
+        await openBrickChat(NEW);
+        expect(game.saveDraft).toHaveBeenCalledTimes(1);
+        expect(game.saveDraft).toHaveBeenCalledWith(
+            expect.objectContaining({
+                roomId: `chat with ${chatIdOf(NEW)}`,
+                message: "brief at 8 &lt; 9 &amp; more?<br>and at 5<br>and what about Friday",
+            })
+        );
+        error.mockRestore();
+    });
+
+    it("leaves the words to the screen that is still there: given back once, and not carried to the next screen as well", async () => {
+        const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const { connection } = fakeConnection();
+        game.connection = connection;
+        let answer: (value: unknown) => void = () => undefined;
+        game.askDirectChat.mockReturnValue(
+            new Promise((resolve) => {
+                answer = resolve;
+            })
+        );
+        game.openDirectChatRoom.mockImplementation((_chatId, opened) => {
+            opened?.onFailure?.(new Error("chat server down"));
+            return Promise.resolve(undefined);
+        });
+        const opening = openBrickChat(NEW);
+        await vi.advanceTimersByTimeAsync(0);
+        const screen = game.showRoom.mock.calls[0][0] as PendingBrickChatRoom;
+        screen.sendMessage("brief at 8?");
+        // The person is still on the screen when the setup fails: the box on it reads the words
+        answer({ create: true, botChatId: chatIdOf(NEW) });
+        await opening;
+        expect(get(screen.textBack)).toBe("brief at 8?");
+        expect(get(selected)).toBe(screen);
+        game.showRoom.mockClear();
+        await openBrickChat(NEW);
+        // Tapped again while looking at it: the same screen, still holding the words once, and nothing carried over
+        expect(game.showRoom.mock.calls[0][0]).toBe(screen);
+        expect(get(screen.textBack)).toBe("brief at 8?");
+        expect(screen.takeLeftTyped()).toBe("");
+        expect(game.saveDraft).not.toHaveBeenCalled();
+        error.mockRestore();
+    });
+
     it("sends the words again, once, when the person writes after a failed try and the chat is there now", async () => {
         const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
         const { connection } = fakeConnection();

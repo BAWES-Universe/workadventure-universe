@@ -10,6 +10,8 @@ import { userIsConnected } from "../../Stores/MenuStore";
 import type { ChatConnectionInterface, ChatRoom, RoomFolder } from "../Connection/ChatConnection";
 import { selectedRoomStore } from "../Stores/SelectRoomStore";
 import { openDirectChatRoom, showRoom } from "../Utils";
+import { withoutBlankEdges } from "../Components/Room/BlankEdges";
+import { wordsAsComposerHtml } from "../Components/Room/ComposerWords";
 import { openBrickChatWith, unopenedBrickIds, type BrickCard, type MakeItMemory } from "./Brick";
 import { GUEST_BRICK_ID } from "./GuestBrick";
 import { openGuestBrickChat } from "./GuestBrickStore";
@@ -192,9 +194,15 @@ export function openBrickChat(brickId: string): Promise<ChatRoom | undefined> {
     const left = pendings.get(brickId);
     if (left && get(selectedRoomStore) !== left) {
         pendings.delete(brickId);
-        // What they left typed on it goes to the chat when it is shown
-        const kept = left.takeLeftTyped();
-        if (kept) strays.set(brickId, kept);
+        // What they wrote on it and what they left typed go to the chat when it is shown: the lines first, as written, then
+        // the typed words. Lines the setup gave back (nobody was there to read them) are part of it, or they are lost.
+        const words = left.takeUnsentWords();
+        const kept = [
+            strays.get(brickId) ?? "",
+            wordsAsComposerHtml(words.join("\n")),
+            withoutBlankEdges(left.takeLeftTyped()),
+        ].filter((part) => part !== "");
+        if (kept.length > 0) strays.set(brickId, kept.join("<br>"));
     }
     opening.update((ids) => new Set([...ids, brickId]));
     const run = (async () => {
