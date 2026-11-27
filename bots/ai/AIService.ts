@@ -1788,7 +1788,7 @@ export class AIService {
                     channel === 'dm' && !forOthers && !options?.onlyForThem && botId && playerId !== undefined ? this.computerJobsNoteFor(botId, playerId) : '',
                     // "Try again" carries on the job that failed as ours or that we ended, only when the person asks for it (piece 8)
                     computerOn && !forOthers && !options?.onlyForThem && botId && playerId !== undefined ? await this.tryAgainNoteFor(botId, playerId, adminApiService) : '',
-                    instantListing ? instantToolsNote() : '',
+                    instantListing ? instantToolsNote(instantListing) : '',
                     // The owner, in their own Brick's direct messages: it can set reminders when they ask (#2002)
                     taskSettings ? taskToolsNote(taskSettings, Date.now()) : '',
                 ].filter(Boolean).join('\n\n') || undefined,

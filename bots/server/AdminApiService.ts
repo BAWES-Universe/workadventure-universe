@@ -443,6 +443,23 @@ export interface InstantToolInfo {
     inputSchema: Record<string, unknown>;
     /** The least one run costs, for the Brick's own judgement. Never a bound, and never said to anyone. */
     fromMicros: number;
+    /** The App it belongs to, as people know it ("Exa"); empty when Orbit did not say. Never the service that runs it for Universe. */
+    app?: string;
+    /** What that App is good at, in one line: what the Brick picks an App by. */
+    strength?: string;
+    /** The owner has never had a run of this App that worked: its first use says once that their own free account has no Universe limit. */
+    firstUse?: boolean;
+    /** What kind of App it is, as Orbit says it: only a `research` one is told to the Brick as a research App (search right away, pick by strength). */
+    kind?: 'research';
+}
+
+/**
+ * Why research on Universe's account is not offered to the owner now, while it otherwise would be: they were not given credit for it this month
+ * (`not_given`: the month's budget ran out, for one) or they spent it (`used_up`, back at `renewsAt` when it is monthly). Comes with no tools.
+ */
+export interface InstantResearchStanding {
+    state: 'not_given' | 'used_up';
+    renewsAt: string | null;
 }
 
 /** What may be offered now. `ready` false (paused, not set up, no credit source) comes with no tools. */
@@ -450,6 +467,8 @@ export interface InstantListing {
     ready: boolean;
     reason: string | null;
     tools: InstantToolInfo[];
+    /** Present when the owner has no credit that pays for a search: the Brick says so once, instead of searching. */
+    research?: InstantResearchStanding;
 }
 
 /** Who an Instant call is for: a person's own chat message, or the Brick working for its owner on its own. */
@@ -513,6 +532,11 @@ const INSTANT_RUN_TIMEOUT_MS = 75_000;
 const INSTANT_LIST_TIMEOUT_MS = 10_000;
 
 const asText = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
+/** A short plain line from Orbit (one line, at most `max` long), or undefined: what goes into a Brick's instructions is never long or broken over lines. */
+const asShort = (value: unknown, max: number): string | undefined => {
+    const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+    return text && text.length <= max ? text : undefined;
+};
 
 /** One App on Orbit's list as a Brick may offer it (game #2001): what a person sees of it, and where they stand with it. */
 export interface OfferableApp {
@@ -2075,9 +2099,21 @@ export class AdminApiService {
                 // Passed to the model as Orbit gave it; only a missing one is made an empty object
                 inputSchema: schema && typeof schema === 'object' && !Array.isArray(schema) ? (schema as Record<string, unknown>) : { type: 'object', properties: {} },
                 fromMicros: typeof tool.fromMicros === 'number' && Number.isFinite(tool.fromMicros) ? tool.fromMicros : 0,
+                // Short words only: a name and a line, never a page of text in the Brick's instructions
+                ...(asShort(tool.app, 40) ? { app: asShort(tool.app, 40) } : {}),
+                ...(asShort(tool.strength, 120) ? { strength: asShort(tool.strength, 120) } : {}),
+                ...(tool.firstUse === true ? { firstUse: true } : {}),
+                ...(tool.kind === 'research' ? { kind: 'research' as const } : {}),
             });
         }
-        return { ready: answer.data.ready === true, reason: asText(answer.data.reason), tools };
+        const research = answer.data.research as Record<string, unknown> | null | undefined;
+        const state = research?.state === 'not_given' || research?.state === 'used_up' ? research.state : null;
+        return {
+            ready: answer.data.ready === true,
+            reason: asText(answer.data.reason),
+            tools,
+            ...(state ? { research: { state, renewsAt: asShort(research?.renewsAt, 40) ?? null } } : {}),
+        };
     }
 
     /**
