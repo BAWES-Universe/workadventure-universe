@@ -170,7 +170,12 @@ export class MatrixChatRoom
                     get(this.name)
                 )
             );
-        }
+        },
+        /**
+         * True for a chat this page has just made as a direct chat: it is direct from the start, while the account's list
+         * of direct chats (`m.direct`) can still be on its way. Without it the chat would show as a group until that list arrives.
+         */
+        private readonly knownDirect = false
     ) {
         this.id = matrixRoom.roomId;
         this.name = writable(matrixRoom.name);
@@ -956,6 +961,10 @@ export class MatrixChatRoom
     }
 
     private getMatrixRoomType(): "direct" | "multiple" {
+        if (this.knownDirect) {
+            return "direct";
+        }
+
         const dmInviter = this.matrixRoom.getDMInviter();
         if (dmInviter) {
             return "direct";

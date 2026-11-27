@@ -748,8 +748,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
                 Sentry.captureException(e);
             });
     }
-    private createAndAddNewRootRoom(room: Room): MatrixChatRoom {
-        const newRoom = new MatrixChatRoom(room);
+    private createAndAddNewRootRoom(room: Room, knownDirect = false): MatrixChatRoom {
+        const newRoom = new MatrixChatRoom(room, undefined, knownDirect);
         this.roomList.set(newRoom.id, newRoom);
         if (get(selectedRoomStore)?.id === newRoom.id) {
             selectedRoomStore.set(newRoom);
@@ -1099,7 +1099,8 @@ export class MatrixChatConnection implements ChatConnectionInterface {
 
             const room = client.getRoom(room_id);
             if (!room) return;
-            return this.createAndAddNewRootRoom(room);
+            // Made as a direct chat: it is one even before the account's list of direct chats has come back from the server
+            return this.createAndAddNewRootRoom(room, true);
         } catch (error) {
             throw this.handleMatrixError(error);
         } finally {

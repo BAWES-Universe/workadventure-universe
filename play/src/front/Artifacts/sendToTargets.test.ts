@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { get, readable, writable } from "svelte/store";
 import type { ChatRoom, RoomFolder } from "../Chat/Connection/ChatConnection";
-import { isBrickChat, sendEntriesStore } from "./sendToTargets";
+import { isBrickChat, sendEntriesStore, type SendEntry } from "./sendToTargets";
 
 function room(id: string, type: "direct" | "multiple", name: string, memberIds: string[], timestamp = 0) {
     const names = writable(name);
@@ -82,6 +82,21 @@ describe("the chats Send to can send to", () => {
         expect(list).toEqual([]);
         direct.set([room("a", "direct", "Laura", [ME, "@laura:chat.test"])]);
         expect(list.map((entry) => entry.room.id)).toEqual(["a"]);
+        stop();
+    });
+
+    it("shows a chat as direct once the chat server remakes it, when it first came before the account's list of direct chats", () => {
+        const rooms = writable<ChatRoom[]>([room("a", "multiple", "chat account", [ME, "@laura:chat.test"])]);
+        const entries = sendEntriesStore(
+            { directRooms: readable([]), rooms, folders: readable([]) },
+            readable(new Set())
+        );
+        let list: SendEntry[] = [];
+        const stop = entries.subscribe((value) => (list = value));
+        expect(list.map((entry) => entry.room.type)).toEqual(["multiple"]);
+        // The connection makes a chat again, same id, when the list of direct chats arrives
+        rooms.set([room("a", "direct", "Laura", [ME, "@laura:chat.test"])]);
+        expect(list.map((entry) => [entry.room.type, entry.roomName])).toEqual([["direct", "Laura"]]);
         stop();
     });
 });
