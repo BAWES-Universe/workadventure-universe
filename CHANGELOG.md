@@ -1,3 +1,124 @@
+# Changelog
+
+All notable changes to Universe are listed here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers match the [GitHub releases](https://github.com/BAWES-Universe/workadventure-universe/releases), where every release also lists each pull request in full. The `VERSION` file is only set when a release is cut, so on `universe-develop` it can be behind the newest entry here.
+
+Universe is released together with Orbit ([workadventure-universe-admin](https://github.com/BAWES-Universe/workadventure-universe-admin)); see its changelog for the other half.
+
+Everything before Universe's own releases is the WorkAdventure history, kept at the bottom of this file.
+
+## [Unreleased]
+
+Planned for 0.5.0. This section gets its version and date when the release ships. Numbers like (#123) are pull request or issue numbers in this repository.
+
+### Added
+- **Bricks for everyone.** "Just you" in the Share list, private answers in a group, everyone's own Brick, more Bricks, delete with Undo, the Brick for guests in Chats, what a Brick remembers and its files, a Brick's page with look, Mind, Voice, Behavior, Permissions and Companion, a Brick that lives in a room and walks beside its person, templates. (#2009, #2010, #2014, #2019 to #2021, #2023, #2049, #2055)
+- **Calling a Brick.** The call's rules, bar, walk-up card and button, the private call space, the bot server starting and ending a call, the front joining the call, a meeting holding the call, a quiet stretch, and "On a call" next to a person's status. (#2017, #2024, #2026, #2039, #2040, #2050)
+- **Apps.** Lend an App to a universe, the Apps pages, Search apps and Connect another, "Connect your calendar?" in chat, add your own App, Keys for Apps (including keys with text that cannot go in a header), add by link without making it twice, Connect GitHub for Bricks, a Connect card for ready-made Apps and GitHub, Reconnect for an App whose sign-in expired, other people using your Apps through your Brick, and a kind line when the team paused Apps or computers. (#2027 to #2030, #2035, #2042, #2048, #2051, #2058, #2081, #2082, #2089)
+- **Goals and tasks.** Reminders from Orbit's due list, a person asks for a reminder and can snooze, pause or stop it, watches, briefings and goals, goals use the owner's Apps and ask on a card, a goal that cannot tell asks once, Goals on a Brick's page and across all Bricks, "Everything Brick did", chat steps with a clock and a time per step, a Run now button, and a snoozed run says the schedule after it. (#2025, #2034, #2047, #2054, #2056, #2057, #2059, #2060, #2062, #2064, #2090)
+- **Computers.** The model relay and the runner, and computers for every member. Computers report back truthfully: told only when delivered, results in Files, file cards. A Brick says which app it weighed and how many steps, and the screen closes when its tab is hidden. Reach every file in a Brick's Files, search them, and download all of them. (#2015, #2043, #2083, #2084, #2087)
+- **Usage.** A Usage row and page, real numbers, extra credit, By bot and Activity receipts, and a Brick's owner can run Instant Apps from chat. (#2016, #2052, #2053)
+- **Voice and phone.** Every bot hears voice notes, a locked-phone push opens with the Brick's news, and wokas at the screen edges stay visible when zoomed out. (#2032, #2065, #2018)
+
+### Changed
+- "Didn't work?" is removed, and a refunded task shows why it took nothing. (#2066)
+- Free bot greetings are text only. (#1989)
+- A Friends chip shows how many friends are online. (#2097)
+- Old images are cleaned from the package list: on by default, and also when a PR closes. (#2091, #2099)
+- A purged Brick keeps nothing in chat. (#2092)
+- PostHog gets usage numbers only, nothing people say, and players by Orbit id and never email. (#2045, #1842, #1843)
+
+### Fixed
+- Voice bots reconnect a lost audio line, and a bot hears a LiveKit person again. (#1990, #2012)
+- The Play build no longer runs the runner out of memory. (#2037)
+- Every voice bot pauses on a loud sound and stops only when it is speech. (#2013)
+- Room is held for a computer's model call when the text is not Latin, and the screen input socket has its own deadline. (#2077, #2088)
+
+## [0.4.3] - 2026-11-10
+
+### Added
+- Voice with many more companies: bots can hear and speak with their owner's own key from Async, Bland, CAMB.AI, fal, Gladia, Gradium, Groq, Hume, Meta, Mistral, Neuphonic, Resemble AI, Rime, Sarvam AI, Smallest AI, Speechify, Speechmatics, Together AI, OpenAI, NVIDIA, MiniMax, xAI, Google, Zoom, AWS and Azure AI Speech. (#1885)
+- Bots hear voice notes in direct messages and nearby chat, and you can hold the mic to record a voice note on phones.
+- Voice in a group: pause when a friend joins, tap-only voice options, and "Stop speaking" and "Stop listening" in chat.
+
+### Changed
+- A voice bot only answers when addressed, in bubbles and meeting rooms, and "stop" sticks.
+- A bot's Off voice state is just the switch.
+
+### Fixed
+- Text keeps working when spoken replies run out.
+- A summoned bot goes back when its person walks away.
+- Nova Sonic ends the session cleanly when a reply is whole.
+- Typed stop or change interrupts a voice bot again, and a few smaller voice fixes (cut-off WAV, Meta key rejection).
+
+## [0.4.2] - 2026-11-08
+
+### Fixed
+- The bot reconnects when voice is switched on or off, and keeps its voice-bot tag.
+
+## [0.4.1] - 2026-11-08
+
+### Added
+- Voice with many more companies: hear and speak with Deepgram, Cartesia, ElevenLabs, Soniox, AssemblyAI and Fish Audio.
+- Talk live through OpenAI, xAI, Azure OpenAI, Google, AWS, Inworld, Ultravox and Zoom, with the bot's Mind still answering.
+- Hear and speak on your own speech server, at an https address. (#1874)
+- One key for listening and speaking, and "Hear this voice say hello" on the bot voice page.
+
+### Changed
+- Every current ElevenLabs model is spoken the way ElevenLabs serves it.
+- The daily listening limit also applies to group chatter, and a bot is told its name so a name said in Arabic is spelled as written.
+
+### Fixed
+- iPhone: sounds follow distance and every volume slider works.
+- A Deepgram bot waits through a pause in the middle of a sentence.
+
+## [0.4.0] - 2026-11-06
+
+### Added
+- **Voice bots.** Bots join a bubble's audio, hear you with a live draft only you see, speak their answers and stop when you talk. A Voice button with four ways to talk, a voice worker that picks each bubble's hearing and speaking company, and voice replies inside the same 5-hour allowance. (#1664 to #1670, #1746 to #1752)
+- **Bots ask first.** Approval cards in direct messages, question cards before a big job, a card with the total before a bot makes more than its limit, and "allow more" with who is allowed more now. (#1656 to #1662)
+- Bots see their own artifacts, and another bot's only when pointed at.
+- A bot's mood and work as an emoji beside its Woka. (#1667)
+- New player and bot visit cards, and the real Woka in People search. (#1790)
+- One status dot on every direct chat's woka. (#1731)
+
+### Changed
+- A bot's tool calls show whole, once, and as they finish.
+- Bot page Tools: one row per server, and a server page with four headings.
+- Look around names an object's button after what a click does. (#1739)
+
+### Fixed
+- iPhone: object sounds fade with distance, and the camera access card shows steps that work. (#1744)
+- Pusher no longer sends email addresses in member replies.
+
+## [0.3.0] - 2026-10-08
+
+Highlights, moved here from the README:
+
+- **A new look.** The game and Orbit now share one dark Universe style.
+- **Edit your room on the map.** Objects, areas and bots, on a computer or a phone. ([Map editor](https://bawes.net/features/map-editor))
+- **Look around the map.** See the whole room and its places, then walk there.
+- **Broadcast.** Send a message or a voice note to a room or a world, or go live. ([Broadcasting](https://bawes.net/features/broadcasting))
+- **Raise your hand** in a call.
+- **Chat.** Reactions and replies nearby, and drop files into chat or onto the map.
+- **Bots** keep to their own area and come over to people.
+- **Orbit.** See who is live, answer invitations, your passport, and recent visitors to the places you manage.
+- **Safer.** Only the right people can kick, edit maps or change bots, and emails stay private.
+
+Full list: [v0.3.0 release notes](https://github.com/BAWES-Universe/workadventure-universe/releases/tag/v0.3.0). Later 0.3.x releases are on the [releases page](https://github.com/BAWES-Universe/workadventure-universe/releases).
+
+[Unreleased]: https://github.com/BAWES-Universe/workadventure-universe/compare/v0.4.3...universe-develop
+[0.4.3]: https://github.com/BAWES-Universe/workadventure-universe/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/BAWES-Universe/workadventure-universe/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/BAWES-Universe/workadventure-universe/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/BAWES-Universe/workadventure-universe/compare/v0.3.31...v0.4.0
+[0.3.0]: https://github.com/BAWES-Universe/workadventure-universe/releases/tag/v0.3.0
+
+---
+
+## WorkAdventure history (before Universe)
+
+The entries below come from the upstream WorkAdventure changelog. They are kept as they were, so their headings still say "Version" and they do not follow the format above.
+
 ## Version develop
 
 ### Updates
