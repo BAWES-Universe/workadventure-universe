@@ -18,9 +18,10 @@ describe('prune workflows', () => {
     assert.deepEqual([...mappings(check)].sort(), [...liveRows].sort());
   });
 
-  it('clears on pull_request_target and never checks out the PR head', () => {
-    assert.match(live, /^ {2}pull_request_target:\n {4}types: \[closed\]/m);
-    assert.doesNotMatch(live, /^ {2}pull_request:/m);
+  it('clears on pull_request closed and never checks out the PR head', () => {
+    assert.match(live, /^ {2}pull_request:\n {4}types: \[closed\]/m);
+    assert.doesNotMatch(live.replace(/^\s*#.*$/gm, ''), /pull_request_target/);
+    assert.match(live, /github\.event_name != 'pull_request' \|\|/);
     assert.doesNotMatch(live, /ref: \$\{\{[^}]*head\.(ref|sha)/);
     assert.match(live, /--closed-pr "\$CLOSED_PR"/);
   });
