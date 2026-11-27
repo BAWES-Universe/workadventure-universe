@@ -7,7 +7,7 @@
     import type { BotData, BrickChange, BrickPageWay } from "../../external-modules/bots/types";
     import { warningMessageStore } from "../../Stores/ErrorStore";
     import BrickAppsPage from "./Apps/BrickAppsPage.svelte";
-    import { appUseShown, seedShowAppUse } from "./Apps/BrickShowAppUse";
+    import { appUseShown, takeShowAppUse } from "./Apps/BrickShowAppUse";
     import { openAppsPage } from "./Apps/OpenApps";
     import { brickPageBot, shortDay, type BrickCard } from "./Brick";
     import BrickDidPage from "./BrickDidPage.svelte";
@@ -56,7 +56,7 @@
             .then((read) => {
                 if (loadedFor !== card.id) return;
                 bot = brickPageBot(read, card);
-                seedShowAppUse(card.id, appUseShown(bot.behaviorConfig));
+                takeShowAppUse(card.id, appUseShown(bot.behaviorConfig));
             })
             .catch((error: unknown) => {
                 console.warn("Could not read a Brick", error);

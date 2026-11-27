@@ -56,6 +56,7 @@ import {
     changeShowAppUse,
     forgetShowAppUse,
     seedShowAppUse,
+    takeShowAppUse,
     shownIn,
     showAppUseStates,
 } from "../BrickShowAppUse";
@@ -402,6 +403,23 @@ describe("a Brick's Apps on its own page", () => {
             expect(get(showAppUseStates)).toEqual({ b1: true });
             seedShowAppUse("b2", false);
             expect(get(showAppUseStates)).toEqual({ b1: true, b2: false });
+        });
+
+        it("what a read of the Brick says does not undo a change that is still on its way", async () => {
+            let finish: (saved: boolean) => void = () => {};
+            game.changeMyBrick.mockReturnValue(
+                new Promise<boolean>((resolve) => {
+                    finish = resolve;
+                })
+            );
+            const change = changeShowAppUse("b1", false);
+            takeShowAppUse("b1", true);
+            expect(get(showAppUseStates).b1).toBe(false);
+            finish(true);
+            await change;
+            expect(get(showAppUseStates).b1).toBe(false);
+            takeShowAppUse("b1", true);
+            expect(get(showAppUseStates).b1).toBe(true);
         });
 
         it("a second change while one is on its way does nothing", async () => {

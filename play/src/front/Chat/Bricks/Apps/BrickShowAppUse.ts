@@ -39,6 +39,15 @@ function setSaving(botId: string, on: boolean): void {
     });
 }
 
+/**
+ * Takes what a read of the Brick said, unless a change of this setting is on its way: the read may have been asked before Orbit
+ * took the change, and would put the old value back over the switch.
+ */
+export function takeShowAppUse(botId: string, show: boolean): void {
+    if (get(saving)[botId]) return;
+    seedShowAppUse(botId, show);
+}
+
 /** Forgets what was known (signed out, and for tests). */
 export function forgetShowAppUse(): void {
     states.set({});
@@ -56,7 +65,8 @@ export async function changeShowAppUse(botId: string, show: boolean): Promise<bo
     seedShowAppUse(botId, show);
     try {
         const saved = await changeMyBrick(botId, { behaviorConfig: { showToolCalls: show } });
-        if (!saved) seedShowAppUse(botId, before);
+        // What Orbit took stands, whatever a read in between said; what it did not take goes back
+        seedShowAppUse(botId, saved ? show : before);
         return saved;
     } finally {
         setSaving(botId, false);
