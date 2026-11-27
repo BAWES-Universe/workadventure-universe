@@ -17,6 +17,8 @@
     export let presenceUnavailable = false;
     export let highlightUuid: string | undefined = undefined;
     export let isMatrixChatEnabled = true;
+    /** Tapping the Woka or name of a friend who is here: show them on the map with their visit card. */
+    export let openCard: (entry: PlacedFriend) => void = () => undefined;
 
     $: shown = query === "" ? placed : placed.filter((entry) => entry.friend.name.toLocaleLowerCase().includes(query));
     $: groups = groupFriends(shown);
@@ -66,6 +68,7 @@
                     {isMatrixChatEnabled}
                     presenceUnavailable={presenceUnavailable && entry.group === "offline"}
                     highlighted={entry.friend.uuid === highlightUuid}
+                    {openCard}
                 />
             {/each}
         </section>

@@ -3,6 +3,7 @@ import type { Friend, FriendSession } from "@workadventure/messages";
 import { describe, expect, it } from "vitest";
 import type { WorldSighting } from "./Friends";
 import {
+    canLocateOnThisMap,
     chatIdsToAsk,
     groupFriends,
     onlineFriendsCount,
@@ -235,6 +236,39 @@ describe("chatIdsToAsk", () => {
         const inWorld = (uuid: string) => uuid === "here";
         expect(chatIdsToAsk(people, inWorld, asked)).toEqual(["@away:chat"]);
         expect(chatIdsToAsk(people, inWorld, asked)).toEqual([]);
+    });
+});
+
+describe("canLocateOnThisMap", () => {
+    const here = (f: Friend) => placeFriends([f], HERE, () => undefined, true)[0];
+
+    it("is true for a friend who is online in this room: tapping them shows them on the map, like Everyone", () => {
+        expect(canLocateOnThisMap(here(friend("Mishari", [session(HERE)])))).toBe(true);
+    });
+
+    it("is true for a friend the world's own list sees in this room, even when presence is down", () => {
+        const sighting = (): WorldSighting => ({ playUri: HERE, roomName: "Lobby", status: AvailabilityStatus.ONLINE });
+        const [entry] = placeFriends([friend("Yousef")], HERE, sighting, false);
+        expect(entry.group).toBe("here");
+        expect(canLocateOnThisMap(entry)).toBe(true);
+    });
+
+    it("is false for a friend in another room of this world, who has no place on this map (they get Go)", () => {
+        expect(canLocateOnThisMap(here(friend("Sara", [session(SAME_WORLD)])))).toBe(false);
+    });
+
+    it("is false for a friend in another world", () => {
+        expect(canLocateOnThisMap(here(friend("Noor", [session(OTHER_WORLD)])))).toBe(false);
+    });
+
+    it("is false for an offline friend", () => {
+        expect(canLocateOnThisMap(here(friend("Ali")))).toBe(false);
+    });
+
+    it("is false for a friend who keeps where they are to themselves", () => {
+        const hidden = friend("Hana", [session(HERE)]);
+        hidden.presence = { ...hidden.presence, locationHidden: true } as Friend["presence"];
+        expect(canLocateOnThisMap(here(hidden))).toBe(false);
     });
 });
 

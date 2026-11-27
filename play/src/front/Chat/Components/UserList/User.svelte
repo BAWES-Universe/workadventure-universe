@@ -30,13 +30,8 @@
     import { getPersonActions, isSelf } from "./PersonActions";
     import { bestStatus, isMyAccount } from "./PersonSessions";
     import { statusLabelOnACall } from "./PersonStatus";
-    import {
-        goToPersonRoom,
-        locatePerson,
-        nearestSessionOnThisMap,
-        showMyself,
-        walkToPerson,
-    } from "./PersonNavigation";
+    import { goToPersonRoom, showMyself, walkToPerson } from "./PersonNavigation";
+    import { openPersonCard } from "./OpenPersonCard";
     import { friendMenuAction } from "./FriendMenuAction";
     import type { FriendMenuAction } from "./FriendMenuAction";
     import RoleBadge from "./RoleBadge.svelte";
@@ -230,15 +225,9 @@
             showMyself(user.uuid ?? undefined);
             return;
         }
-        // Members with no map to show (away, or not in this world) have no card to open.
-        if (user.uuid == undefined || !user.playUri) return;
-        // Track the open woka menu action
-        analyticsClient.openWokaMenu();
-        // On a phone the sidebar makes way for their card, and comes back when the card is closed.
-        peopleCardReturn.tappedPerson(user.uuid);
-        // Opens the menu on this exact avatar when it is in view (by space user id, so clones are told apart),
-        // otherwise asks the server for the position.
-        locatePerson(nearestSessionOnThisMap(sessions, user), displayName);
+        // The same for a friend who is here in the Friends tab. Members with no map to show (away, or not in this
+        // world) have no card to open.
+        openPersonCard(user, sessions, displayName);
     }
 </script>
 
