@@ -208,15 +208,18 @@ describe("Markdown", () => {
         // <base target="_blank">.)
         const SAME_DOC_CASES: Record<string, { markdown: string; html: string }> = {
             handover: {
-                markdown: "# Handover pack\n\nOwner: khalid@bawes.net\nRead from: three calendars\nRange read: 2026-10-28 to 2026-12-28\nNotes captured: 104\nRead on: 27 Nov 2026\n\nPart 1 is the ledger.\nPart 2 is the handover.",
-                html: "<h1>Handover pack</h1>\n<p>Owner: <a href=\"mailto:khalid@bawes.net\">khalid@bawes.net</a><br>Read from: three calendars<br>Range read: 2026-10-28 to 2026-12-28<br>Notes captured: 104<br>Read on: 27 Nov 2026</p>\n<p>Part 1 is the ledger.<br>Part 2 is the handover.</p>\n",
+                markdown:
+                    "# Handover pack\n\nOwner: khalid@bawes.net\nRead from: three calendars\nRange read: 2026-10-28 to 2026-12-28\nNotes captured: 104\nRead on: 27 Nov 2026\n\nPart 1 is the ledger.\nPart 2 is the handover.",
+                html: '<h1>Handover pack</h1>\n<p>Owner: <a href="mailto:khalid@bawes.net">khalid@bawes.net</a><br>Read from: three calendars<br>Range read: 2026-10-28 to 2026-12-28<br>Notes captured: 104<br>Read on: 27 Nov 2026</p>\n<p>Part 1 is the ledger.<br>Part 2 is the handover.</p>\n',
             },
             normal: {
-                markdown: "## Trip checklist\n\n- Adapter\n- Sunscreen\n  - SPF 50\n- Passport\n  keep it in the hand bag\n\n> Ask the hotel first.\n> Then the driver.\n\n1. Pack\n2. Check in\n\n```\nline one\nline two\n```\n\n| # | Date | Time |\n|---|------|------|\n| 1 | 2026-10-28 | 22:10 |\n| 2 | 2026-10-29 | 22:20 |\n\nLine ends with two spaces    \nso this is a hard break either way.",
+                markdown:
+                    "## Trip checklist\n\n- Adapter\n- Sunscreen\n  - SPF 50\n- Passport\n  keep it in the hand bag\n\n> Ask the hotel first.\n> Then the driver.\n\n1. Pack\n2. Check in\n\n```\nline one\nline two\n```\n\n| # | Date | Time |\n|---|------|------|\n| 1 | 2026-10-28 | 22:10 |\n| 2 | 2026-10-29 | 22:20 |\n\nLine ends with two spaces    \nso this is a hard break either way.",
                 html: "<h2>Trip checklist</h2>\n<ul>\n<li>Adapter</li>\n<li>Sunscreen<ul>\n<li>SPF 50</li>\n</ul>\n</li>\n<li>Passport<br>keep it in the hand bag</li>\n</ul>\n<blockquote>\n<p>Ask the hotel first.<br>Then the driver.</p>\n</blockquote>\n<ol>\n<li>Pack</li>\n<li>Check in</li>\n</ol>\n<pre><code>line one\nline two\n</code></pre>\n<table>\n<thead>\n<tr>\n<th>#</th>\n<th>Date</th>\n<th>Time</th>\n</tr>\n</thead>\n<tbody><tr>\n<td>1</td>\n<td>2026-10-28</td>\n<td>22:10</td>\n</tr>\n<tr>\n<td>2</td>\n<td>2026-10-29</td>\n<td>22:20</td>\n</tr>\n</tbody></table>\n<p>Line ends with two spaces<br>so this is a hard break either way.</p>\n",
             },
             wrapped: {
-                markdown: "## Summary\n\nThe renewal window opens in March and the team has agreed to review all three\nvendor offers before the end of February, so that nothing is signed under\ntime pressure and the budget owner can see the numbers early.\n\nThe second paragraph was typed on one long line by a person, so it is the same before and after, whatever the window width is.",
+                markdown:
+                    "## Summary\n\nThe renewal window opens in March and the team has agreed to review all three\nvendor offers before the end of February, so that nothing is signed under\ntime pressure and the budget owner can see the numbers early.\n\nThe second paragraph was typed on one long line by a person, so it is the same before and after, whatever the window width is.",
                 html: "<h2>Summary</h2>\n<p>The renewal window opens in March and the team has agreed to review all three<br>vendor offers before the end of February, so that nothing is signed under<br>time pressure and the budget owner can see the numbers early.</p>\n<p>The second paragraph was typed on one long line by a person, so it is the same before and after, whatever the window width is.</p>\n",
             },
         };
