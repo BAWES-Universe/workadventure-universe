@@ -43,6 +43,56 @@ describe("markdownTables", () => {
         expect(tables[0].rows[2]).toEqual(["Task", "=1+1", "@SUM(A1)"]);
     });
 
+    it("reads a table inside a quote or a list, in order with the others, and none inside a code block", () => {
+        const doc = [
+            "# One",
+            "",
+            "> | A | B |",
+            "> |---|---|",
+            "> | 1 | 2 |",
+            "",
+            "## Two",
+            "",
+            "- item",
+            "",
+            "  | C |",
+            "  |---|",
+            "  | 3 |",
+            "",
+            "1. > | D |",
+            "   > |---|",
+            "   > | 4 |",
+            "",
+            "```",
+            "| X |",
+            "|---|",
+            "| 9 |",
+            "```",
+            "",
+            "## Three",
+            "",
+            "| E |",
+            "|---|",
+            "| 5 |",
+        ].join("\n");
+        const tables = markdownTables(doc);
+        expect(tables.map((t) => [t.title, t.rows[0][0]])).toEqual([
+            ["One", "A"],
+            ["Two", "C"],
+            ["Two", "D"],
+            ["Three", "E"],
+        ]);
+        expect(hasTable("> | A |\n> |---|\n> | 1 |")).toBe(true);
+    });
+
+    it("writes every character reference as the text it stands for, once", () => {
+        const doc = "| Ref | Code |\n|---|---|\n| &#65; &euro; &amp; &#x42; &lt;b&gt; | `&#65; &amp;` |";
+        const row = markdownTables(doc)[0].rows[1];
+        expect(row[0]).toBe("A € & B <b>");
+        // A code span shows its text as written: its references are not read
+        expect(row[1]).toBe("&#65; &amp;");
+    });
+
     it("finds no table in a document without one, and no table in a code block", () => {
         expect(hasTable("# Packing list\n\n- one\n- two")).toBe(false);
         expect(hasTable("```\n| a | b |\n|---|---|\n| 1 | 2 |\n```")).toBe(false);
@@ -122,6 +172,14 @@ describe("sheetNamesOf", () => {
 });
 
 describe("files", () => {
+    it("puts every table of a long document in the spreadsheet, with no cut", async () => {
+        const tables = Array.from({ length: 70 }, (_, n) => ({ title: `Part ${n + 1}`, rows: [["a"], [String(n + 1)]] }));
+        const blob = await spreadsheetFile(tables, (n) => `Table ${n}`);
+        const book = XLSX.read(new Uint8Array(await readBlob<ArrayBuffer>(blob, "buffer")), { type: "array" });
+        expect(book.SheetNames).toHaveLength(70);
+        expect(book.SheetNames[69]).toBe("Part 70");
+    });
+
     it("gives the Markdown file exactly as it is", async () => {
         expect(await readBlob<string>(markdownFile(DOC), "text")).toBe(DOC);
     });
