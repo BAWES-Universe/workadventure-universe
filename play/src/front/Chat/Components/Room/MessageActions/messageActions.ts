@@ -58,6 +58,13 @@ export function getSaveableFiles(type: ChatMessageType, content: ChatMessageCont
     return files;
 }
 
+/** The file "Send to…" passes on: the one file of a file card. Pictures, songs, videos and galleries have no such menu row. */
+export function sendableFile(type: ChatMessageType, content: ChatMessageContent): SaveableFile | undefined {
+    if (type !== "file") return undefined;
+    const files = getSaveableFiles(type, content);
+    return files.length === 1 ? files[0] : undefined;
+}
+
 function looksLikeFileName(text: string): boolean {
     return /^[^\n/\\]{1,200}\.[a-z0-9]{2,5}$/i.test(text.trim());
 }

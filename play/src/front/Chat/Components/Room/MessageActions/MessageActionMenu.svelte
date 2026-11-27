@@ -14,6 +14,7 @@
         reactTo,
         replyTo,
         saveMessageFiles,
+        sendFileTo,
     } from "./availableActions";
     import { prepareFiles } from "./saveFiles";
     import {
@@ -24,6 +25,7 @@
         IconPencil,
         IconPin,
         IconPinnedOff,
+        IconSend,
         IconTrash,
     } from "@wa-icons";
 
@@ -234,6 +236,12 @@
         {#if files.length > 0}
             <button role="menuitem" on:click={() => run(() => saveMessageFiles(files))} data-testid="menuSaveButton">
                 <span>{saveLabel}</span><IconDownload font-size={18} />
+            </button>
+        {/if}
+        {#if $actions.sendTo}
+            {@const file = $actions.sendTo}
+            <button role="menuitem" on:click={() => run(() => sendFileTo(file))} data-testid="menuSendToButton">
+                <span>{$LL.chat.sendTo.title()}</span><IconSend font-size={18} />
             </button>
         {/if}
         {#if $actions.pin}

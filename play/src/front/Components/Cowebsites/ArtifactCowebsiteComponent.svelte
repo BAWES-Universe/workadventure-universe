@@ -21,6 +21,8 @@
     import { nearbyPeopleNames } from "../../Artifacts/nearbyPeople";
     import type { ArtifactKind } from "../../Artifacts/artifactCard";
     import { whenLabel } from "../../Artifacts/whenLabel";
+    import { mayOfferSendTo } from "../../Artifacts/sendTo";
+    import { openSendTo } from "../../Artifacts/sendToStore";
     import { codeKindOfArtifact, codeLinesOf, coloredCodeBlocks } from "../../FileViewer/codeHighlight";
     import { renderMarkdown } from "../../FileViewer/textFiles";
     import { versionMenuRoom, VERSION_MENU_MIN_ROOM } from "../../Artifacts/versionMenuRoom";
@@ -297,6 +299,11 @@
     // Download: of the version on show, made from its text. Dimmed until that text is here.
     $: textReady = !!text && !!opened && text.number === opened.version.number;
     $: documentTables = kind === "markdown" && textReady && text ? markdownTables(text.content) : [];
+    // Send to a friend, a chat or a Brick: its owner always, anyone else only while it opens by its link (see mayOfferSendTo)
+    $: canSendTo =
+        kind === "markdown" &&
+        !!opened &&
+        mayOfferSendTo({ owner: opened.you.owner, openScope: opened.artifact.openScope });
     $: if (!textReady) downloadOpen = false;
 
     // Open when the window starts, and again whenever a version other than the one showing is asked for.
@@ -585,10 +592,10 @@
         downloadOpen = false;
     }
 
-    // A document without a table has one file to give, so a tap on Download gives it. With a table the person chooses.
+    // A document with no table and nobody to send it to has one file to give, so a tap on Download gives it. Otherwise the person chooses.
     function toggleDownload() {
         if (!textReady || downloading) return;
-        if (documentTables.length === 0) {
+        if (documentTables.length === 0 && !canSendTo) {
             void download("markdown");
             return;
         }
@@ -596,6 +603,30 @@
         if (!downloadOpen) return;
         menuOpen = false;
         shareOpen = false;
+    }
+
+    /**
+     * Opens "Send to…" for the version on show: its file is made from that version's text (an older one is named as such), and
+     * a link goes with the document's own link setting.
+     */
+    function sendToOthers() {
+        if (!text || !opened || kind !== "markdown" || !canSendTo) return;
+        const source = text.content;
+        const name = fileNameOf(title ?? "", "md", isLatest ? undefined : opened.version.number);
+        downloadOpen = false;
+        openSendTo({
+            fileName: name,
+            makeFile: () => Promise.resolve(new File([markdownFile(source)], name, { type: "text/markdown" })),
+            link: link
+                ? {
+                      url: link,
+                      openScope: opened.artifact.openScope,
+                      owner: opened.you.owner,
+                      published: opened.artifact.published,
+                      latest,
+                  }
+                : undefined,
+        });
     }
 
     function showDownloadNote(kind: "saved" | "failed", name = "") {
@@ -870,7 +901,7 @@
                     class:picked={downloadOpen}
                     title={$LL.chat.artifacts.download()}
                     aria-label={$LL.chat.artifacts.download()}
-                    aria-expanded={documentTables.length > 0 ? downloadOpen : undefined}
+                    aria-expanded={documentTables.length > 0 || canSendTo ? downloadOpen : undefined}
                     disabled={!textReady || downloading}
                     data-testid="artifactDownload"
                     bind:this={downloadButton}
@@ -1094,18 +1125,38 @@
 
     {#if downloadOpen}
         <div class="menu download-menu" bind:this={downloadMenu} data-testid="artifactDownloadMenu">
-            <button type="button" class="menu-row" data-testid="artifactDownloadMarkdown" on:click={() => download("markdown")}>
+            <button
+                type="button"
+                class="menu-row"
+                data-testid="artifactDownloadMarkdown"
+                on:click={() => download("markdown")}
+            >
                 <span class="menu-text">
                     <b>{$LL.chat.artifacts.downloadDocument()}</b>
                     <small>{$LL.chat.artifacts.downloadDocumentHelp()}</small>
                 </span>
             </button>
-            <button type="button" class="menu-row" data-testid="artifactDownloadSheet" on:click={() => download("spreadsheet")}>
-                <span class="menu-text">
-                    <b>{$LL.chat.artifacts.downloadSheet()}</b>
-                    <small>{$LL.chat.artifacts.downloadSheetHelp()}</small>
-                </span>
-            </button>
+            {#if documentTables.length > 0}
+                <button
+                    type="button"
+                    class="menu-row"
+                    data-testid="artifactDownloadSheet"
+                    on:click={() => download("spreadsheet")}
+                >
+                    <span class="menu-text">
+                        <b>{$LL.chat.artifacts.downloadSheet()}</b>
+                        <small>{$LL.chat.artifacts.downloadSheetHelp()}</small>
+                    </span>
+                </button>
+            {/if}
+            {#if canSendTo}
+                <button type="button" class="menu-row" data-testid="artifactSendTo" on:click={sendToOthers}>
+                    <span class="menu-text">
+                        <b>{$LL.chat.sendTo.title()}</b>
+                        <small>{$LL.chat.sendTo.rowHelp()}</small>
+                    </span>
+                </button>
+            {/if}
         </div>
     {/if}
 

@@ -6,6 +6,7 @@ import {
     getMediaCaption,
     getSaveableFiles,
     previewLine,
+    sendableFile,
     summarizeForReply,
 } from "../MessageActions/messageActions";
 
@@ -205,5 +206,30 @@ describe("the line a chat list row and a notification show", () => {
             fileNames: ["a.jpg", "b.jpg"],
         });
         expect(previewLine("gallery", gallery, labels)).toBe("2 photos");
+    });
+});
+
+describe("the file a card's Send to passes on", () => {
+    it("is the one file of a file card, under its name", () => {
+        const file = content({ body: "Calendar notes.md", url: "blob:notes", filename: "Calendar notes.md" });
+        expect(sendableFile("file", file)).toEqual({ url: "blob:notes", name: "Calendar notes.md" });
+    });
+
+    it("is the file of a card a Brick sent, whose name is its body", () => {
+        const file = content({ body: "Calendar notes.xlsx", url: "mxc://chat.test/abc" });
+        expect(sendableFile("file", file)).toEqual({ url: "mxc://chat.test/abc", name: "Calendar notes.xlsx" });
+    });
+
+    it("is nothing for words, pictures, songs, videos, galleries or a card with no file yet", () => {
+        const file = content({ body: "Notes.md", url: "blob:notes", filename: "Notes.md" });
+        for (const type of ["text", "proximity", "image", "audio", "video", "gallery"] as const) {
+            expect(sendableFile(type, file)).toBeUndefined();
+        }
+        expect(sendableFile("file", content({ body: "Notes.md" }))).toBeUndefined();
+    });
+
+    it("is nothing for a card that holds several files", () => {
+        const several = content({ url: "blob:a", urls: ["blob:b"], fileNames: ["a.md", "b.md"] });
+        expect(sendableFile("file", several)).toBeUndefined();
     });
 });

@@ -7,7 +7,7 @@ import {
     type FileViewerAudio,
     type FileViewerSource,
 } from "../WebRtc/CoWebsite/FileViewerCoWebsite";
-import { saveMessageFiles } from "../Chat/Components/Room/MessageActions/availableActions";
+import { saveMessageFiles, sendFileTo } from "../Chat/Components/Room/MessageActions/availableActions";
 import { extensionOf, fileKindOf, fileKindOfLink, MAP_VIEWER_KINDS, textEncodingOf } from "./fileKinds";
 
 /** The keys of the files the viewer has open now, for the cards of those files. */
@@ -144,6 +144,8 @@ export function openChatFileInViewer(file: ChatFileToOpen): void {
         load: async (signal) => readBytes(await fetch(file.url, { signal })),
         // The same save as the card's Download button and the message menu: the share sheet on phones.
         download: () => saveMessageFiles([{ url: file.url, name: file.name }]),
+        // The same pick of who and what as the card's menu: the file is read again when Send is pressed
+        sendTo: () => sendFileTo({ url: file.url, name: file.name }),
         openInNewTab: (bytes) => {
             if (bytes) openBytesInNewTab(file.name, bytes);
         },

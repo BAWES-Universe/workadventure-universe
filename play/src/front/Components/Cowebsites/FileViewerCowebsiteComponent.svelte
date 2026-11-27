@@ -25,7 +25,7 @@
     import FileViewerText from "./FileViewer/FileViewerText.svelte";
     import FileViewerWord from "./FileViewer/FileViewerWord.svelte";
     import FileViewerAudio from "./FileViewer/FileViewerAudio.svelte";
-    import { IconDots, IconDownload, IconLayoutSidebar, IconMinus, IconPlus, IconSearch } from "@wa-icons";
+    import { IconDots, IconDownload, IconLayoutSidebar, IconMinus, IconPlus, IconSearch, IconSend } from "@wa-icons";
 
     export let actualCowebsite: FileViewerCoWebsite;
     export let visible: boolean;
@@ -164,6 +164,10 @@
 
     function download(): void {
         Promise.resolve(source.download(bytes)).catch((error) => console.error(error));
+    }
+
+    function sendTo(): void {
+        source.sendTo?.();
     }
 
     function openInNewTab(): void {
@@ -401,6 +405,19 @@
                     </div>
                 {/if}
             </div>
+        {/if}
+
+        {#if source.sendTo}
+            <button
+                type="button"
+                class="open-here-action"
+                title={$LL.chat.sendTo.title()}
+                aria-label={$LL.chat.sendTo.title()}
+                on:click={sendTo}
+                data-testid="fileViewerSendTo"
+            >
+                <IconSend font-size="20" />
+            </button>
         {/if}
 
         {#if canDownload}

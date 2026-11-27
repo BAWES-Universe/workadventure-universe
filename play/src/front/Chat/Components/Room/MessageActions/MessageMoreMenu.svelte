@@ -3,8 +3,8 @@
     import type { ChatMessage } from "../../../Connection/ChatConnection";
     import LL from "../../../../../i18n/i18n-svelte";
     import { runPinAction } from "../Details/Pins";
-    import { availableActions, copyText, deleteMessage, editMessage } from "./availableActions";
-    import { IconCopy, IconPencil, IconPin, IconPinnedOff, IconTrash } from "@wa-icons";
+    import { availableActions, copyText, deleteMessage, editMessage, sendFileTo } from "./availableActions";
+    import { IconCopy, IconPencil, IconPin, IconPinnedOff, IconSend, IconTrash } from "@wa-icons";
 
     /** The hover bar's "More" menu: the actions that are used less often than reacting, replying and saving. */
     export let message: ChatMessage;
@@ -46,6 +46,12 @@
         {@const text = $actions.copyText}
         <button role="menuitem" on:click={() => run(() => copyText(text))} data-testid="copyMessageTextButton">
             <span>{$LL.chat.messageActions.copyText()}</span><IconCopy font-size={16} />
+        </button>
+    {/if}
+    {#if $actions.sendTo}
+        {@const file = $actions.sendTo}
+        <button role="menuitem" on:click={() => run(() => sendFileTo(file))} data-testid="sendMessageFileToButton">
+            <span>{$LL.chat.sendTo.title()}</span><IconSend font-size={16} />
         </button>
     {/if}
     {#if $actions.pin}

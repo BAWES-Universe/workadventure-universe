@@ -27,7 +27,12 @@
     let closePicker: (() => void) | undefined;
 
     $: files = $actions.files;
-    $: hasMore = $actions.copyText !== undefined || $actions.pin !== undefined || $actions.edit || $actions.delete;
+    $: hasMore =
+        $actions.copyText !== undefined ||
+        $actions.sendTo !== undefined ||
+        $actions.pin !== undefined ||
+        $actions.edit ||
+        $actions.delete;
     $: saveLabel = areAllPhotos(files)
         ? files.length > 1
             ? $LL.chat.messageActions.savePhotos({ count: files.length })
