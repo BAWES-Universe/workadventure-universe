@@ -88,20 +88,30 @@ export function fileNameOf(title: string, ending: string, version?: number): str
     return `${base}.${ending}`;
 }
 
+/**
+ * A tab name a spreadsheet accepts: at most 31 characters, never starting or ending with an apostrophe (checked after the
+ * cut, which may leave one at the end), never empty, and never "History" in any case, which a workbook keeps for itself.
+ * Anything it cannot keep is the fallback instead.
+ */
+function tabName(wanted: string, room: number, fallback: string): string {
+    const name = wanted
+        .slice(0, room)
+        .replace(/^'+|'+$/g, "")
+        .trim()
+        .replace(/^'+|'+$/g, "");
+    return name === "" || name.toLowerCase() === "history" ? fallback : name;
+}
+
 /** Tab names for the tables: the heading above each (or "Table 3"), within the limits a spreadsheet sets, each once. */
 export function sheetNamesOf(tables: DocumentTable[], fallback: (number: number) => string): string[] {
     const used = new Set<string>();
     return tables.map((table, index) => {
-        const wanted =
-            table.title
-                .replace(/[[\]:*?/\\]/g, " ")
-                .replace(/\s+/g, " ")
-                .trim()
-                .replace(/^'+|'+$/g, "") || fallback(index + 1);
-        let name = wanted.slice(0, SHEET_NAME_MAX).trim();
+        const wanted = table.title.replace(/[[\]:*?/\\]/g, " ").replace(/\s+/g, " ").trim();
+        const spare = tabName(fallback(index + 1), SHEET_NAME_MAX, "Sheet");
+        let name = tabName(wanted, SHEET_NAME_MAX, spare);
         for (let n = 2; used.has(name.toLowerCase()); n++) {
             const suffix = ` ${n}`;
-            name = wanted.slice(0, SHEET_NAME_MAX - suffix.length).trim() + suffix;
+            name = tabName(wanted, SHEET_NAME_MAX - suffix.length, spare).slice(0, SHEET_NAME_MAX - suffix.length).trim() + suffix;
         }
         used.add(name.toLowerCase());
         return name;

@@ -69,6 +69,45 @@ describe("sheetNamesOf", () => {
         expect(names[4]).toBe("What is this");
         expect(new Set(names.map((n) => n.toLowerCase())).size).toBe(names.length);
     });
+
+    it("never gives a name a spreadsheet refuses: no apostrophe at either end, not even after the cut, and never History", () => {
+        const names = sheetNamesOf(
+            [
+                { title: "'Quoted'", rows: [] },
+                // The 31st character is an apostrophe: the cut must not leave it at the end
+                { title: `${"a".repeat(30)}'tail`, rows: [] },
+                { title: "History", rows: [] },
+                { title: "history", rows: [] },
+                { title: "''", rows: [] },
+            ],
+            (n) => `Table ${n}`
+        );
+        expect(names[0]).toBe("Quoted");
+        expect(names[1]).toBe("a".repeat(30));
+        // A name the workbook keeps for itself becomes the plain "Table N", each one once
+        expect(names[2]).toBe("Table 3");
+        expect(names[3]).toBe("Table 4");
+        expect(names[4]).toBe("Table 5");
+        for (const name of names) {
+            expect(name.length).toBeLessThanOrEqual(31);
+            expect(name).not.toMatch(/^'|'$/);
+            expect(name.toLowerCase()).not.toBe("history");
+        }
+        expect(new Set(names.map((n) => n.toLowerCase())).size).toBe(names.length);
+    });
+
+    it("keeps a repeated name unique even when the suffix pushes it over the cut", () => {
+        const long = "b".repeat(40);
+        const names = sheetNamesOf(
+            [
+                { title: long, rows: [] },
+                { title: long, rows: [] },
+                { title: long, rows: [] },
+            ],
+            (n) => `Table ${n}`
+        );
+        expect(names).toEqual(["b".repeat(31), `${"b".repeat(29)} 2`, `${"b".repeat(29)} 3`]);
+    });
 });
 
 describe("files", () => {
