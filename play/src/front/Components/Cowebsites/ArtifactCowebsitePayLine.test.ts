@@ -90,9 +90,15 @@ describe("the line under a paying page in the artifact window (the approved mock
         vi.clearAllMocks();
     });
 
-    async function mount(owner = false, openScope = "link", published: { version: number; at: string } | null = null) {
+    async function mount(
+        owner = false,
+        openScope = "link",
+        published: { version: number; at: string } | null = null,
+        media = false
+    ) {
         vi.useFakeTimers();
-        api.fetchArtifact.mockResolvedValue(opened(owner, openScope, published));
+        const first = opened(owner, openScope, published);
+        api.fetchArtifact.mockResolvedValue({ ...first, version: { ...first.version, urlHasMedia: media } });
         const target = document.createElement("div");
         document.body.appendChild(target);
         const cowebsite = {
@@ -106,7 +112,7 @@ describe("the line under a paying page in the artifact window (the approved mock
             props: { actualCowebsite: cowebsite as never, visible: true },
         });
         await settle();
-        const frame = target.querySelector("iframe") as HTMLIFrameElement;
+        const frame = target.querySelector('[data-testid="artifactFrame"]') as HTMLIFrameElement;
         // The page has loaded, so what it is told reaches it
         frame.dispatchEvent(new Event("load"));
         await settle();
@@ -124,7 +130,7 @@ describe("the line under a paying page in the artifact window (the approved mock
             (target.querySelector(`[data-testid="artifactPay-${kind}"]`) as HTMLButtonElement).click();
             await settle();
         };
-        return { target, view, say, line, text, press, heard };
+        return { target, view, say, line, text, press, heard, cowebsite, frame };
     }
 
     it("g5: asks for the purchase back when the page loads, and says it is back with the day it was bought; the page hears paid", async () => {
@@ -405,6 +411,156 @@ describe("the line under a paying page in the artifact window (the approved mock
         expect(text()).toBe(
             "Paid. Thank you. It's kept in this browser, so it comes back whenever you open this page here."
         );
+        view.$destroy();
+    });
+
+    it("never says a newer version for an older page: the page of the version before goes at the switch, and the new one's says its own before its pictures have loaded (CodeRabbit and money read, 26 Nov)", async () => {
+        const nothingBought = { status: "none", testPayment: false, orderId: null, pollAfterMs: 3000 };
+        const fourth = () => {
+            const four = opened(false, "link");
+            api.fetchArtifact.mockResolvedValue({
+                ...four,
+                version: { ...four.version, number: 4, url: "https://files.test/4" },
+            });
+        };
+        const sayFrom = async (source: Window | null, data: unknown) => {
+            window.dispatchEvent(new MessageEvent("message", { source, data }));
+            await settle();
+        };
+        const versionsSent = () =>
+            api.payOnArtifact.mock.calls.map((call) => (call[2] as { shownVersion?: number }).shownVersion);
+        vi.spyOn(window, "open").mockReturnValue(null);
+
+        // Version 3's page has never said anything. Version 4 is asked for and comes on show, and version 3's page taps Pay
+        // before version 4's has loaded: it is no longer this window's frame, so nothing is asked for, and never with 4
+        api.payOnArtifact.mockReturnValue(new Promise<never>(() => {}));
+        const silent = await mount();
+        const silentOld = silent.frame.contentWindow;
+        fourth();
+        silent.cowebsite.version.set(4);
+        await settle();
+        const fresh = silent.target.querySelector('[data-testid="artifactFrame"]') as HTMLIFrameElement;
+        expect(fresh).not.toBe(silent.frame);
+        expect(fresh.getAttribute("src")).toBe("https://files.test/4");
+        await sayFrom(silentOld, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        expect(versionsSent()).toEqual([]);
+        // Version 4's own page speaks before the frame's load event (its pictures still coming): it says 4
+        await sayFrom(fresh.contentWindow, { universe: "use-app", app: "examplepay", request: "r2", session: "s2" });
+        expect(versionsSent()).toEqual([4]);
+        silent.view.$destroy();
+
+        // Version 3's page spoke when it loaded (it asked whether this visitor already bought): after the switch it is gone too
+        api.fetchArtifact.mockReset();
+        api.payOnArtifact
+            .mockReset()
+            .mockResolvedValueOnce(nothingBought)
+            .mockReturnValue(new Promise<never>(() => {}));
+        const spoke = await mount();
+        await spoke.say({ universe: "use-app", app: "examplepay", request: "r0", session: "s1", restore: true });
+        const spokeOld = spoke.frame.contentWindow;
+        fourth();
+        spoke.cowebsite.version.set(4);
+        await settle();
+        api.payOnArtifact.mockClear();
+        await sayFrom(spokeOld, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        expect(versionsSent()).toEqual([]);
+        spoke.view.$destroy();
+    });
+
+    it("keeps the page's own frame while its address is renewed, and says the version on show after the Code view (money read, 26 Nov)", async () => {
+        const versionsSent = () =>
+            api.payOnArtifact.mock.calls.map((call) => (call[2] as { shownVersion?: number }).shownVersion);
+        const sayFrom = async (source: Window | null, data: unknown) => {
+            window.dispatchEvent(new MessageEvent("message", { source, data }));
+            await settle();
+        };
+        const frameNow = (target: HTMLElement) =>
+            target.querySelector('[data-testid="artifactFrame"]') as HTMLIFrameElement;
+        const renewedAt = (url: string) => {
+            const again = opened(false, "link");
+            api.fetchArtifact.mockResolvedValue({ ...again, version: { ...again.version, url, urlHasMedia: true } });
+        };
+        // Each try ends at once (refused), so the next one is not waiting behind it
+        const { ArtifactRequestError } = await import("../../Artifacts/ArtifactApi");
+        vi.spyOn(window, "open").mockReturnValue(null);
+        api.payOnArtifact.mockRejectedValue(new ArtifactRequestError(409, "not_published"));
+
+        // A page with songs is opened again at a new address before its address stops: the same frame, the same version
+        const { target, frame, view } = await mount(false, "link", null, true);
+        renewedAt("https://files.test/3b");
+        await vi.advanceTimersByTimeAsync(299_000);
+        await settle();
+        expect(api.fetchArtifact).toHaveBeenLastCalledWith("a1", undefined, 3);
+        expect(frameNow(target)).toBe(frame);
+        expect(frame.getAttribute("src")).toBe("https://files.test/3b");
+        await sayFrom(frame.contentWindow, { universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        expect(versionsSent()).toEqual([3]);
+
+        // The Code view has no frame; back from it, the page is drawn again in a frame of its own, and says the version on show
+        api.payOnArtifact.mockClear();
+        renewedAt("https://files.test/3c");
+        (target.querySelector('[data-testid="artifactCode"]') as HTMLButtonElement).click();
+        await settle();
+        expect(target.querySelector('[data-testid="artifactFrame"]')).toBeNull();
+        (target.querySelector('[data-testid="artifactCode"]') as HTMLButtonElement).click();
+        await settle();
+        const afterCode = frameNow(target);
+        expect(afterCode).not.toBe(frame);
+        await sayFrom(afterCode.contentWindow, {
+            universe: "use-app",
+            app: "examplepay",
+            request: "r2",
+            session: "s2",
+        });
+        expect(versionsSent()).toEqual([3]);
+        view.$destroy();
+    });
+
+    it("gives a fresh frame when the version on show is opened again from Back to latest, and the page before it is no longer heard (money read, 26 Nov)", async () => {
+        const { ArtifactRequestError } = await import("../../Artifacts/ArtifactApi");
+        const versionsSent = () =>
+            api.payOnArtifact.mock.calls.map((call) => (call[2] as { shownVersion?: number }).shownVersion);
+        vi.spyOn(window, "open").mockReturnValue(null);
+        api.payOnArtifact
+            .mockRejectedValueOnce(new ArtifactRequestError(409, "page_changed"))
+            .mockReturnValue(new Promise<never>(() => {}));
+        const { target, frame, say, press, view } = await mount();
+        const before = frame.contentWindow;
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        await press("latest");
+        const fresh = target.querySelector('[data-testid="artifactFrame"]') as HTMLIFrameElement;
+        expect(fresh).not.toBe(frame);
+        api.payOnArtifact.mockClear();
+        window.dispatchEvent(
+            new MessageEvent("message", {
+                source: before,
+                data: { universe: "use-app", app: "examplepay", request: "r2", session: "s1" },
+            })
+        );
+        await settle();
+        expect(versionsSent()).toEqual([]);
+        window.dispatchEvent(
+            new MessageEvent("message", {
+                source: fresh.contentWindow,
+                data: { universe: "use-app", app: "examplepay", request: "r3", session: "s2" },
+            })
+        );
+        await settle();
+        expect(versionsSent()).toEqual([3]);
+        view.$destroy();
+    });
+
+    it("offers the latest version on a page that was updated since it was opened, and opens it fresh with one tap (CodeRabbit, 26 Nov)", async () => {
+        const { ArtifactRequestError } = await import("../../Artifacts/ArtifactApi");
+        api.payOnArtifact.mockRejectedValueOnce(new ArtifactRequestError(409, "page_changed"));
+        vi.spyOn(window, "open").mockReturnValue(null);
+        const { say, text, press, line, view } = await mount();
+        await say({ universe: "use-app", app: "examplepay", request: "r1", session: "s1" });
+        expect(text()).toBe("This page was updated. Open the latest version to see it before you pay. Back to latest");
+        api.fetchArtifact.mockClear();
+        await press("latest");
+        expect(api.fetchArtifact).toHaveBeenCalledWith("a1", undefined, undefined);
+        expect(line()).toBeNull();
         view.$destroy();
     });
 });

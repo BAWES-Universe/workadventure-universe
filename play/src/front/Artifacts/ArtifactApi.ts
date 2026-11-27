@@ -243,6 +243,8 @@ export interface ArtifactPayRequest {
     check?: boolean;
     /** Restore purchase: this buyer's verified paid order for the page's offer */
     restore?: boolean;
+    /** With a start: the version on screen, so terms set on a newer version are never charged on it */
+    shownVersion?: number;
     /** What a guest's window keeps for them (Orbit stores only its hash), and the code of a receipt link they opened */
     recoveryCode?: string;
     receiptCode?: string;

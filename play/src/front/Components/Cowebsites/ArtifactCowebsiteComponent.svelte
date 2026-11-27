@@ -144,6 +144,9 @@
     // Whether the page in the frame on show has loaded: a frame has a window before its page is there, and a payment result
     // sent in that time reaches nobody. Cleared each time the frame is drawn again (a new element, or another address).
     let frameLoaded = false;
+    // The version each opening put on show: a page that asks for a checkout says the version of the opening it belongs to (the one on
+    // show when it first spoke), so a page still showing while another version comes in never says the newer one
+    const openingVersions = new Map<number, number>();
     let frameDrawn: { element: HTMLIFrameElement | null | undefined; url: string | null | undefined } | undefined;
     function watchFrame(element: HTMLIFrameElement | null | undefined, url: string | null | undefined) {
         if (frameDrawn && frameDrawn.element === element && frameDrawn.url === url) return;
@@ -164,6 +167,9 @@
         // a Public one only once something is published, and not when that version is gone
         pageUrl: () =>
             openScope === "link" || (openScope === "public" && published && !publishedGone) ? link : undefined,
+        // The version of the page that asked: Orbit never charges terms set on a newer one on it, and makes no new order for a
+        // page that does not say which version it shows
+        shownVersion: (at) => openingVersions.get(at),
     });
     const payLine = payments.line;
     // The line under the page: what it says and what can be pressed (the approved mock M1)
@@ -184,6 +190,12 @@
         if (action.kind === "check") payments.checkPayment();
         else if (action.kind === "restore") payments.restorePurchase();
         else if (action.kind === "copy") copyReceipt();
+        else if (action.kind === "latest") openLatest();
+    }
+    /** The page was updated since it was opened: open what this person is shown now, fresh from Orbit, and clear the line. */
+    function openLatest() {
+        payments.dismiss();
+        void load(undefined);
     }
     function copyReceipt() {
         const receipt = payments.receiptLink();
@@ -313,6 +325,8 @@
             // This opening brings its own address and timer (watchAddress below): nothing was dropped that needs setting up again
             renewalDropped = false;
             opening++;
+            openingVersions.set(opening, answer.version.number);
+            if (openingVersions.size > 16) openingVersions.delete(openingVersions.keys().next().value as number);
             text = undefined;
             textFailed = false;
             summaryStore.set({
@@ -918,17 +932,21 @@
             {:else}
                 <!-- The locked box: its scripts run, but the page has no origin of its own, no network except common
                      libraries, and no way into the game. The address is outside the game's own. A link in it opens in
-                     a new tab when tapped, as the other site itself (a booking, a map), never in place of the game. -->
-                <iframe
-                    title={$LL.chat.artifacts.frameTitle({ title, maker: makerName })}
-                    src={opened.version.url}
-                    sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-                    referrerpolicy="no-referrer"
-                    allow=""
-                    data-testid="artifactFrame"
-                    bind:this={frameElement}
-                    on:load={onFrameLoad}
-                />
+                     a new tab when tapped, as the other site itself (a booking, a map), never in place of the game.
+                     Each opening gets a frame of its own: the page of the one before goes at the switch, so nothing it says
+                     afterwards comes from this window's frame, and a page heard here first spoke in the opening on show. -->
+                {#key opening}
+                    <iframe
+                        title={$LL.chat.artifacts.frameTitle({ title, maker: makerName })}
+                        src={opened.version.url}
+                        sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+                        referrerpolicy="no-referrer"
+                        allow=""
+                        data-testid="artifactFrame"
+                        bind:this={frameElement}
+                        on:load={onFrameLoad}
+                    />
+                {/key}
                 {#if payView}
                     <div class="pay-line" class:closable={payView.closable} role="status" data-testid="artifactPayLine">
                         {#if payView.closable}

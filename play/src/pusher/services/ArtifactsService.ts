@@ -150,6 +150,8 @@ export interface ArtifactPayRequest {
     restore?: boolean;
     recoveryCode?: string;
     receiptCode?: string;
+    /** With a start: the version the window has open (Orbit never charges terms set on a newer one on it) */
+    shownVersion?: number;
 }
 
 /**

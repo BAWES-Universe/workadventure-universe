@@ -222,6 +222,20 @@ describe("the line under a paying page says what the approved mock says", () => 
             sub: null,
             actions: [],
         });
+        // The payment was set on a version this person is not shown yet: plain, nothing to press, no newer version named
+        expect(view({ problem: "not_published" })).toMatchObject({
+            title: "Payments unavailable",
+            sub: "This page isn’t taking payments right now. Try again later.",
+            actions: [],
+            closable: false,
+        });
+        // The page was published again since it was opened: one tap opens the latest this person is shown
+        expect(view({ problem: "page_changed" })).toMatchObject({
+            title: "This page was updated.",
+            sub: "Open the latest version to see it before you pay.",
+            actions: [{ kind: "latest", label: "Back to latest", style: "primary" }],
+            closable: false,
+        });
         expect(view({})).toBeNull();
     });
 
