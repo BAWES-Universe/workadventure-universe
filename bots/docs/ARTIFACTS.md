@@ -28,6 +28,29 @@ access check as `/api/bots/:id/access`, so someone who cannot chat with the bot 
 address and no code the bot would paste (read excepted), so the media interceptors never send them as media. Bot chat
 telemetry works as for any chat text: a bot that hides its chats sends none of it to PostHog or Sentry.
 
+## A file is not an artifact (`ai/MakeFileTool.ts`)
+
+An artifact lives in the chat window: a mini app, a page, a Doc (`kind: markdown`) or a drawing. A person who asks for a *file*
+("send me a markdown", "give me a sheet") gets a real one from `make_file`, which sends the normal chat file card (it opens beside
+the map and has Download); `make_artifact`'s description says so, while `make_file` is offered, and the Brick rules say a Doc is
+"a Doc in this chat" and a file is "a Markdown file (.md)" or "a spreadsheet file (.xlsx)".
+
+| Tool | What |
+| --- | --- |
+| `make_file` | `name`, `format` (`md`, `csv`, `xlsx`), then `content` (md), `rows` (csv, or xlsx with one tab) or `sheets: [{ name, rows }]` (xlsx, one tab each). |
+
+- Offered where the bot has a chat to send in (a bubble or a direct message) and the uploader is set up (`UPLOADER_URL` and
+  `BOT_SERVICE_TOKEN`). It needs no Orbit call. The file goes to the uploader and is sent as a file the person asked for, so it is
+  on their list of files like any file the bot sends (made with `make_file`).
+- Cells are plain text, never formulas: in an `.xlsx` every cell is typed as text, and in a `.csv` a cell that begins with `=`, `+`,
+  `-` or `@` gets a leading quote so a sheet app does not run it. A CSV starts with a byte order mark and ends rows with CRLF, so
+  Arabic and accents open right.
+- Tab names are made valid: no `\ / ? * [ ] :`, 31 characters at most, no apostrophe at either end after the cut, "History" renamed
+  (`History 1`), unique without regard to case, a blank one becomes `Sheet N`.
+- Limits: 8 MB a file (under the uploader's 10 MB), 250,000 cells, 50 tabs, 32,767 characters a cell. Over them the model is told it is
+  too big for a chat file and to offer to split it; a failure says nothing was sent. The result never holds the file's address.
+- Made once a turn: the same call twice, or the turn asked again, sends one file.
+
 ## The card
 
 A made or changed artifact puts a card in the chat the message came from:
