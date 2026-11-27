@@ -75,6 +75,17 @@ export function artifactDirectMessage(card: ArtifactCard): { body: string; field
     return { body: `${card.title} · ${kind} · Version ${card.version}`, field: card };
 }
 
+/**
+ * Where a request for a file goes, in make_artifact's description: someone who says "send me a markdown" or "give me a sheet" asked for a file
+ * (a .md, .csv or .xlsx they can download), which make_file makes. An artifact is a Doc, app, page or drawing inside the chat. Said only when
+ * make_file is offered, so it never points at a tool the bot does not have.
+ */
+const FILE_NOT_ARTIFACT = (fileWith: boolean): string =>
+    fileWith
+        ? 'It is NOT a file. When they ask you to send or give them a file, a markdown, a .md, a CSV, a sheet or a spreadsheet, or something to download or save, ' +
+          'use make_file instead: that sends a real file. Only an app, a page, a Doc or a drawing they asked you to build or make is made here. '
+        : '';
+
 /** How a page uses media, in make_artifact's description (#1510). */
 const MEDIA_HELP =
     'To play a song or show an image or video from this turn (one the person sent, or one your tools just made), pass it in ' +
@@ -113,7 +124,7 @@ export function artifactLinkHelp(sendAgain: boolean): string {
  * along with files, a page at a time, from every chat the person may reach them from.
  */
 export function artifactToolDefinitions(
-    options: { findWith?: string } = {}
+    options: { findWith?: string; /** make_file is offered too: a file is asked for with it, never with make_artifact. */ fileWith?: boolean } = {}
 ): Array<{ type: 'function'; function: { name: string; description: string; parameters: object } }> {
     const findWith = options.findWith ?? LIST_ARTIFACTS_TOOL;
     const tools: Array<{ type: 'function'; function: { name: string; description: string; parameters: object } }> = [
@@ -122,9 +133,11 @@ export function artifactToolDefinitions(
             function: {
                 name: MAKE_ARTIFACT_TOOL,
                 description:
-                    'Make something that runs or can be opened beside the chat: a mini app, a web page, a mock, a game, a calculator, a ' +
-                    'document or a drawing. Use it whenever someone asks you to build, make, create or design something like that. ' +
-                    'It shows in the chat as a card they tap to open, and they can ask you to change it afterwards. Do NOT paste the code ' +
+                    'Make something that lives in this chat and opens beside it: a mini app, a web page, a mock, a game, a calculator, a ' +
+                    'Doc (a text page shown in the chat window) or a drawing. Use it when someone asks you to build, make, create or design something like that. ' +
+                    FILE_NOT_ARTIFACT(options.fileWith === true) +
+                    'It shows in the chat as a card they tap to open, and they can ask you to change it afterwards. Say plainly what you made: ' +
+                    '"a mini app", "a page", "a Doc in this chat", "a drawing". Do NOT paste the code ' +
                     'into the chat. For an app or a page, send ONE complete HTML file with its style and script inside it. It runs in a ' +
                     'locked box with no network except common libraries (cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, fonts.googleapis.com); ' +
                     'it cannot use the camera, microphone or location, or reach the game. A link to another site opens in a new tab when ' +
@@ -140,7 +153,7 @@ export function artifactToolDefinitions(
                         kind: {
                             type: 'string',
                             enum: KINDS,
-                            description: '"app" for something interactive, "page" for a page that only shows, "markdown" for a document, "svg" for a drawing.',
+                            description: '"app" for something interactive, "page" for a page that only shows, "markdown" for a Doc shown in the chat window (not a file to download), "svg" for a drawing.',
                         },
                         content: { type: 'string', description: 'The whole file: HTML for an app or a page, Markdown, or SVG.' },
                         summary: { type: 'string', description: 'One short line about this first version.' },
@@ -658,12 +671,28 @@ function mediaLine(result: Record<string, unknown>): string {
     return `${carries}${done}${left}`;
 }
 
+/** What a new artifact is called when the bot says what it made: a Doc in this chat is not a markdown file they can download. */
+function madeAs(kind: unknown): string {
+    switch (kind) {
+        case 'markdown':
+            return 'a Doc in this chat (not a file to download)';
+        case 'app':
+            return 'a mini app';
+        case 'page':
+            return 'a page';
+        case 'svg':
+            return 'a drawing';
+        default:
+            return 'an artifact';
+    }
+}
+
 /** The line a tool result becomes in the model's next round. */
 export function formatArtifactResult(name: string, result: Record<string, unknown>): string {
     if (typeof result.error === 'string') return `${name}: ${result.error}`;
     switch (name) {
         case MAKE_ARTIFACT_TOOL:
-            return `${name}: Made "${result.title}" (id ${result.id}), version ${result.version}.${mediaLine(result)} It is in the chat as a card they can tap to open. Say in one short line what you made. Do NOT paste its code, an address or the id.`;
+            return `${name}: Made "${result.title}" (id ${result.id}), version ${result.version}.${mediaLine(result)} It is ${madeAs(result.kind)} in the chat as a card they can tap to open. Say in one short line what you made, as that. Do NOT paste its code, an address or the id.`;
         case CHANGE_ARTIFACT_TOOL:
             if (typeof result.copiedFrom === 'string') {
                 return `${name}: That artifact is another bot's, so it was left as it is and your change is in a new copy of your own: "${result.title}" (id ${result.id}), version ${result.version}. Use id ${result.id} for any further change; the original is unchanged.${mediaLine(result)} The copy is in the chat as a card. Say in one short line that you made your own copy with the change and left the original as it was. Do NOT paste its code, an address or the id.`;

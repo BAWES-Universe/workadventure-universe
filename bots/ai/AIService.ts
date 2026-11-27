@@ -8,6 +8,7 @@
  * - Usage tracking
  */
 
+import { createHash } from 'crypto';
 import { pointedArtifactIds } from './ArtifactReferences';
 import type { ConversationMemory } from '../memory/ConversationMemory';
 import type { AdminApiService, AIProviderCredentials, BotAccessPerson, BotAiCredentialsAnswer, BotVisionPlan, InstantListing } from '../server/AdminApiService';
@@ -136,6 +137,8 @@ import {
 } from './ArtifactTools';
 import { MAX_OUTGOING_MEDIA_BYTES, type BotPlayerMemory, type PendingMedia } from '../memory/ConversationMemory';
 import { FIND_FILES_TOOL, OPEN_FILE_TOOL, SEND_AGAIN_TOOL, fileToolDefinitions, formatFileResult, isFileTool, runFileTool } from './FileTools';
+import { MAKE_FILE_TOOL, formatMakeFileResult, isMakeFileTool, makeFileToolDefinition, runMakeFile, type BuiltFile } from './MakeFileTool';
+import { uploadAttachmentWithLink } from '../matrix/uploadAttachment';
 import { FORGET_MEMORY_TOOL, WHAT_I_REMEMBER_TOOL, isMemoryTool, memoryToolDefinitions, memoryToolsNote, runMemoryTool } from './MemoryTools';
 import type { StartKeyStore } from '../server/ComputerStartKeys';
 import { CANCEL_JOB_TOOL, COMPUTER_JOBS_TOOL, JOB_FIRST_TOOL, PAUSE_JOB_TOOL, RESUME_JOB_TOOL, STOP_COMPUTER_TOOL, TELL_JOB_TOOL, computerControlToolDefinitions, newControlState, runComputerControlTool, startControlTurn } from './ComputerControlTools';
@@ -1692,6 +1695,7 @@ export class AIService {
             memory?.sharedInFlight?.clear();
             memory?.sentAgain?.clear();
             memory?.cardsAgain?.clear();
+            memory?.filesMade?.clear();
         }
         // This turn's media (#1510): what the person sent with this message; its tools add theirs as they run. The turn
         // holds its own list, so a turn that a newer message replaced can't add to the newer one's
@@ -2045,7 +2049,7 @@ export class AIService {
                         tools[at] = narrowedToInputs(tools[at], sharedJob.inputs);
                         continue;
                     }
-                    if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isComputerTool(name) || isKeyTool(name)) tools.splice(at, 1);
+                    if (toolServerMap.has(name) || isArtifactTool(name) || isFileTool(name) || isMakeFileTool(name) || isComputerTool(name) || isKeyTool(name)) tools.splice(at, 1);
                 }
                 for (const [name, entry] of [...toolServerMap]) if (!sharedForOthers(entry)) toolServerMap.delete(name);
             }
@@ -4084,9 +4088,11 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         // artifacts too, so list_artifacts is left out then.
         const files = (botClient || channel === 'dm') && this.filesOn(botId, adminApiService);
         if (artifactsEnabled() && (botClient || channel === 'dm') && adminApiService?.isConfigured?.()) {
-            tools.push(...artifactToolDefinitions(files ? { findWith: FIND_FILES_TOOL } : {}));
+            tools.push(...artifactToolDefinitions({ ...(files ? { findWith: FIND_FILES_TOOL } : {}), fileWith: this.makeFileOn() }));
         }
         if (files) tools.push(...fileToolDefinitions({ artifacts: artifactsEnabled() }));
+        // Tool: make a real .md, .csv or .xlsx file from text or rows and send it as the chat's file card. Needs the uploader, and a chat to send it in.
+        if ((botClient || channel === 'dm') && this.makeFileOn()) tools.push(makeFileToolDefinition());
 
         // Tools: make another Brick, and suggest one (game #1996). Only a person's own first Brick has them, in its owner's direct messages.
         if (channel === 'dm' && this.brickToolsOn(botId, botClient, adminApiService)) tools.push(...brickToolDefinitions());
@@ -4968,6 +4974,94 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         return source === 'own-key' ? {} : { look: (url: string) => this.describeImagesViaDefaultVision([url], abortSignal, readFor) };
     }
 
+    /** The uploader can take a file made here: its address and the bot server's own token are set. */
+    private makeFileOn(): boolean {
+        return !!process.env.UPLOADER_URL && !!process.env.BOT_SERVICE_TOKEN;
+    }
+
+    /**
+     * make_file: a .md, .csv or .xlsx the bot makes from text or rows, put on the uploader and sent as the chat's file card. In a bubble it
+     * goes into the space with the reply's person as its asker, so it is on their list of files like any file the bot sends; in a direct
+     * message it goes out with the reply. A file is made once a turn: the model calling it twice with the same content, or the turn asked
+     * again, gets the first one's answer. Never throws.
+     */
+    private async runMakeFileToolCall(
+        args: Record<string, unknown>,
+        where: { botClient?: BotClient; spaceName?: string; botId?: string; playerId?: number; present?: readonly string[] }
+    ): Promise<Record<string, unknown>> {
+        const { botClient, spaceName, botId, playerId, present } = where;
+        if (!botId || playerId === undefined) return { error: "A file can't be made in this chat." };
+        if (botClient && !spaceName) return { error: 'Cannot send the file: not currently in a conversation space' };
+        const memory = this.conversationMemory?.getMemory(botId, playerId);
+        const once = createHash('sha256').update(JSON.stringify(args)).digest('hex');
+        const earlier = memory?.filesMade?.get(once);
+        if (earlier) return earlier;
+        const making = runMakeFile(args, {
+            upload: async (file) => (await uploadAttachmentWithLink(file.bytes, file.mimeType, file.name))?.location ?? null,
+            send: async (file, url) => {
+                if (this.someoneCameSince(botClient, spaceName, playerId, present)) return SOMEONE_CAME;
+                return this.sendMadeFile(file, url, {
+                    botClient,
+                    spaceName,
+                    botId,
+                    playerId,
+                    only: present === undefined ? playerId : undefined,
+                    ...(present ? { mayGo: () => !this.someoneCameSince(botClient, spaceName, playerId, present) } : {}),
+                }, memory);
+            },
+        });
+        if (memory) (memory.filesMade ??= new Map()).set(once, making);
+        const result = await making;
+        // A file that could not be made or sent may be tried again
+        if (typeof result.error === 'string' && memory?.filesMade?.get(once) === making) memory.filesMade.delete(once);
+        return result;
+    }
+
+    /**
+     * A file just made and uploaded, put in this chat. Unlike a file sent again it is new: it goes on the person's list, made with make_file.
+     * Resolves with a line saying why it could not go, or null once it is on its way.
+     */
+    private async sendMadeFile(
+        file: BuiltFile,
+        url: string,
+        where: { botClient?: BotClient; spaceName?: string; botId: string; playerId: number; only?: number; mayGo?: () => boolean },
+        memory: BotPlayerMemory | undefined
+    ): Promise<string | null> {
+        const { botClient, spaceName, playerId, only, mayGo } = where;
+        const notSent = "It couldn't be sent right now. Say so in one plain sentence and offer to try again in a moment.";
+        // How it was made, kept with the file on the person's list
+        this.madeMedia.set(url, { with: MAKE_FILE_TOOL, prompt: null });
+        while (this.madeMedia.size > MAX_MADE_MEDIA) this.madeMedia.delete(this.madeMedia.keys().next().value!);
+        if (botClient) {
+            if (!spaceName || !botClient.isInSpace(spaceName)) return 'The conversation ended before it could be sent. Say so; do not claim it was sent.';
+            // It is on the uploader already: sent as it is, never fetched and uploaded again
+            botClient.markStored?.(url);
+            const ask: [] | [() => boolean] = mayGo ? [mayGo] : [];
+            try {
+                await botClient.sendFile(spaceName, url, file.name, playerId, file.mimeType, only, ...ask);
+                return null;
+            } catch (error) {
+                if ((error as { _heldBack?: boolean } | null)?._heldBack) return SOMEONE_CAME;
+                return notSent;
+            }
+        }
+        if (!memory) return notSent;
+        const pending = (memory.pendingMedia ??= []);
+        if (pending.length >= (memory.maxPendingMedia || 5)) return 'There are already as many files waiting to go with this reply as it can carry. Send it in the next one.';
+        pending.push({
+            url,
+            originalUrl: url,
+            mediaType: 'file',
+            mimeType: file.mimeType,
+            caption: file.name,
+            createdAt: Date.now(),
+            retryCount: 0,
+            name: file.name,
+            ...(only !== undefined ? { audience: only } : {}),
+        });
+        return null;
+    }
+
     /**
      * Run one file tool (#1508) for the person talking to the bot, in their chat. A file sent again goes out as it was:
      * in a bubble as a line of nearby chat, in a direct message with the reply. Never throws.
@@ -5367,9 +5461,9 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                 // An Instant App's name is made from its tool, so it has no case of its own: it is told apart here. A tool server's tool of the same name is
                 // never offered next to it (the Instant App is), so a name that is in the server map is that server's alone
                 const instantRun = isInstantTool(toolCall.name) && !toolServerMap?.has(toolCall.name);
-                // A visitor's turn never runs the owner's artifacts, files, computer, Apps, Instant Apps or reminders, even if the model calls one it was not offered
-                const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isKeyTool(toolCall.name) || isTaskTool(toolCall.name) || instantRun;
-                switch ((forOthers && ownersOnly) ? '' : instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && (channel !== 'dm' || !this.memoryToolsOn(botId, botClient))) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
+                // A visitor's turn never runs the owner's artifacts, files, made files, computer, Apps, Instant Apps or reminders, even if the model calls one it was not offered
+                const ownersOnly = isArtifactTool(toolCall.name) || isFileTool(toolCall.name) || isMakeFileTool(toolCall.name) || isComputerTool(toolCall.name) || isBrickTool(toolCall.name) || isAppTool(toolCall.name) || isKeyTool(toolCall.name) || isTaskTool(toolCall.name) || instantRun;
+                switch ((forOthers && ownersOnly) ? '' : instantRun ? INSTANT_RUN_CASE : (isArtifactTool(toolCall.name) && !artifactsEnabled()) || (isFileTool(toolCall.name) && !this.filesOn(botId, adminApiService)) || (isMakeFileTool(toolCall.name) && (!this.makeFileOn() || !!toolServerMap?.has(toolCall.name))) || (isBrickTool(toolCall.name) && !this.brickToolsOn(botId, botClient, adminApiService)) || (isMemoryTool(toolCall.name) && (channel !== 'dm' || !this.memoryToolsOn(botId, botClient))) || (isAppTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isKeyTool(toolCall.name) && !this.appToolsOn(botId, botClient, adminApiService)) || (isComputerTool(toolCall.name) && (!!botClient || !this.ownBricks.has(botId ?? ''))) || (isTaskTool(toolCall.name) && (!taskToolsOffered || !this.taskToolsOn(botId, playerId, botClient) || !!toolServerMap?.has(toolCall.name))) ? '' : toolCall.name) {
                     case 'get_people_on_map':
                         if (botClient) {
                             const people = botClient.getAllPeople();
@@ -5664,6 +5758,13 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
                             toolCall.name,
                             typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
                             { botClient, adminApiService, spaceName, botId, playerId, turnMedia, present }
+                        );
+                        break;
+
+                    case MAKE_FILE_TOOL:
+                        result = await this.runMakeFileToolCall(
+                            typeof toolCall.arguments === 'string' ? this.safeParseToolArgs(toolCall.arguments) : toolCall.arguments || {},
+                            { botClient, spaceName, botId, playerId, present }
                         );
                         break;
 
@@ -7097,6 +7198,7 @@ Based on ALL of the above, provide a complete, coherent answer to the user's que
         if (isArtifactTool(r.name) && artifactsEnabled() && r.result) {
             return formatArtifactResult(r.name, r.result);
         }
+        if (isMakeFileTool(r.name) && r.result && typeof r.result === 'object' && !fromToolServer) return formatMakeFileResult(r.result);
         // The file tools ran (Orbit keeps files here), not an MCP tool of the same name
         if (isFileTool(r.name) && r.result && this.keepsFiles(botId)) {
             return formatFileResult(r.name, r.result);

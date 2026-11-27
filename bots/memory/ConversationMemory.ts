@@ -215,6 +215,9 @@ export interface BotPlayerMemory {
     /** The artifact cards put in this chat again this turn (#1815), by id, so each goes once however often the model asks.
      * Cleared when the next turn starts. Runtime only. */
     cardsAgain?: Map<string, Promise<Record<string, unknown>>>;
+    /** The files make_file made this turn, by what they were made from, so the same turn asked again (or the model calling it twice) sends each
+     * one once. Cleared when the next turn starts. Runtime only. */
+    filesMade?: Map<string, Promise<Record<string, unknown>>>;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

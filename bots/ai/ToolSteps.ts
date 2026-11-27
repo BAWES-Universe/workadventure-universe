@@ -5,6 +5,7 @@
  */
 import { CHANGE_ARTIFACT_TOOL, MAKE_ARTIFACT_TOOL } from './ArtifactTools';
 import { MAKE_BRICK_TOOL } from './BrickTools';
+import { MAKE_FILE_TOOL } from './MakeFileTool';
 import { REPORT_TOOL } from './ReportTools';
 import { FORGET_MEMORY_TOOL } from './MemoryTools';
 import { COMPUTER_TOOL } from './ComputerTools';
@@ -114,6 +115,8 @@ const OWN_STEPS: Record<string, (args: Record<string, unknown>) => Omit<ToolStep
         return { doing: where ? `Reading ${where}` : 'Reading a page', done: 'Read a page', detail: shown(args.url), group: 'page', kind: 'read' };
     },
     [MAKE_ARTIFACT_TOOL]: (args) => ({ doing: 'Making an artifact', done: 'Made an artifact', detail: shown(args.title), group: 'make_artifact', kind: 'write' }),
+    // A real file (.md, .csv, .xlsx) for the chat: "Made a file", with its name under it
+    [MAKE_FILE_TOOL]: (args) => ({ doing: 'Making a file', done: 'Made a file', detail: shown(args.name), group: 'make_file', kind: 'write' }),
     [CHANGE_ARTIFACT_TOOL]: (args) => ({ doing: 'Changing an artifact', done: 'Changed an artifact', detail: shown(args.title), group: 'change_artifact', kind: 'write' }),
     // Another Brick for this person (game #1996): "Made Recipe Brick", with what it is for under it. A suggestion is
     // never a step: its card says it.
@@ -151,6 +154,7 @@ function asDetail(line: string | undefined): string | undefined {
 const OWN_GROUPS: Record<string, (count: number) => string> = {
     page: (n) => (n === 1 ? 'Read 1 page' : `Read ${n} pages`),
     make_artifact: (n) => (n === 1 ? 'Made an artifact' : `Made ${n} artifacts`),
+    make_file: (n) => (n === 1 ? 'Made a file' : `Made ${n} files`),
     change_artifact: (n) => (n === 1 ? 'Changed an artifact' : `Changed an artifact ${n} times`),
 };
 

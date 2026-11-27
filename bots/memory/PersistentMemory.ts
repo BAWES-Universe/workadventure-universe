@@ -1491,6 +1491,7 @@ export class PersistentMemory extends ConversationMemory {
             turnMedia: undefined,
             sentAgain: undefined,
             cardsAgain: undefined,
+            filesMade: undefined,
         };
     }
 
