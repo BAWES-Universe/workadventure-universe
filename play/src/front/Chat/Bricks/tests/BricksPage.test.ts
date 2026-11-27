@@ -694,6 +694,7 @@ describe("the Bricks page (#1995)", () => {
                 "bot-page-group-say",
                 "bot-page-group-voice",
                 "bot-page-group-behavior",
+                "bot-page-group-apps",
                 "bot-page-group-goals",
                 "bot-page-group-memory",
                 "bot-page-group-files",

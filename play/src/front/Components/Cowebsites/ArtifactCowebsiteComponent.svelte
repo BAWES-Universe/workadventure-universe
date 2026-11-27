@@ -30,12 +30,20 @@
     import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
+    import {
+        fileNameOf,
+        markdownFile,
+        markdownTables,
+        saveFile,
+        spreadsheetFile,
+    } from "../../Artifacts/artifactDownload";
     import CodeView from "./FileViewer/CodeView.svelte";
     import {
         IconAlertTriangle,
         IconCheck,
         IconCode,
         IconCopy,
+        IconDownload,
         IconEye,
         IconHistory,
         IconLoader,
@@ -89,6 +97,17 @@
     let restoreFailed = false;
     /** The owner's Share list is open (one list drops down at a time). */
     let shareOpen = false;
+    /** The Download list is open: only a document with a table has one, any other downloads its file at once. */
+    let downloadOpen = false;
+    let downloadButton: HTMLButtonElement | undefined;
+    let downloadMenu: HTMLElement | undefined;
+    /** A file is being made; a second tap waits for it. */
+    let downloading = false;
+    /** The short line under the document after a download: the file's name, or that it could not be made. */
+    let downloadNote: { kind: "saved" | "failed"; name: string } | undefined;
+    let downloadNoteTimer: ReturnType<typeof setTimeout> | undefined;
+    /** How long the line stays. */
+    const DOWNLOAD_NOTE_MS = 3000;
     /** A choice the owner just made, showing at once while it is on its way to be saved. */
     let pendingShare: ArtifactOpenScope | undefined;
     let shareFailed = false;
@@ -163,10 +182,8 @@
         openWindow: () => window.open("about:blank", "_blank"),
         // A signed-in buyer's account is the buyer; a guest's own recovery code is (kept in this browser, for this page)
         buyer: () => (localUserStore.isLogged() ? "account" : "guest"),
-        // A guest's receipt link opens Orbit's public page, which only exists for a page anyone with the link may open:
-        // a Public one only once something is published, and not when that version is gone
-        pageUrl: () =>
-            openScope === "link" || (openScope === "public" && published && !publishedGone) ? link : undefined,
+        // A guest's receipt link opens Orbit's public page, which only exists where the link opens something (`linkOpens`)
+        pageUrl: () => (linkOpens ? link : undefined),
         // The version of the page that asked: Orbit never charges terms set on a newer one on it, and makes no new order for a
         // page that does not say which version it shows
         shownVersion: (at) => openingVersions.get(at),
@@ -183,7 +200,13 @@
     }
     $: payView = describePayLine(
         $payLine,
-        { copied: receiptCopied, locale: $locale, owner: opened?.you.owner ? { maker: makerName } : undefined },
+        {
+            copied: receiptCopied,
+            locale: $locale,
+            owner: opened?.you.owner ? { maker: makerName } : undefined,
+            // A receipt link kept on the line is not offered while the page's link opens nothing
+            linkOpens,
+        },
         $LL.chat.artifacts
     );
     function payAction(action: PayAction) {
@@ -229,6 +252,7 @@
         destroyed = true;
         if (copiedTimer) clearTimeout(copiedTimer);
         if (receiptTimer) clearTimeout(receiptTimer);
+        if (downloadNoteTimer) clearTimeout(downloadNoteTimer);
         renewIn(undefined);
     });
 
@@ -257,6 +281,12 @@
     $: published = opened?.artifact.published ?? undefined;
     $: publishedGone = published !== undefined && published.available === false;
     $: sharedByLink = opened?.artifact.openScope === "link" || opened?.artifact.openScope === "public";
+    // "Anyone with the link" is the only way out of "Just you" now: what an older artifact was set to, "Public", opens for
+    // the same people (game #2115) and reads the same
+    $: sharedByLinkNow = openScope === "link" || openScope === "public";
+    // Whether the link shows anything to a visitor, and so whether it can be copied or shared: a link that was never set to
+    // Public always does, a Public one once something is on it, and neither when the version on it is gone
+    $: linkOpens = sharedByLinkNow && !publishedGone && (openScope === "link" || !!published);
     // The window says so, with Publish right there, once the latest version is newer than the one people see
     $: unpublishedChanges = published !== undefined && !publishedGone && published.version < latest;
     $: showPublishBar =
@@ -274,6 +304,10 @@
             : "";
     // A document is drawn from its text, a drawing as a picture, a page or app in the locked frame.
     $: needsText = codeOn || kind === "markdown";
+    // Download: of the version on show, made from its text. Dimmed until that text is here.
+    $: textReady = !!text && !!opened && text.number === opened.version.number;
+    $: documentTables = kind === "markdown" && textReady && text ? markdownTables(text.content) : [];
+    $: if (!textReady) downloadOpen = false;
 
     // Open when the window starts, and again whenever a version other than the one showing is asked for.
     $: syncVersion($versionStore, attempt);
@@ -384,6 +418,7 @@
         text = undefined;
         menuOpen = false;
         shareOpen = false;
+        downloadOpen = false;
         failure = why;
         phase = "failed";
     }
@@ -543,22 +578,85 @@
 
     // A tap anywhere else puts the list away. A tap inside the app does not reach the game, so it leaves the list open.
     function onPointerDown(event: PointerEvent) {
-        if (!menuOpen && !shareOpen) return;
+        if (!menuOpen && !shareOpen && !downloadOpen) return;
         const target = event.target;
         if (
             target instanceof Node &&
-            (menu?.contains(target) || versionsButton?.contains(target) || shareButton?.contains(target))
+            (menu?.contains(target) ||
+                downloadMenu?.contains(target) ||
+                versionsButton?.contains(target) ||
+                shareButton?.contains(target) ||
+                downloadButton?.contains(target))
         ) {
             return;
         }
         menuOpen = false;
         shareOpen = false;
+        downloadOpen = false;
+    }
+
+    // A document without a table has one file to give, so a tap on Download gives it. With a table the person chooses.
+    function toggleDownload() {
+        if (!textReady || downloading) return;
+        if (documentTables.length === 0) {
+            void download("markdown");
+            return;
+        }
+        downloadOpen = !downloadOpen;
+        if (!downloadOpen) return;
+        menuOpen = false;
+        shareOpen = false;
+    }
+
+    function showDownloadNote(kind: "saved" | "failed", name = "") {
+        downloadNote = { kind, name };
+        if (downloadNoteTimer) clearTimeout(downloadNoteTimer);
+        downloadNoteTimer = setTimeout(() => (downloadNote = undefined), DOWNLOAD_NOTE_MS);
+    }
+
+    /** The file is made from the version that was on show when it was asked for, which is named when it is not the latest. */
+    function download(what: "markdown" | "spreadsheet") {
+        if (!text || !opened || downloading || kind !== "markdown") return;
+        const source = text.content;
+        const tables = documentTables;
+        const name = fileNameOf(
+            title ?? "",
+            what === "markdown" ? "md" : "xlsx",
+            isLatest ? undefined : opened.version.number
+        );
+        downloadOpen = false;
+        downloading = true;
+        // The flag is let go here, not inside the async part, so nothing reads it before a wait and writes it after
+        void makeFile(what, source, tables, name).finally(() => {
+            downloading = false;
+        });
+    }
+
+    async function makeFile(
+        what: "markdown" | "spreadsheet",
+        source: string,
+        tables: ReturnType<typeof markdownTables>,
+        name: string
+    ): Promise<void> {
+        try {
+            const blob =
+                what === "markdown"
+                    ? markdownFile(source)
+                    : await spreadsheetFile(tables, (number) => $LL.chat.artifacts.tableTab({ number }));
+            if (destroyed) return;
+            saveFile(blob, name);
+            showDownloadNote("saved", name);
+        } catch (error) {
+            console.warn("Could not make an artifact's file", error);
+            if (!destroyed) showDownloadNote("failed");
+        }
     }
 
     function toggleVersions() {
         menuOpen = !menuOpen;
         if (!menuOpen) return;
         shareOpen = false;
+        downloadOpen = false;
         roomAsked = false;
         menuRoom = undefined;
         void loadVersions();
@@ -578,6 +676,7 @@
         shareOpen = !shareOpen;
         if (!shareOpen) return;
         menuOpen = false;
+        downloadOpen = false;
         roomAsked = false;
         menuRoom = undefined;
         shareFailed = false;
@@ -620,7 +719,10 @@
     // Saved at once, one choice at a time: the list shows the choice while it is on its way, and goes back if it fails.
     // `otherwise` is the choice to save instead when "Just you" cannot be had from the artifacts' server as it is.
     function setSharing(change: ArtifactOpenScope, otherwise?: ArtifactOpenScope) {
-        if (!opened || pendingShare || publishing || change === opened.artifact.openScope) return;
+        // "Public" (an older choice) is "Anyone with the link" now, so tapping that row again changes nothing: it must not
+        // become a plain link, which shows the latest version to everyone
+        const now = opened?.artifact.openScope;
+        if (!opened || pendingShare || publishing || change === now || (change === "link" && now === "public")) return;
         const before = opened.artifact.openScope;
         pendingShare = change;
         shareFailed = false;
@@ -782,6 +884,20 @@
                     data-testid="artifactShare"
                     bind:this={shareButton}
                     on:click={toggleShare}><IconShare font-size="22" /></button
+                >
+            {/if}
+            {#if kind === "markdown"}
+                <button
+                    type="button"
+                    class="open-here-action"
+                    class:picked={downloadOpen}
+                    title={$LL.chat.artifacts.download()}
+                    aria-label={$LL.chat.artifacts.download()}
+                    aria-expanded={documentTables.length > 0 ? downloadOpen : undefined}
+                    disabled={!textReady || downloading}
+                    data-testid="artifactDownload"
+                    bind:this={downloadButton}
+                    on:click={toggleDownload}><IconDownload font-size="22" /></button
                 >
             {/if}
             {#if !compact}
@@ -999,6 +1115,46 @@
         {/if}
     </div>
 
+    {#if downloadOpen}
+        <div class="menu download-menu" bind:this={downloadMenu} data-testid="artifactDownloadMenu">
+            <button
+                type="button"
+                class="menu-row"
+                data-testid="artifactDownloadMarkdown"
+                on:click={() => download("markdown")}
+            >
+                <span class="menu-text">
+                    <b>{$LL.chat.artifacts.downloadDocument()}</b>
+                    <small>{$LL.chat.artifacts.downloadDocumentHelp()}</small>
+                </span>
+            </button>
+            <button
+                type="button"
+                class="menu-row"
+                data-testid="artifactDownloadSheet"
+                on:click={() => download("spreadsheet")}
+            >
+                <span class="menu-text">
+                    <b>{$LL.chat.artifacts.downloadSheet()}</b>
+                    <small>{$LL.chat.artifacts.downloadSheetHelp()}</small>
+                </span>
+            </button>
+        </div>
+    {/if}
+
+    {#if downloadNote}
+        <div
+            class="download-note"
+            class:failed={downloadNote.kind === "failed"}
+            role={downloadNote.kind === "failed" ? "alert" : "status"}
+            data-testid="artifactDownloadNote"
+        >
+            {downloadNote.kind === "failed"
+                ? $LL.chat.artifacts.downloadFailed()
+                : $LL.chat.artifacts.downloadSaved({ name: downloadNote.name })}
+        </div>
+    {/if}
+
     {#if menuOpen || shareOpen}
         <div
             class="menu"
@@ -1066,8 +1222,8 @@
                         type="button"
                         role="radio"
                         class="choice"
-                        class:picked={openScope === "link"}
-                        aria-checked={openScope === "link"}
+                        class:picked={sharedByLinkNow}
+                        aria-checked={sharedByLinkNow}
                         disabled={!!pendingShare || publishing}
                         data-testid="artifactOpenLink"
                         on:click={() => setSharing("link")}
@@ -1078,35 +1234,19 @@
                         >
                         <span class="radio" />
                     </button>
-                    <button
-                        type="button"
-                        role="radio"
-                        class="choice"
-                        class:picked={openScope === "public"}
-                        aria-checked={openScope === "public"}
-                        disabled={!!pendingShare || publishing}
-                        data-testid="artifactOpenPublic"
-                        on:click={() => setSharing("public")}
-                    >
-                        <span class="menu-text"
-                            ><b>{$LL.chat.artifacts.openPublic()}</b><small>{$LL.chat.artifacts.openPublicHelp()}</small
-                            ></span
-                        >
-                        <span class="radio" />
-                    </button>
                 </div>
-                {#if openScope === "public" || openScope === "link"}
+                {#if sharedByLinkNow}
                     {#if publishedGone}
                         <div class="publish-box" data-testid="artifactPublishedGone">
-                            <b class="unavailable">{$LL.chat.artifacts.publicUnavailable()}</b>
-                            <small>{$LL.chat.artifacts.publicUnavailableHelp()}</small>
+                            <b class="unavailable">{$LL.chat.artifacts.linkGone()}</b>
+                            <small>{$LL.chat.artifacts.linkGoneHelp()}</small>
                             {#if isLatest}
                                 <button
                                     type="button"
                                     class="go publish-full"
                                     disabled={publishing || !!pendingShare}
                                     data-testid="artifactPublish"
-                                    on:click={publish}>{$LL.chat.artifacts.publishVersion({ version: latest })}</button
+                                    on:click={publish}>{$LL.chat.artifacts.linkShow({ version: latest })}</button
                                 >
                             {:else}
                                 <button
@@ -1118,34 +1258,24 @@
                             {/if}
                         </div>
                     {:else if published}
-                        <div class="publish-row" data-testid="artifactPublished">
-                            <span class="publish-text">
-                                <b class="published"
-                                    ><IconCheck font-size="16" />
-                                    {$LL.chat.artifacts.publishedStatus({
-                                        version: published.version,
-                                        time: whenLabel(published.at),
-                                    })}</b
-                                >
-                                {#if published.version < latest}
-                                    <small>{$LL.chat.artifacts.unpublishedChanges({ version: latest })}</small>
-                                {/if}
-                            </span>
+                        <div class="publish-box" data-testid="artifactPublished">
+                            <b>{$LL.chat.artifacts.linkPinned({ version: published.version })}</b>
                             {#if published.version < latest}
+                                <small>{$LL.chat.artifacts.linkNewer()}</small>
                                 {#if isLatest}
                                     <button
                                         type="button"
-                                        class="go publish-pill"
+                                        class="glass publish-full"
                                         disabled={publishing || !!pendingShare}
                                         data-testid="artifactPublish"
                                         on:click={publish}
                                         >{#if publishing}<IconLoader font-size="16" class="spin" />{/if}
-                                        {$LL.chat.artifacts.publish()}</button
+                                        {$LL.chat.artifacts.linkShow({ version: latest })}</button
                                     >
                                 {:else}
                                     <button
                                         type="button"
-                                        class="go publish-pill"
+                                        class="glass publish-full"
                                         data-testid="artifactPublishOpenLatest"
                                         on:click={backToLatest}>{$LL.chat.artifacts.backToLatest()}</button
                                     >
@@ -1153,16 +1283,17 @@
                             {/if}
                         </div>
                     {:else if openScope === "public"}
+                        <!-- Set to Public before it went away (game #2115): nothing was ever put on the link, so it opens nothing -->
                         <div class="publish-box" data-testid="artifactNotPublished">
-                            <b>{$LL.chat.artifacts.notPublished()}</b>
-                            <small>{$LL.chat.artifacts.publishHelp()}</small>
+                            <b class="unavailable">{$LL.chat.artifacts.linkEmpty()}</b>
+                            <small>{$LL.chat.artifacts.linkEmptyHelp()}</small>
                             {#if isLatest}
                                 <button
                                     type="button"
                                     class="go publish-full"
                                     disabled={publishing || !!pendingShare}
                                     data-testid="artifactPublish"
-                                    on:click={publish}>{$LL.chat.artifacts.publishVersion({ version: latest })}</button
+                                    on:click={publish}>{$LL.chat.artifacts.linkOpenOn({ version: latest })}</button
                                 >
                             {:else}
                                 <button
@@ -1174,9 +1305,20 @@
                             {/if}
                         </div>
                     {:else}
-                        <p class="menu-note pin" data-testid="artifactLinkFollows">
-                            {$LL.chat.artifacts.linkFollows()}
-                        </p>
+                        <div class="publish-box" data-testid="artifactLinkFollows">
+                            <b>{$LL.chat.artifacts.linkFollows()}</b>
+                            {#if isLatest}
+                                <button
+                                    type="button"
+                                    class="glass publish-full"
+                                    disabled={publishing || !!pendingShare}
+                                    data-testid="artifactPublish"
+                                    on:click={publish}
+                                    >{#if publishing}<IconLoader font-size="16" class="spin" />{/if}
+                                    {$LL.chat.artifacts.linkKeep({ version: latest })}</button
+                                >
+                            {/if}
+                        </div>
                     {/if}
                     {#if publishFailed}
                         <p class="menu-note" role="alert" data-testid="artifactPublishFailedMenu">
@@ -1188,7 +1330,7 @@
                     <p class="menu-note" role="alert" data-testid="artifactShareFailed">
                         {$LL.chat.artifacts.shareFailed()}
                     </p>
-                {:else if (openScope === "link" || (openScope === "public" && published && !publishedGone)) && link}
+                {:else if linkOpens && link}
                     <div class="link-actions">
                         {#if canShare}
                             <button
@@ -1427,6 +1569,40 @@
     .document :global(a) {
         color: #c4b5fd;
     }
+    /*
+     * A table: the document's "break anywhere" rule would shrink every column to one letter and make each row thousands of
+     * pixels tall, so a cell keeps to one line and a table wider than the window scrolls sideways inside the document. The
+     * page's own table style (outer space, stretched rows, centred headings) never applies.
+     */
+    .document :global(table) {
+        display: block;
+        max-width: 100%;
+        height: auto;
+        margin: 0 0 0.8em;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border: 0;
+        border-radius: 0;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+    .document :global(th),
+    .document :global(td) {
+        height: auto;
+        padding: 5px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        text-align: left;
+        text-transform: none;
+        letter-spacing: normal;
+        vertical-align: top;
+        white-space: nowrap;
+        overflow-wrap: normal;
+        word-break: normal;
+    }
+    .document :global(th) {
+        background: rgba(255, 255, 255, 0.08);
+        font-weight: 700;
+    }
     .state {
         height: 100%;
         min-height: 160px;
@@ -1469,8 +1645,7 @@
         gap: 4px;
         padding: 12px 4px 4px;
     }
-    .publish-box > small,
-    .publish-text > small {
+    .publish-box > small {
         color: rgba(255, 255, 255, 0.72);
         font-size: 13px;
     }
@@ -1478,28 +1653,10 @@
         color: #fdba74;
         font-size: 14px;
     }
-    .publish-row {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 4px 4px;
-    }
-    .publish-text {
-        flex: 1;
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-    }
-    .publish-text .published {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        color: #c4b5fd;
-        font-size: 14px;
-    }
-    .go.publish-full {
+    .go.publish-full,
+    .glass.publish-full {
         width: 100%;
+        min-height: 44px;
         margin-top: 8px;
     }
     .go.publish-pill {
@@ -1507,9 +1664,6 @@
         width: auto;
         min-height: 44px;
         padding: 0 22px;
-    }
-    .menu-note.pin {
-        margin-top: 8px;
     }
     .old-note {
         display: flex;
@@ -1589,6 +1743,31 @@
         text-transform: uppercase;
         color: rgba(255, 255, 255, 0.6);
         padding: 6px 6px 2px;
+    }
+    .download-menu {
+        min-width: 240px;
+    }
+    .download-note {
+        position: absolute;
+        inset-inline: 12px;
+        bottom: max(16px, env(safe-area-inset-bottom));
+        z-index: 6;
+        margin-inline: auto;
+        width: fit-content;
+        max-width: calc(100% - 24px);
+        padding: 9px 14px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 999px;
+        background: rgba(42, 38, 64, 0.96);
+        color: #fff;
+        font-size: 13px;
+        text-align: center;
+        overflow-wrap: anywhere;
+        pointer-events: none;
+    }
+    .download-note.failed {
+        border-color: rgba(248, 113, 113, 0.6);
+        background: rgba(74, 31, 38, 0.97);
     }
     .menu-row {
         display: flex;

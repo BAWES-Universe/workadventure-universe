@@ -40,6 +40,8 @@ export interface BrickPageWay extends BrickDeleteAsk {
     save: (change: BrickChange) => Promise<boolean>;
     /** Opens the Apps page, looking for this app (a Brick made from a template that needs one: "Connect Gmail"). */
     openApps?: (search: string) => void;
+    /** Opens this Brick's own Apps screen: the apps it can use, and what it may do with each. Without it the row is not shown. */
+    openBrickApps?: () => void;
     /** Opens "Everything Brick did", the page of every run this Brick made by itself (game #2002). */
     openDid?: () => void;
 }
@@ -68,7 +70,7 @@ export interface BotData {
         conversationRadius?: number; // For social bots: detection range for players
         patrolWaypoints?: Array<{ x: number; y: number }>; // For patrol bots
         minTimeBetweenConversations?: number; // For social bots
-        showToolCalls?: boolean; // Show a 🔍 bubble when the bot uses an outside (MCP) tool; off when missing
+        showToolCalls?: boolean; // "Show app use": which app the bot used, in chat; on when missing, off only when its owner turned it off
         vision?: VisionPick | null; // Where its images go (the Vision row); nothing = the owner picked nothing
         [key: string]: unknown;
     };
