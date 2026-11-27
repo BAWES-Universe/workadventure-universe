@@ -122,7 +122,7 @@ const chat: DeepPartial<Translation["chat"]> = {
         downloadSheet: "Taula com a full de càlcul",
         downloadSheetHelp: "Fitxer de full de càlcul (.xlsx), una pestanya per taula",
         downloadSaved: "«{name}» desat",
-        downloadFailed: "No s"ha pogut crear el fitxer. Torna-ho a provar.",
+        downloadFailed: "No s'ha pogut crear el fitxer. Torna-ho a provar.",
         tableTab: "Taula {number}",
         shareFailed: "No s'ha pogut desar. Torna-ho a provar.",
         codeCut: "Es mostra la primera part del fitxer.",
