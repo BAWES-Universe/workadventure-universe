@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import { fileNameOf, hasTable, markdownFile, markdownTables, sheetNamesOf, spreadsheetFile } from "./artifactDownload";
 
+/** A file's bytes, read the way a browser page reads them (jsdom's Blob has no text() or arrayBuffer()). */
+function readBlob<T extends string | ArrayBuffer>(blob: Blob, as: "text" | "buffer"): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as T);
+        reader.onerror = () => reject(reader.error ?? new Error("Could not read the file"));
+        if (as === "text") reader.readAsText(blob);
+        else reader.readAsArrayBuffer(blob);
+    });
+}
+
 const DOC = [
     "# Calendar notes",
     "",
@@ -112,12 +123,12 @@ describe("sheetNamesOf", () => {
 
 describe("files", () => {
     it("gives the Markdown file exactly as it is", async () => {
-        expect(await markdownFile(DOC).text()).toBe(DOC);
+        expect(await readBlob<string>(markdownFile(DOC), "text")).toBe(DOC);
     });
 
     it("makes a spreadsheet with one tab for each table, every cell plain text", async () => {
         const blob = await spreadsheetFile(markdownTables(DOC), (n) => `Table ${n}`);
-        const book = XLSX.read(new Uint8Array(await blob.arrayBuffer()), { type: "array" });
+        const book = XLSX.read(new Uint8Array(await readBlob<ArrayBuffer>(blob, "buffer")), { type: "array" });
         expect(book.SheetNames).toEqual(["Buckets", "Buckets 2"]);
         const sheet = book.Sheets["Buckets"];
         // "=1+1" is the words, never a formula: a string cell with no formula

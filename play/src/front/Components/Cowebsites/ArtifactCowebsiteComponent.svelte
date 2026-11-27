@@ -32,7 +32,6 @@
     import { askOpenHereForRoom } from "../../Stores/OpenHereSheetStore";
     import OpenHereRow from "../EmbedScreens/OpenHereRow.svelte";
     import OpenHereItemIcon from "../EmbedScreens/OpenHereItemIcon.svelte";
-    import CodeView from "./FileViewer/CodeView.svelte";
     import {
         fileNameOf,
         markdownFile,
@@ -40,6 +39,7 @@
         saveFile,
         spreadsheetFile,
     } from "../../Artifacts/artifactDownload";
+    import CodeView from "./FileViewer/CodeView.svelte";
     import {
         IconAlertTriangle,
         IconCheck,
@@ -636,7 +636,7 @@
     }
 
     /** The file is made from the version that was on show when it was asked for, which is named when it is not the latest. */
-    async function download(what: "markdown" | "spreadsheet") {
+    function download(what: "markdown" | "spreadsheet") {
         if (!text || !opened || downloading || kind !== "markdown") return;
         const source = text.content;
         const tables = documentTables;
@@ -647,6 +647,18 @@
         );
         downloadOpen = false;
         downloading = true;
+        // The flag is let go here, not inside the async part, so nothing reads it before a wait and writes it after
+        void makeFile(what, source, tables, name).finally(() => {
+            downloading = false;
+        });
+    }
+
+    async function makeFile(
+        what: "markdown" | "spreadsheet",
+        source: string,
+        tables: ReturnType<typeof markdownTables>,
+        name: string
+    ): Promise<void> {
         try {
             const blob =
                 what === "markdown"
@@ -658,8 +670,6 @@
         } catch (error) {
             console.warn("Could not make an artifact's file", error);
             if (!destroyed) showDownloadNote("failed");
-        } finally {
-            downloading = false;
         }
     }
 

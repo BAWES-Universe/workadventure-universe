@@ -1,4 +1,5 @@
 import { marked, type Token, type Tokens } from "marked";
+import type { WorkSheet } from "xlsx";
 
 /**
  * Download of a Document (a Markdown artifact), made in the browser from the text of the version on screen: the Markdown
@@ -134,7 +135,7 @@ export async function spreadsheetFile(tables: DocumentTable[], fallbackName: (nu
     const names = sheetNamesOf(kept, fallbackName);
     const book = XLSX.utils.book_new();
     kept.forEach((table, index) => {
-        const sheet: import("xlsx").WorkSheet = {};
+        const sheet: WorkSheet = {};
         let widest = 0;
         table.rows.forEach((row, r) => {
             widest = Math.max(widest, row.length);
