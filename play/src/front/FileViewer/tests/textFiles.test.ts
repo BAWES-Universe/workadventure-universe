@@ -190,6 +190,96 @@ describe("Markdown", () => {
         expect(host.querySelector("pre code")?.textContent).toContain("code");
     });
 
+    describe("single new lines (docs keep them, the chat file viewer does not)", () => {
+        const keep = (markdown: string) => {
+            const host = document.createElement("div");
+            host.innerHTML = renderMarkdown(markdown, { keepLineBreaks: true });
+            return host;
+        };
+
+        it("joins a single new line inside a paragraph into one line by default (chat file viewer)", () => {
+            const host = render("Owner: Dana\nRead from: Hub\n");
+            expect(host.querySelectorAll("br")).toHaveLength(0);
+            expect(host.querySelectorAll("p")).toHaveLength(1);
+        });
+
+        // The same three documents and the same expected HTML are in Orbit's public-artifact test: the docs window and the
+        // public link page must draw a document alike. (The game also adds target and rel to links; the link page does it with
+        // <base target="_blank">.)
+        const SAME_DOC_CASES: Record<string, { markdown: string; html: string }> = {
+            handover: {
+                markdown:
+                    "# Handover pack\n\nOwner: khalid@bawes.net\nRead from: three calendars\nRange read: 2026-10-28 to 2026-12-28\nNotes captured: 104\nRead on: 27 Nov 2026\n\nPart 1 is the ledger.\nPart 2 is the handover.",
+                html: '<h1>Handover pack</h1>\n<p>Owner: <a href="mailto:khalid@bawes.net">khalid@bawes.net</a><br>Read from: three calendars<br>Range read: 2026-10-28 to 2026-12-28<br>Notes captured: 104<br>Read on: 27 Nov 2026</p>\n<p>Part 1 is the ledger.<br>Part 2 is the handover.</p>\n',
+            },
+            normal: {
+                markdown:
+                    "## Trip checklist\n\n- Adapter\n- Sunscreen\n  - SPF 50\n- Passport\n  keep it in the hand bag\n\n> Ask the hotel first.\n> Then the driver.\n\n1. Pack\n2. Check in\n\n```\nline one\nline two\n```\n\n| # | Date | Time |\n|---|------|------|\n| 1 | 2026-10-28 | 22:10 |\n| 2 | 2026-10-29 | 22:20 |\n\nLine ends with two spaces    \nso this is a hard break either way.",
+                html: "<h2>Trip checklist</h2>\n<ul>\n<li>Adapter</li>\n<li>Sunscreen<ul>\n<li>SPF 50</li>\n</ul>\n</li>\n<li>Passport<br>keep it in the hand bag</li>\n</ul>\n<blockquote>\n<p>Ask the hotel first.<br>Then the driver.</p>\n</blockquote>\n<ol>\n<li>Pack</li>\n<li>Check in</li>\n</ol>\n<pre><code>line one\nline two\n</code></pre>\n<table>\n<thead>\n<tr>\n<th>#</th>\n<th>Date</th>\n<th>Time</th>\n</tr>\n</thead>\n<tbody><tr>\n<td>1</td>\n<td>2026-10-28</td>\n<td>22:10</td>\n</tr>\n<tr>\n<td>2</td>\n<td>2026-10-29</td>\n<td>22:20</td>\n</tr>\n</tbody></table>\n<p>Line ends with two spaces<br>so this is a hard break either way.</p>\n",
+            },
+            wrapped: {
+                markdown:
+                    "## Summary\n\nThe renewal window opens in March and the team has agreed to review all three\nvendor offers before the end of February, so that nothing is signed under\ntime pressure and the budget owner can see the numbers early.\n\nThe second paragraph was typed on one long line by a person, so it is the same before and after, whatever the window width is.",
+                html: "<h2>Summary</h2>\n<p>The renewal window opens in March and the team has agreed to review all three<br>vendor offers before the end of February, so that nothing is signed under<br>time pressure and the budget owner can see the numbers early.</p>\n<p>The second paragraph was typed on one long line by a person, so it is the same before and after, whatever the window width is.</p>\n",
+            },
+        };
+
+        it.each(Object.keys(SAME_DOC_CASES))("draws the %s document the way the Orbit link page does", (name) => {
+            const { markdown, html } = SAME_DOC_CASES[name];
+            expect(keep(markdown).innerHTML.replace(' target="_blank" rel="noopener noreferrer"', "")).toBe(html);
+        });
+
+        it("keeps a single new line inside a paragraph as a line break in docs", () => {
+            const host = keep("Owner: Dana\nRead from: Hub\n\nNext paragraph\n");
+            const paragraphs = host.querySelectorAll("p");
+            expect(paragraphs).toHaveLength(2);
+            expect(paragraphs[0].querySelectorAll("br")).toHaveLength(1);
+            expect(paragraphs[0].innerHTML).toBe("Owner: Dana<br>Read from: Hub");
+            expect(paragraphs[1].querySelectorAll("br")).toHaveLength(0);
+        });
+
+        it("keeps a hand-wrapped line break mid-sentence in docs (the known cost of the change)", () => {
+            const host = keep("A sentence that a writer wrapped\nby hand at the window edge.\n");
+            expect(host.querySelectorAll("p br")).toHaveLength(1);
+        });
+
+        it("keeps a new line inside a list item and inside a quote as a line break in docs", () => {
+            const list = keep("- one\n  continued\n- two\n");
+            expect(list.querySelectorAll("li")).toHaveLength(2);
+            expect(list.querySelectorAll("li")[0].querySelectorAll("br")).toHaveLength(1);
+            expect(list.querySelectorAll("li")[1].querySelectorAll("br")).toHaveLength(0);
+            const quote = keep("> first\n> second\n");
+            expect(quote.querySelectorAll("blockquote")).toHaveLength(1);
+            expect(quote.querySelectorAll("blockquote br")).toHaveLength(1);
+        });
+
+        it("draws lists, tables and code blocks the same with or without the setting", () => {
+            const markdown =
+                "# Title\n\n- one\n- two\n  - nested\n\n1. first\n2. second\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\nline 1\nline 2\n```\n\n- [x] done\n- [ ] todo\n";
+            expect(keep(markdown).innerHTML).toBe(render(markdown).innerHTML);
+            expect(keep(markdown).querySelectorAll("br")).toHaveLength(0);
+        });
+
+        it("keeps the new lines of a code block as they are, with no extra breaks", () => {
+            const host = keep("```\nline 1\nline 2\n```\n");
+            expect(host.querySelector("pre code")?.textContent).toBe("line 1\nline 2\n");
+            expect(host.querySelectorAll("br")).toHaveLength(0);
+        });
+
+        it("draws a two-space hard break the same with or without the setting", () => {
+            const markdown = "first  \nsecond\n";
+            expect(keep(markdown).innerHTML).toBe(render(markdown).innerHTML);
+            expect(keep(markdown).querySelectorAll("br")).toHaveLength(1);
+        });
+
+        it("still cleans the file's HTML with the setting on", () => {
+            const host = keep('hello\nworld <script>alert(1)</script><img src="x" onerror="alert(1)">\n');
+            expect(host.querySelector("script")).toBeNull();
+            expect(host.querySelector("[onerror]")).toBeNull();
+            expect(host.querySelectorAll("br")).toHaveLength(1);
+        });
+    });
+
     it("shows task list items as ticked and unticked signs, never as form fields", () => {
         const host = render("- [x] done\n- [ ] todo\n");
         const items = Array.from(host.querySelectorAll("li")).map((item) => item.textContent?.trim());

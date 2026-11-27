@@ -745,7 +745,7 @@
     }
 
     $: codeLines = text ? codeLinesOf(text.content) : [];
-    $: documentHtml = kind === "markdown" && text ? renderMarkdown(text.content) : "";
+    $: documentHtml = kind === "markdown" && text ? renderMarkdown(text.content, { keepLineBreaks: true }) : "";
 </script>
 
 <svelte:window on:pointerdown={onPointerDown} />
