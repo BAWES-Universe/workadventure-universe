@@ -38,6 +38,7 @@
     import BrickFilesGroup from "../../../Chat/Bricks/BrickFilesGroup.svelte";
     import BrickGoalsGroup from "../../../Chat/Bricks/BrickGoalsGroup.svelte";
     import BrickMemoryGroup from "../../../Chat/Bricks/BrickMemoryGroup.svelte";
+    import BrickAppsRow from "../../../Chat/Bricks/Apps/BrickAppsRow.svelte";
     import ComputerGroup from "../../../Chat/Bricks/Computer/ComputerGroup.svelte";
     import BrickMadeFrom from "../../../Chat/Bricks/Templates/BrickMadeFrom.svelte";
     import BrickTemplateGroup from "../../../Chat/Bricks/Templates/BrickTemplateGroup.svelte";
@@ -1000,7 +1001,7 @@
         <div class="bp-groups">
             {#if brick}
                 <!-- A Brick's page, in the mock's order: Mind, Personality, Voice, Behavior, Computer, Memory, Files, Permissions
-                     and Companion are here. Usage, Apps and Goals and tasks come with their own issues; Template (#2008) is the last group before Advanced settings -->
+                     and Companion are here. Usage comes with its own issue; Apps (a row that opens its own screen) follow Computer; Template (#2008) is the last group before Advanced settings -->
                 <MindGroup
                     bot={currentBot}
                     open={openGroup === "mind"}
@@ -1034,6 +1035,10 @@
                         open={openGroup === "computer"}
                         onToggle={toggleGroup}
                     />
+                {/if}
+                <!-- The apps it can use: a row that opens the Brick's own Apps screen -->
+                {#if currentBot?.id && brick.openBrickApps}
+                    <BrickAppsRow botId={currentBot.id} onOpen={brick.openBrickApps} />
                 {/if}
                 <!-- What it keeps for its owner: goals, briefings, watches and reminders (game #2002), then what it
                      remembers about them and its files (game #2003) -->

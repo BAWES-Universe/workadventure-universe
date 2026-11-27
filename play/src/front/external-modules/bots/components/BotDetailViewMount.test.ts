@@ -35,6 +35,11 @@ vi.mock("../../../Connection/LocalUserStore", () => ({
 }));
 // A Brick's page opens its chat from Goals and tasks; this page is no Brick's
 vi.mock("../../../Chat/Bricks/BrickChat", () => ({ openBrickChat: () => Promise.resolve(undefined) }));
+// A Brick's Apps row reads the person's apps, which asks whether they are signed in
+vi.mock("../../../Stores/MenuStore", async () => {
+    const store = await import("svelte/store");
+    return { userIsConnected: store.writable(true) };
+});
 vi.mock("../../admin-api/index", () => ({ canOpenOrbit: () => false, openOrbitPage: () => {} }));
 
 import { loadLocale } from "../../../../i18n/i18n-util.sync";

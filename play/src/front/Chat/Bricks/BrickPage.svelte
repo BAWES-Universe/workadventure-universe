@@ -3,9 +3,12 @@
     import PanelHeader from "../../Components/MapEditor/EditMode/PanelHeader.svelte";
     import BotDetailView from "../../external-modules/bots/components/BotDetailView.svelte";
     import BotFooter from "../../external-modules/bots/components/page/BotFooter.svelte";
+    import { showsToolCalls } from "../../external-modules/bots/behaviorModel";
     import { botApiService } from "../../external-modules/bots/services/BotApiService";
     import type { BotData, BrickChange, BrickPageWay } from "../../external-modules/bots/types";
     import { warningMessageStore } from "../../Stores/ErrorStore";
+    import BrickAppsPage from "./Apps/BrickAppsPage.svelte";
+    import { seedShowAppUse } from "./Apps/BrickShowAppUse";
     import { openAppsPage } from "./Apps/OpenApps";
     import { brickPageBot, shortDay, type BrickCard } from "./Brick";
     import BrickDidPage from "./BrickDidPage.svelte";
@@ -19,8 +22,7 @@
      * made it and Delete. Delete asks once and says what goes, what stays, and until when Undo works.
      *
      * A Brick has no room, so its changes go through its own route. Only the parts a Brick has so far are on it: its look,
-     * Mind, Personality, Behavior and Companion, and Advanced settings. Usage, Voice, Apps, Computer, Goals and tasks,
-     * Memory, Files, Permissions and Template come with their own issues.
+     * Mind, Personality, Behavior, Apps, Computer and the rest that have their own issues, and Advanced settings.
      */
     export let brick: BrickCard;
     export let onBack: () => void;
@@ -37,7 +39,12 @@
     let loadedFor: string | undefined;
     // "Everything Brick did" (#2002), open over the page: the page stays under it, so Back finds it as it was
     let didOpen = false;
-    $: if (brick.id !== loadedFor) didOpen = false;
+    // The Brick's Apps screen (the apps it can use and what it may do with each), open over the page the same way
+    let appsOpen = false;
+    $: if (brick.id !== loadedFor) {
+        didOpen = false;
+        appsOpen = false;
+    }
 
     $: if (brick.id !== loadedFor) load(brick);
 
@@ -48,7 +55,9 @@
         botApiService
             .getBot(card.id)
             .then((read) => {
-                if (loadedFor === card.id) bot = brickPageBot(read, card);
+                if (loadedFor !== card.id) return;
+                bot = brickPageBot(read, card);
+                seedShowAppUse(card.id, showsToolCalls(bot));
             })
             .catch((error: unknown) => {
                 console.warn("Could not read a Brick", error);
@@ -62,6 +71,9 @@
         openApps: (search: string) => openAppsPage({ search }),
         openDid: () => {
             didOpen = true;
+        },
+        openBrickApps: () => {
+            appsOpen = true;
         },
         undoLine: undoUntil ? $LL.chat.brick.undoUntil({ day: undoUntil }) : $LL.chat.brick.undoLater(),
         // Its computer's files are offered here once a Brick has a computer (game #2000)
@@ -86,7 +98,10 @@
 {#if didOpen}
     <BrickDidPage botId={brick.id} name={brick.name} onBack={() => (didOpen = false)} />
 {/if}
-<div class="bkp flex h-full min-h-0 flex-col" class:hidden={didOpen} data-testid="brickPage">
+{#if appsOpen}
+    <BrickAppsPage botId={brick.id} botName={brick.name} onBack={() => (appsOpen = false)} />
+{/if}
+<div class="bkp flex h-full min-h-0 flex-col" class:hidden={didOpen || appsOpen} data-testid="brickPage">
     <PanelHeader
         title={backTitle ?? $LL.chat.brick.bricks()}
         {onBack}
