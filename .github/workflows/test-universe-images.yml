@@ -46,6 +46,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Docker image references must be lowercase, but github.repository_owner keeps the org's
+      # capitalisation (BAWES-Universe). Compose builds ghcr.io/<owner>/<image>:<tag>, so use the
+      # lowercase owner (ghcr.io/bawes-universe/...). Without it the stack never starts and the
+      # tests never run ("repository name must be lowercase").
+      - name: Lowercase image owner
+        id: owner
+        run: echo "lower=${REPO_OWNER,,}" >> "$GITHUB_OUTPUT"
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
@@ -123,7 +133,7 @@ jobs:
           sed -i "s/LIVEKIT_API_SECRET=/LIVEKIT_API_SECRET=12345678901234567890123456789012/g" .env
           sed -i "s/MAX_PER_GROUP=4/MAX_PER_GROUP=100/g" .env
           echo "WOKA_SPEED=3" >> .env
-          echo "GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}" >> .env
+          echo "GITHUB_REPOSITORY_OWNER=${{ steps.owner.outputs.lower }}" >> .env
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
         working-directory: contrib/docker
@@ -133,7 +143,7 @@ jobs:
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml up -d
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_OWNER: ${{ steps.owner.outputs.lower }}
         working-directory: contrib/docker
 
       - name: Wait for services to be ready
@@ -163,7 +173,7 @@ jobs:
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml logs
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_OWNER: ${{ steps.owner.outputs.lower }}
         working-directory: contrib/docker
 
       - name: Display containers state on failure
@@ -172,7 +182,7 @@ jobs:
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml ps
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_OWNER: ${{ steps.owner.outputs.lower }}
         working-directory: contrib/docker
 
       - name: Side-load docker compose logs in playwright report
@@ -181,7 +191,7 @@ jobs:
           docker compose -f docker-compose.prod.yaml -f docker-compose.universe.yaml -f tests/docker-compose.test.yaml logs > ../../tests/playwright-report/docker-compose.log
         env:
           DOCKER_TAG: ${{ steps.docker-tag.outputs.tag }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_OWNER: ${{ steps.owner.outputs.lower }}
         working-directory: contrib/docker
 
       - name: Upload Playwright report
