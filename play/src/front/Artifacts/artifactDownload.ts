@@ -18,8 +18,6 @@ export interface DocumentTable {
 const SHEET_NAME_MAX = 31;
 /** A file name is kept to this long, before its ending. */
 const FILE_NAME_MAX = 100;
-/** More tables than this in one document are not put in the spreadsheet (a workbook of hundreds of tabs helps no one). */
-export const MAX_SHEET_TABS = 64;
 
 /** The text of inline Markdown, without its marks: **bold** is bold, [a link](url) is "a link". */
 function plainOf(tokens: Token[] | undefined, fallback: string): string {
@@ -50,29 +48,44 @@ function plainOf(tokens: Token[] | undefined, fallback: string): string {
     return text;
 }
 
-/** The few entities Markdown leaves in text (&amp; and the like). */
+/**
+ * The text a character reference stands for, all of them in one pass (&amp; &lt; &#65; &euro; and the rest): what a reader
+ * sees. The browser's own decoder is used, on a text box that never runs or shows anything, so no list of names is kept
+ * here and nothing that was decoded is decoded a second time (a code span's "&#65;" stays as written).
+ */
 function decode(text: string): string {
-    return text
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&amp;/g, "&");
+    if (!text.includes("&")) return text;
+    const box = document.createElement("textarea");
+    box.innerHTML = text;
+    return box.value;
 }
 
-/** Every table of a Markdown text, in order, each with the heading above it. */
+/** The blocks inside a block that holds others: a quote, a list and each of its items. */
+function childBlocks(token: Token): Token[] {
+    if (token.type === "list") return (token as Tokens.List).items;
+    if ("tokens" in token && token.tokens && (token.type === "blockquote" || token.type === "list_item")) return token.tokens;
+    return [];
+}
+
+/** Every table of a Markdown text, in order, each with the heading above it, also one inside a quote or a list. */
 export function markdownTables(markdown: string): DocumentTable[] {
     const tables: DocumentTable[] = [];
     let heading = "";
-    for (const token of marked.lexer(markdown, { gfm: true })) {
-        if (token.type === "heading") {
-            heading = plainOf((token as Tokens.Heading).tokens, (token as Tokens.Heading).text).trim();
-        } else if (token.type === "table") {
-            const table = token as Tokens.Table;
-            const row = (cells: Tokens.TableCell[]) => cells.map((cell) => plainOf(cell.tokens, cell.text).trim());
-            tables.push({ title: heading, rows: [row(table.header), ...table.rows.map(row)] });
+    const visit = (tokens: Token[]) => {
+        for (const token of tokens) {
+            if (token.type === "heading") {
+                heading = plainOf((token as Tokens.Heading).tokens, (token as Tokens.Heading).text).trim();
+            } else if (token.type === "table") {
+                const table = token as Tokens.Table;
+                const row = (cells: Tokens.TableCell[]) => cells.map((cell) => plainOf(cell.tokens, cell.text).trim());
+                tables.push({ title: heading, rows: [row(table.header), ...table.rows.map(row)] });
+            } else {
+                // A code block has no child blocks here, so a table written in one is never read as a table
+                visit(childBlocks(token));
+            }
         }
-    }
+    };
+    visit(marked.lexer(markdown, { gfm: true }));
     return tables;
 }
 
@@ -131,10 +144,9 @@ export function markdownFile(markdown: string): Blob {
  */
 export async function spreadsheetFile(tables: DocumentTable[], fallbackName: (number: number) => string): Promise<Blob> {
     const XLSX = await import("xlsx");
-    const kept = tables.slice(0, MAX_SHEET_TABS);
-    const names = sheetNamesOf(kept, fallbackName);
+    const names = sheetNamesOf(tables, fallbackName);
     const book = XLSX.utils.book_new();
-    kept.forEach((table, index) => {
+    tables.forEach((table, index) => {
         const sheet: WorkSheet = {};
         let widest = 0;
         table.rows.forEach((row, r) => {
