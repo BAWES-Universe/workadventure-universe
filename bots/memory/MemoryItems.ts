@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto';
 import type { BotPlayerMemory } from './ConversationMemory';
 import { mayUse, type Heard, type MemoryView } from './Heard';
+import { DISLIKE_LABEL, plainThing, tastesIn } from './PersonalInfoRules';
 
 export const MEMORY_ITEM_KINDS = ['name', 'birthday', 'pref', 'fact'] as const;
 export type MemoryItemKind = (typeof MEMORY_ITEM_KINDS)[number];
@@ -111,12 +112,37 @@ export function visibleItems(memory: BotPlayerMemory, view: MemoryView): MemoryI
 
 /** The shortest a phrase may be for lines of the chat to be taken out by the words they hold, when no line was noted. */
 const MIN_PHRASE = 4;
+
 /** Matches nothing: an echo that is only looked for in the reply right after its line. */
 const NEVER = /(?!)/;
 
+/** Scripts written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Burmese) have no word edges: "喜欢茶" sits inside "我喜欢茶很多". */
+const UNSPACED = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]$/u;
+
+/**
+ * The words in the form a line is compared in (composed, so "e" + a combining accent is the same as "é"), with what must not touch
+ * them on each side so they are not a piece of a longer word. A letter, digit or combining mark at an edge must not touch another
+ * one; an edge that is a symbol, a space or a letter of a script written without spaces has nothing to touch.
+ */
+function wordEdges(text: string): { body: string; before: string; after: string; lookAhead: string } {
+    const body = escapeRegExp(text.normalize('NFC'));
+    const letters = Array.from(text.normalize('NFC'));
+    const touches = (one: string | undefined) => one !== undefined && /[\p{L}\p{N}\p{M}]/u.test(one) && !UNSPACED.test(one);
+    const before = touches(letters[0]) ? '(^|[^\\p{L}\\p{N}\\p{M}])' : '';
+    const after = touches(letters[letters.length - 1]) ? '($|[^\\p{L}\\p{N}\\p{M}])' : '';
+    const lookAhead = touches(letters[letters.length - 1]) ? '(?![\\p{L}\\p{N}\\p{M}])' : '';
+    return { body, before, after, lookAhead };
+}
+
+/** What a line is compared in: composed, like the words. */
+function composed(text: string): string {
+    return text.normalize('NFC');
+}
+
 /** These words as their own words, not a piece of a longer one. */
 function wholeWords(text: string, exactCase = false): RegExp {
-    return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`, exactCase ? 'u' : 'iu');
+    const edges = wordEdges(text);
+    return new RegExp(`${edges.before}${edges.body}${edges.after}`, exactCase ? 'u' : 'iu');
 }
 
 /** A name written with a capital ("Will", "Rose") is found only as written, so the word it is also ("will", "rose") is left alone. */
@@ -128,13 +154,31 @@ function escapeRegExp(text: string): string {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** A bot line that tells the person what they like back ("You love tea", "Since you enjoy tea"), not one that only has the word. */
-function saidBackToThem(text: string): RegExp {
-    const word = `(^|[^\\p{L}\\p{N}])${escapeRegExp(text)}($|[^\\p{L}\\p{N}])`;
+const LIKE_WORDS = `likes?|loves?|loved|enjoys?|enjoyed|prefer|prefers|preferred|adores?|favou?rite|fan of|into|go-to`;
+const DISLIKE_WORDS = `hates?|hated|dislikes?|disliked|despises?|detests?|loathes?|avoid|avoids|(?:can['’]?t|cannot|can not) stand|(?:don['’]?t|do not|doesn['’]?t|does not) (?:like|enjoy|love)|not a fan of|not into|sick of|tired of`;
+
+/** How a person gives their name, in any capitals: "my name is sara", "call me Ali", "I'm ali". Said again lower case, it is still their name. */
+function givenAs(name: string): RegExp {
+    return new RegExp(`(?:my name(?:['’]s| is)|call me|(?<![\\p{L}\\p{N}])i(?:['’]m| am)(?: called| named)?)\\s+${wordEdges(name).body}${wordEdges(name).lookAhead}`, 'iu');
+}
+
+/** A bot line that tells the person what they like (or, with the dislike words, do not like) back ("You love tea", "You hate tea"), not one that only has the word. */
+function saidBackToThem(text: string, words = LIKE_WORDS): RegExp {
+    const edges = wordEdges(text);
+    const word = `${edges.before}${edges.body}${edges.after}`;
     const person = `(?<![\\p{L}\\p{N}])(you|your|you're|you've)(?![\\p{L}\\p{N}])`;
-    const likes = `(?<![\\p{L}\\p{N}])(likes?|loves?|loved|enjoys?|enjoyed|prefer|prefers|preferred|adores?|favou?rite|fan of|into|go-to)(?![\\p{L}\\p{N}])`;
+    const likes = `(?<![\\p{L}\\p{N}])(${words})(?![\\p{L}\\p{N}])`;
     // "You love tea" and "Tea is your favorite": the person, a word for liking, and the value, in either order, in one sentence
     return new RegExp(`${person}[^.!?\\n]{0,40}?${likes}[^.!?\\n]{0,25}?${word}|${word}[^.!?\\n]{0,40}?${person}[^.!?\\n]{0,40}?${likes}`, 'iu');
+}
+
+/** A line where the person puts the value first and then says it is theirs ("Tea is my favorite drink", "Tea? I hate it"), with the words of liking or not liking. */
+function saidFirstByThem(text: string, words: string): RegExp {
+    const edges = wordEdges(text);
+    const word = `${edges.before}${edges.body}${edges.after}`;
+    const mine = `(?<![\\p{L}\\p{N}])(i|my)(?![\\p{L}\\p{N}])`;
+    const likes = `(?<![\\p{L}\\p{N}])(${words})(?![\\p{L}\\p{N}])`;
+    return new RegExp(`${word}[^.!?\\n]{0,25}?${mine}[^.!?\\n]{0,25}?${likes}`, 'iu');
 }
 
 /**
@@ -146,9 +190,12 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
     if (keys.size === 0) return 0;
     const info = memory.personalInfo;
     const history = memory.conversationHistory;
-    const doomedLines = new Set<object>();
-    const phrases: RegExp[] = [];
-    const echoes: Array<{ at: number | null; ownName: boolean; words: RegExp; toldBack: RegExp }> = [];
+    // Each thing being forgotten is an owner: a line it took remembers which thing took it, so the bot's reply after it is only
+    // looked at for the words of that same thing
+    let owner = 0;
+    const doomedLines = new Map<object, Set<number>>();
+    const phrases: Array<{ words: RegExp; owner: number }> = [];
+    const echoes: Array<{ owner: number; at: number | null; ownName: boolean; words: RegExp; toldBack: RegExp }> = [];
     let removed = 0;
 
     const goes = (id: string, at: number | null) => {
@@ -161,15 +208,34 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         if (info.heard) delete info.heard[key];
         if (info.drawnFrom) delete info.drawnFrom[key];
     };
-    const takeLines = (at: number | null, phrase: string, ownName = false) => {
-        if (at !== null) for (const line of history) if (line.timestamp === at && line.sender === 'person') doomedLines.add(line);
+    // Short dislikes ("tea"): the person's lines that say they do not like it, found by what they say and not by the bare word
+    const shortDislikes: Array<{ value: string; first: RegExp; owner: number }> = [];
+    const shortLikes: Array<{ value: string; first: RegExp; owner: number }> = [];
+    // Short names ("Ali"): the person's lines that give it ("my name is Ali", "I'm Ali", "call me Ali")
+    const shortNames: Array<{ words: RegExp; owner: number }> = [];
+    const takeLines = (at: number | null, phrase: string, ownName = false, taste: 'like' | 'dislike' | null = null) => {
+        const dislike = taste === 'dislike';
+        owner++;
+        const mine = owner;
+        if (at !== null) {
+            for (const line of history) {
+                if (line.timestamp === at && line.sender === 'person') doomedLines.set(line, (doomedLines.get(line) ?? new Set<number>()).add(mine));
+            }
+        }
         // The lines that say it back go too, the bot's and the person's: only the last line it was said in is noted, and a thing
         // said twice would otherwise leave the first. Words are matched whole ("Mark" is not "bookmark").
-        if (phrase.trim().length >= MIN_PHRASE) phrases.push(wholeWords(phrase.trim(), ownName && sameCaseAsWritten(phrase.trim())));
+        if (phrase.trim().length >= MIN_PHRASE) {
+            phrases.push({ words: wholeWords(phrase.trim(), ownName && sameCaseAsWritten(phrase.trim())), owner: mine });
+            // The lines that give a name are found in any capitals, for a long name too: "my name is sara" for "Sara"
+            if (ownName) phrases.push({ words: givenAs(phrase.trim()), owner: mine });
+        }
         // A value too short to match everywhere ("Amy") is still said back in the reply right after the line it came from
         else if (phrase.trim().length > 0) {
             const short = phrase.trim();
-            echoes.push({ at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short) });
+            echoes.push({ owner: mine, at, ownName, words: wholeWords(short, ownName && sameCaseAsWritten(short)), toldBack: saidBackToThem(short, dislike ? DISLIKE_WORDS : LIKE_WORDS) });
+            if (ownName) shortNames.push({ owner: mine, words: givenAs(short) });
+            if (taste === 'dislike') shortDislikes.push({ value: short.toLowerCase(), first: saidFirstByThem(short, DISLIKE_WORDS), owner: mine });
+            else if (taste === 'like') shortLikes.push({ value: short.toLowerCase(), first: saidFirstByThem(short, LIKE_WORDS), owner: mine });
         }
     };
 
@@ -199,7 +265,8 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
             const key = `pref:${preference}`;
             const at = positive(info.drawnFrom?.[key]);
             if (!goes(memoryItemKey('pref', null, preference), at)) return true;
-            takeLines(at, preference);
+            // A favorite is kept as "pizza (favorite food)", and what is said in the chat is "pizza"
+            takeLines(at, plainThing(preference), false, 'like');
             forgetPlace(key);
             removed++;
             return false;
@@ -210,11 +277,13 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         const key = `fact:${name}`;
         const at = factAt(info, name, String(value));
         if (!goes(memoryItemKey('fact', name, String(value)), at)) continue;
-        takeLines(at, name === 'current_state' ? String(value) : '');
+        // How someone feels, and what they do not like, go with every line that says it, as a like does
+        const dislike = name.startsWith(DISLIKE_LABEL);
+        takeLines(at, name === 'current_state' || dislike ? String(value) : '', false, dislike ? 'dislike' : null);
         // The bot's reply right after the line this fact came from, when it says the value back, goes with it (a general fact's
         // value is never taken out of every line, so only that one reply is looked for)
-        if (name !== 'current_state' && String(value).trim() && at !== null) {
-            echoes.push({ at, ownName: false, words: wholeWords(String(value).trim()), toldBack: NEVER });
+        if (name !== 'current_state' && !dislike && String(value).trim() && at !== null) {
+            echoes.push({ owner, at, ownName: false, words: wholeWords(String(value).trim()), toldBack: NEVER });
         }
         forgetPlace(key);
         info.facts.delete(name);
@@ -223,19 +292,38 @@ export function dropItems(memory: BotPlayerMemory, keys: ReadonlySet<string>, fo
         removed++;
     }
 
-    if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0) {
+    if (doomedLines.size > 0 || phrases.length > 0 || echoes.length > 0 || shortDislikes.length > 0 || shortLikes.length > 0 || shortNames.length > 0) {
+        // The things that take a person's line: the one it came from, the ones whose words it holds, and the ones it says as a taste or a name
+        const takenBy = (line: BotPlayerMemory['conversationHistory'][number]): Set<number> => {
+            const owners = new Set<number>();
+            if (line.sender !== 'person') return owners;
+            for (const one of doomedLines.get(line) ?? []) owners.add(one);
+            for (const phrase of phrases) if (phrase.words.test(composed(line.message))) owners.add(phrase.owner);
+            for (const name of shortNames) if (name.words.test(composed(line.message))) owners.add(name.owner);
+            if (shortDislikes.length > 0 || shortLikes.length > 0) {
+                const tastes = tastesIn(composed(line.message));
+                for (const dislike of shortDislikes) if (tastes.dislikes.some((one) => one.toLowerCase() === dislike.value) || dislike.first.test(composed(line.message))) owners.add(dislike.owner);
+                for (const like of shortLikes) if (tastes.likes.some((one) => plainThing(one).toLowerCase() === like.value) || like.first.test(composed(line.message))) owners.add(like.owner);
+            }
+            return owners;
+        };
+        const ownersAt = history.map((line) => takenBy(line));
+        // Where each thing was first said in the chat: a reply can only keep a thing's short value back from where it was said on
+        const firstSaid = new Map<number, number>();
+        ownersAt.forEach((owners, at) => owners.forEach((one) => firstSaid.set(one, Math.min(firstSaid.get(one) ?? at, at))));
         memory.conversationHistory = history.filter((line, index) => {
-            if (doomedLines.has(line)) return false;
-            const text = line.message;
-            if (phrases.some((phrase) => phrase.test(text))) return false;
+            if (ownersAt[index].size > 0) return false;
             if (line.sender === 'person') return true;
+            const text = composed(line.message);
+            if (phrases.some((phrase) => phrase.words.test(text))) return false;
             // The person's own name is not said back by the bot in any later line either: it is the person who forgot it
             if (echoes.some((echo) => echo.ownName && echo.words.test(text))) return false;
             // A later bot line that tells the person what they like back ("You love tea") goes too; one that only has the word stays
             if (echoes.some((echo) => echo.toldBack.test(text))) return false;
-            // The bot's reply right after the line a short value came from, when it says it back ("I like tea" / "Tea it is!")
-            const before = history[index - 1];
-            return !(before && doomedLines.has(before) && echoes.some((echo) => echo.at !== null && before.timestamp === echo.at && echo.words.test(text)));
+            // The bot's reply right after a line a thing took, when it says a short value back of that thing or of any other forgotten
+            // thing the person had already said ("I like jam" / "I like tea" / "Have it with jam!"). A thing said only later is not in it.
+            if (index === 0 || ownersAt[index - 1].size === 0) return true;
+            return !echoes.some((echo) => (firstSaid.get(echo.owner) ?? Infinity) <= index - 1 && echo.words.test(text));
         });
     }
     if (removed > 0) info.lastInfoUpdate = Date.now();

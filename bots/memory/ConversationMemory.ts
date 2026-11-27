@@ -9,6 +9,10 @@
  */
 
 import { withoutFileNotes } from '../services/ChatFiles';
+import { birthdayDateIn, birthdayIsToday, DISLIKE_LABEL, dislikeLabel, nameIn, plainThing, stateIn, tastesIn, visionNoteOf } from './PersonalInfoRules';
+
+/** How many things they do not like are kept. */
+const MAX_DISLIKES = 10;
 import { copyHeard, heardAlso, heardByBoth, mayUse, nothingSaid, type Heard, type MemoryView } from './Heard';
 
 /** Recent messages a reply reads until Orbit serves the bot's own number: the recommended "Messages it remembers". */
@@ -419,11 +423,16 @@ export class ConversationMemory {
         spaceName?: string
     ): void {
         const memory = this.getOrCreateMemory(botId, playerId);
-        // Find the most recent person message (the message the image came with)
+        // Find the most recent person message (the message the image came with): one said in the same space, so a summary
+        // of a picture sent in a private talk is never put on a line said in a group while the picture was being read
         for (let i = memory.conversationHistory.length - 1; i >= 0; i--) {
             const entry = memory.conversationHistory[i];
-            if (entry.sender === 'person') {
-                const note = `\n[Image description: ${description}]`;
+            if (entry.sender === 'person' && (spaceName === undefined || entry.spaceName === spaceName)) {
+                // A short summary with no contact details: a picture may hold other people's e-mail addresses and numbers, and
+                // its whole text is not something to keep in what the bot reads back every turn
+                const kept = visionNoteOf(description);
+                if (!kept) return;
+                const note = `\n[Image description: ${kept}]`;
                 entry.message = entry.message.endsWith('\n')
                     ? `${entry.message}${note.trimStart()}`
                     : `${entry.message}${note}`;
@@ -517,13 +526,13 @@ export class ConversationMemory {
         const heard = typeof where === 'string' ? this.heardIn(botId, playerId, where) : copyHeard(where);
         const info = memory.personalInfo;
 
+        // What the person says about themselves and only that (PersonalInfoRules): not what a line says about the bot, about
+        // someone else, or about a task, and nothing said with a "not" kept as if it were said without one.
         // Extract birthday - check for simple "its my birthday" first
         // Only trigger once per conversation (check if already set today)
         const alreadyKnowsBirthdayToday = memory.personalInfo.facts.get('birthday_today') === 'true';
-        
-        if (!alreadyKnowsBirthdayToday && (
-            /(?:it'?s|today'?s?) (?:my )?birthday/i.test(lowerMessage) || 
-            /(?:my )?birthday (?:is )?today/i.test(lowerMessage))) {
+
+        if (!alreadyKnowsBirthdayToday && birthdayIsToday(message)) {
             // Today is their birthday!
             const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
             this.stampInfo(info, 'birthday', heard, memory.personalInfo.birthday !== today, at);
@@ -533,76 +542,101 @@ export class ConversationMemory {
             memory.personalInfo.facts.set('birthday_mentioned_at', Date.now().toString());
             this.addImportantEvent(memory, 'birthday_today', `Player said today is their birthday!`, heard);
         } else if (!alreadyKnowsBirthdayToday) {
-            // Check for specific date mentions
-            const birthdayPatterns = [
-                /(?:my|it'?s) (?:birthday|bday) (?:is|on|was)? ?([a-z]+ \d{1,2}|january \d{1,2}|february \d{1,2}|march \d{1,2}|april \d{1,2}|may \d{1,2}|june \d{1,2}|july \d{1,2}|august \d{1,2}|september \d{1,2}|october \d{1,2}|november \d{1,2}|december \d{1,2})/i,
-                /(?:my|it'?s) (?:birthday|bday) (?:is|on|was)? ?(\d{1,2}\/\d{1,2}|\d{1,2}-\d{1,2})/,
-            ];
-
-            for (const pattern of birthdayPatterns) {
-                const match = message.match(pattern);
-                if (match && match[1]) {
-                    this.stampInfo(info, 'birthday', heard, memory.personalInfo.birthday !== match[1], at);
-                    memory.personalInfo.birthday = match[1];
-                    memory.personalInfo.lastInfoUpdate = Date.now();
-                    this.addImportantEvent(memory, 'birthday_mentioned', `Player mentioned birthday: ${match[1]}`, heard);
-                    break;
-                }
-            }
-        }
-
-        // Extract name
-        const namePatterns = [
-            /(?:my|i'?m|call me|name is|name'?s) ([A-Z][a-z]+)/,
-            /(?:i'?m|i am) ([A-Z][a-z]+)/,
-        ];
-
-        for (const pattern of namePatterns) {
-            const match = message.match(pattern);
-            if (match && match[1] && match[1].length > 1 && match[1].length < 20) {
-                this.stampInfo(info, 'name', heard, memory.personalInfo.name !== match[1], at);
-                memory.personalInfo.name = match[1];
+            const date = birthdayDateIn(message);
+            if (date) {
+                this.stampInfo(info, 'birthday', heard, memory.personalInfo.birthday !== date, at);
+                memory.personalInfo.birthday = date;
                 memory.personalInfo.lastInfoUpdate = Date.now();
-                break;
+                this.addImportantEvent(memory, 'birthday_mentioned', `Player mentioned birthday: ${date}`, heard);
             }
         }
 
-        // Extract preferences (likes/dislikes)
-        if (lowerMessage.includes('like') || lowerMessage.includes('love') || lowerMessage.includes('favorite')) {
-            // Simple extraction - can be enhanced with NLP
-            const likeMatch = message.match(/(?:like|love|favorite) (?:is |are )?([^.!?]+)/i);
-            if (likeMatch && likeMatch[1]) {
-                if (!memory.personalInfo.preferences) {
-                    memory.personalInfo.preferences = [];
+        // Extract name: only when they say it is their own ("my name is Sara", "call me Sara", "I'm Sara")
+        const name = nameIn(message);
+        if (name) {
+            this.stampInfo(info, 'name', heard, memory.personalInfo.name !== name, at);
+            memory.personalInfo.name = name;
+            memory.personalInfo.lastInfoUpdate = Date.now();
+        }
+
+        // Extract likes and dislikes. What they like and then say they do not (or the other way round) moves to the other list.
+        const { likes, dislikes } = tastesIn(message);
+        for (const like of likes) {
+            // The same thing ("pizza" and "pizza (favorite food)" are one): said again with other capitals it is stamped under the spelling that is kept
+            const kept = (info.preferences ?? []).find((one) => plainThing(one).toLowerCase() === plainThing(like).toLowerCase());
+            if (kept !== undefined && kept.toLowerCase() === like.toLowerCase()) {
+                this.stampInfo(info, `pref:${kept}`, heard, false, at);
+            } else if (kept !== undefined && plainThing(like) === like) {
+                // "I like pizza" after "my favorite food is pizza": nothing is new, so nothing changes: not who heard the favorite, and not
+                // the line it was drawn from (that would tell Forget it was said again after it was forgotten)
+            } else {
+                // New, or a favorite that says more than the plain like kept: it replaces it, with the stamp of the line it came from
+                if (kept !== undefined) {
+                    info.preferences = (info.preferences ?? []).filter((one) => one !== kept);
+                    if (info.heard) delete info.heard[`pref:${kept}`];
+                    if (info.drawnFrom) delete info.drawnFrom[`pref:${kept}`];
                 }
-                const preference = likeMatch[1].trim();
-                const known = memory.personalInfo.preferences.includes(preference);
-                this.stampInfo(info, `pref:${preference}`, heard, !known, at);
-                if (!known) {
-                    memory.personalInfo.preferences.push(preference);
-                    memory.personalInfo.lastInfoUpdate = Date.now();
-                }
+                this.stampInfo(info, `pref:${like}`, heard, true, at);
+                (info.preferences ??= []).push(like);
+                info.lastInfoUpdate = Date.now();
             }
+            this.dropDislike(info, like);
+        }
+        for (const dislike of dislikes) {
+            this.addDislike(info, dislike, heard, at);
+            this.dropLike(info, dislike);
         }
 
         // Extract emotional/physical states (facts)
-        const statePatterns = [
-            /i'?m (hungry|sad|happy|tired|excited|angry|frustrated|worried|scared|nervous|thirsty|bored|lonely|confused|sick|ill|fine|okay|ok)/i,
-            /i am (hungry|sad|happy|tired|excited|angry|frustrated|worried|scared|nervous|thirsty|bored|lonely|confused|sick|ill|fine|okay|ok)/i,
-            /i feel (hungry|sad|happy|tired|excited|angry|frustrated|worried|scared|nervous|thirsty|bored|lonely|confused|sick|ill|fine|okay|ok)/i,
-        ];
-
-        for (const pattern of statePatterns) {
-            const match = message.match(pattern);
-            if (match && match[1]) {
-                const state = match[1].toLowerCase();
-                this.stampInfo(info, 'fact:current_state', heard, memory.personalInfo.facts.get('current_state') !== state, at);
-                memory.personalInfo.facts.set('current_state', state);
-                memory.personalInfo.facts.set(`${state}_mentioned_at`, Date.now().toString());
-                memory.personalInfo.lastInfoUpdate = Date.now();
-                break;
-            }
+        const state = stateIn(message);
+        if (state) {
+            this.stampInfo(info, 'fact:current_state', heard, memory.personalInfo.facts.get('current_state') !== state, at);
+            memory.personalInfo.facts.set('current_state', state);
+            memory.personalInfo.facts.set(`${state}_mentioned_at`, Date.now().toString());
+            memory.personalInfo.lastInfoUpdate = Date.now();
         }
+    }
+
+    /** What they do not like: one fact for each thing, so each keeps where it was said (and who may hear it) and can be forgotten alone. The latest few are kept. */
+    private addDislike(info: PersonalInfo, dislike: string, heard: Heard | undefined, at: number): void {
+        const label = dislikeLabel(dislike);
+        const stored = info.facts.get(label);
+        const known = stored?.toLowerCase() === dislike.toLowerCase();
+        this.stampInfo(info, `fact:${label}`, heard, !known, at);
+        // Said again or new, it counts as the latest, so the oldest is the one that goes. The spelling already kept stays.
+        info.facts.delete(label);
+        info.facts.set(label, known && stored ? stored : dislike);
+        if (!known) info.lastInfoUpdate = Date.now();
+        const labels = [...info.facts.keys()].filter((key) => key.startsWith(DISLIKE_LABEL));
+        for (const oldest of labels.slice(0, Math.max(0, labels.length - MAX_DISLIKES))) {
+            info.facts.delete(oldest);
+            if (info.heard) delete info.heard[`fact:${oldest}`];
+            if (info.drawnFrom) delete info.drawnFrom[`fact:${oldest}`];
+        }
+    }
+
+    /** They now say they do not like it: it is no longer something they like. */
+    private dropLike(info: PersonalInfo, thing: string): void {
+        const before = info.preferences?.length ?? 0;
+        info.preferences = (info.preferences ?? []).filter((kept) => {
+            // A favorite is kept as "pizza (favorite food)": it is the same thing as "pizza"
+            if (plainThing(kept).toLowerCase() !== plainThing(thing).toLowerCase()) return true;
+            if (info.heard) delete info.heard[`pref:${kept}`];
+            if (info.drawnFrom) delete info.drawnFrom[`pref:${kept}`];
+            return false;
+        });
+        if (info.preferences.length !== before) info.lastInfoUpdate = Date.now();
+    }
+
+    /** They now say they like it: it is no longer something they do not like. */
+    private dropDislike(info: PersonalInfo, thing: string): void {
+        const plain = plainThing(thing);
+        const label = dislikeLabel(plain);
+        if (info.facts.get(label)?.toLowerCase() !== plain.toLowerCase()) return;
+        info.facts.delete(label);
+        if (info.heard) delete info.heard[`fact:${label}`];
+        if (info.drawnFrom) delete info.drawnFrom[`fact:${label}`];
+        info.lastInfoUpdate = Date.now();
     }
 
     /**
@@ -1102,6 +1136,11 @@ export class ConversationMemory {
             personalDetails.push(`They like: ${personalInfo.preferences.join(', ')}`);
         }
 
+        const dislikes = [...personalInfo.facts.entries()].filter(([key]) => key.startsWith(DISLIKE_LABEL)).map(([, value]) => value);
+        if (dislikes.length > 0) {
+            personalDetails.push(`They don't like: ${dislikes.join(', ')}`);
+        }
+
         // Natural facts recall (especially current state)
         const currentState = personalInfo.facts.get('current_state');
         if (currentState) {
@@ -1111,7 +1150,7 @@ export class ConversationMemory {
         // Add other notable facts naturally
         const otherFacts: string[] = [];
         for (const [key, value] of personalInfo.facts.entries()) {
-            if (key !== 'current_state' && !key.endsWith('_mentioned_at') && !key.startsWith('birthday_')) {
+            if (key !== 'current_state' && !key.startsWith(DISLIKE_LABEL) && !key.endsWith('_mentioned_at') && !key.startsWith('birthday_')) {
                 otherFacts.push(`${key}: ${value}`);
             }
         }

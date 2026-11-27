@@ -1261,6 +1261,7 @@ const chat: BaseTranslation = {
             name: "Your name is {value}",
             birthday: "Your birthday is {value}",
             likes: "Likes {value}",
+            dislikes: "Doesn't like {value}",
             feeling: "Said you were {value}",
             fromChat: "From a chat on {date}",
             fromChatUndated: "From a chat",
