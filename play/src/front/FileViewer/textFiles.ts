@@ -236,13 +236,23 @@ function keepCodeLanguages(html: string): string {
 }
 
 const marked = new Marked({ gfm: true, async: false });
+const markedKeepingLineBreaks = new Marked({ gfm: true, async: false, breaks: true });
+
+export type RenderMarkdownOptions = {
+    /**
+     * A single new line inside a paragraph, a list item or a quote is drawn as a line break (docs, where people and
+     * Bricks write a line per item). Off by default: the chat file viewer keeps joining such lines, so a README wrapped
+     * at 80 columns still reads as one paragraph. Lists, code blocks, tables and two-space breaks do not change.
+     */
+    keepLineBreaks?: boolean;
+};
 
 /**
  * A Markdown file as safe HTML, formatted the way chat messages are. HTML inside the file is cleaned (no scripts, no
  * styles, no forms, no frames), links open in a new tab, and pictures from other sites become links.
  */
-export function renderMarkdown(text: string): string {
-    const html = marked.parse(text) as string;
+export function renderMarkdown(text: string, options: RenderMarkdownOptions = {}): string {
+    const html = (options.keepLineBreaks ? markedKeepingLineBreaks : marked).parse(text) as string;
     return purify.sanitize(keepCodeLanguages(checkboxesToSigns(picturesFromOtherSitesToLinks(html))), {
         USE_PROFILES: { html: true },
         FORBID_TAGS: [

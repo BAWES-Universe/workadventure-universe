@@ -190,6 +190,70 @@ describe("Markdown", () => {
         expect(host.querySelector("pre code")?.textContent).toContain("code");
     });
 
+    describe("single new lines (docs keep them, the chat file viewer does not)", () => {
+        const keep = (markdown: string) => {
+            const host = document.createElement("div");
+            host.innerHTML = renderMarkdown(markdown, { keepLineBreaks: true });
+            return host;
+        };
+
+        it("joins a single new line inside a paragraph into one line by default (chat file viewer)", () => {
+            const host = render("Owner: Dana\nRead from: Hub\n");
+            expect(host.querySelectorAll("br")).toHaveLength(0);
+            expect(host.querySelectorAll("p")).toHaveLength(1);
+        });
+
+        it("keeps a single new line inside a paragraph as a line break in docs", () => {
+            const host = keep("Owner: Dana\nRead from: Hub\n\nNext paragraph\n");
+            const paragraphs = host.querySelectorAll("p");
+            expect(paragraphs).toHaveLength(2);
+            expect(paragraphs[0].querySelectorAll("br")).toHaveLength(1);
+            expect(paragraphs[0].innerHTML).toBe("Owner: Dana<br>Read from: Hub");
+            expect(paragraphs[1].querySelectorAll("br")).toHaveLength(0);
+        });
+
+        it("keeps a hand-wrapped line break mid-sentence in docs (the known cost of the change)", () => {
+            const host = keep("A sentence that a writer wrapped\nby hand at the window edge.\n");
+            expect(host.querySelectorAll("p br")).toHaveLength(1);
+        });
+
+        it("keeps a new line inside a list item and inside a quote as a line break in docs", () => {
+            const list = keep("- one\n  continued\n- two\n");
+            expect(list.querySelectorAll("li")).toHaveLength(2);
+            expect(list.querySelectorAll("li")[0].querySelectorAll("br")).toHaveLength(1);
+            expect(list.querySelectorAll("li")[1].querySelectorAll("br")).toHaveLength(0);
+            const quote = keep("> first\n> second\n");
+            expect(quote.querySelectorAll("blockquote")).toHaveLength(1);
+            expect(quote.querySelectorAll("blockquote br")).toHaveLength(1);
+        });
+
+        it("draws lists, tables and code blocks the same with or without the setting", () => {
+            const markdown =
+                "# Title\n\n- one\n- two\n  - nested\n\n1. first\n2. second\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\nline 1\nline 2\n```\n\n- [x] done\n- [ ] todo\n";
+            expect(keep(markdown).innerHTML).toBe(render(markdown).innerHTML);
+            expect(keep(markdown).querySelectorAll("br")).toHaveLength(0);
+        });
+
+        it("keeps the new lines of a code block as they are, with no extra breaks", () => {
+            const host = keep("```\nline 1\nline 2\n```\n");
+            expect(host.querySelector("pre code")?.textContent).toBe("line 1\nline 2\n");
+            expect(host.querySelectorAll("br")).toHaveLength(0);
+        });
+
+        it("draws a two-space hard break the same with or without the setting", () => {
+            const markdown = "first  \nsecond\n";
+            expect(keep(markdown).innerHTML).toBe(render(markdown).innerHTML);
+            expect(keep(markdown).querySelectorAll("br")).toHaveLength(1);
+        });
+
+        it("still cleans the file's HTML with the setting on", () => {
+            const host = keep('hello\nworld <script>alert(1)</script><img src="x" onerror="alert(1)">\n');
+            expect(host.querySelector("script")).toBeNull();
+            expect(host.querySelector("[onerror]")).toBeNull();
+            expect(host.querySelectorAll("br")).toHaveLength(1);
+        });
+    });
+
     it("shows task list items as ticked and unticked signs, never as form fields", () => {
         const host = render("- [x] done\n- [ ] todo\n");
         const items = Array.from(host.querySelectorAll("li")).map((item) => item.textContent?.trim());
