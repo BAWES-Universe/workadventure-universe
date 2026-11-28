@@ -81,11 +81,12 @@ export function buildWebManifest(metaTagsData: RequiredMetaTagsData, pageUrl: st
         icons: metaTagsData.manifestIcons,
         start_url: roomPath ? `/?${INSTALL_ROOM_PARAMETER}=${encodeURIComponent(roomPath)}` : "/",
         background_color: metaTagsData.themeColor,
-        // Standalone: a window of its own, with no browser bar. Any orientation: a phone turns sideways too.
-        display: "standalone",
+        // Fullscreen: game fills the entire screen on mobile and desktop
+        display: "fullscreen",
+        orientation: "landscape",
         // On a computer, Chrome and Edge let the app draw its own title bar in place of the grey one (the player
-        // switches it on once with the small arrow). Everything that does not know it falls back to "standalone".
-        display_override: ["window-controls-overlay"],
+        // switches it on once with the small arrow). Everything that does not know it falls back to "fullscreen".
+        display_override: ["window-controls-overlay", "fullscreen"],
         scope: "/",
         lang: "en",
         theme_color: metaTagsData.themeColor,
