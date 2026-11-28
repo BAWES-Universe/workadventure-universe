@@ -1,0 +1,22 @@
+{
+  "name": "BAWES Universe",
+  "short_name": "Universe",
+  "description": "BAWES Universe virtual world for Android and iOS",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0f172a",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/resources/logos/logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/resources/logos/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
